@@ -6,8 +6,8 @@ STOP=99
 USE_PROCD=1
 
 REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake"
-SCRIPT_URL="https://raw.githubusercontent.com/hudra0/qosmate/master/qosmate.sh"
-HOTPLUG_SCRIPT_URL="https://raw.githubusercontent.com/hudra0/qosmate/master/13-qosmateHotplug"
+SCRIPT_URL="https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh"
+HOTPLUG_SCRIPT_URL="https://raw.githubusercontent.com/hudra0/qosmate/main/etc/hotplug.d/iface/13-qosmateHotplug"
 
 service_triggers() {
     procd_add_reload_trigger "network"
@@ -58,7 +58,7 @@ download_scripts() {
     mkdir -p /usr/lib/tc
 
     # Base URL for the repository
-    DIST_URL="https://raw.githubusercontent.com/dlakelan/routerperf/master/tc-dists"
+    DIST_URL="https://raw.githubusercontent.com/hudra0/qosmate/main/usr/lib/tc"
 
     # List of files
     DIST_FILES="experimental.dist normal.dist normmix20-64.dist pareto.dist paretonormal.dist"
