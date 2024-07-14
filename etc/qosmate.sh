@@ -142,7 +142,7 @@ check_and_update_config() {
     local config_path="/etc/config/qosmate"
     if [ ! -f "$config_path" ]; then
         echo "Configuration file not found, downloading the latest version..."
-        wget -O $config_path "https://raw.githubusercontent.com/hudra0/routerperf/dev/qosmate" || {
+        wget -O $config_path "https://raw.githubusercontent.com/hudra0/qosmate/main/etc/config/qosmate" || {
             echo "Error downloading configuration."
             return 1  # Abort on failure
         }
