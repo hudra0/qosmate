@@ -139,21 +139,7 @@ calculate_ack_rates() {
 # Call the function to perform the ACK rates calculations
 calculate_ack_rates
 
-# Check if the configuration exists and is up to date
-check_and_update_config() {
-    local config_path="/etc/config/qosmate"
-    if [ ! -f "$config_path" ]; then
-        echo "Configuration file not found, downloading the latest version..."
-        wget -O $config_path "https://raw.githubusercontent.com/hudra0/qosmate/main/etc/config/qosmate" || {
-            echo "Error downloading configuration."
-            return 1  # Abort on failure
-        }
-    fi
-}
-
-# Call the function at the start of the script
-check_and_update_config
-
+# Create rules
 create_nft_rule() {
     local config="$1"
     local src_ip src_port dest_ip dest_port proto class counter name
