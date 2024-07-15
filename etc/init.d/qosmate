@@ -76,6 +76,20 @@ download_scripts() {
     done
 }
 
+check_and_download_config() {
+    local config_path="/etc/config/qosmate"
+    if [ ! -f "$config_path" ]; then
+        echo "Configuration file not found, downloading the latest version..."
+        wget -O $config_path "https://raw.githubusercontent.com/hudra0/qosmate/main/etc/config/qosmate" || {
+            echo "Error downloading configuration. Please check your internet connection and try again."
+            return 1
+        }
+        echo "Configuration file downloaded successfully."
+    else
+        echo "Configuration file already exists."
+    fi
+}
+
 migrate_config() {
     CONFIG_FILE="/etc/config/qosmate"
 
@@ -104,6 +118,7 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
 start_service() {
     install_packages
     download_scripts
+    check_and_download_config || return 1    
     migrate_config    
     /etc/qosmate.sh    
     /etc/init.d/firewall reload
