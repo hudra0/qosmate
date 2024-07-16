@@ -154,11 +154,96 @@ stop_service() {
 }
 
 status_service() {
-    echo "==== Traffic Control (tc) Queues ===="
+    # Load configuration
+    . /lib/functions.sh
+    config_load 'qosmate'
+
+    # Function to extract default values from the main script
+    get_default_value() {
+        local var_name=$1
+        local default_value=$(grep "^$var_name=" /etc/qosmate.sh | cut -d'=' -f2- | tr -d '"')
+        echo "$default_value"
+    }
+
+    # Function to get current value or default
+    get_current_or_default() {
+        local uci_path=$1
+        local default_value=$2
+        local value=$(uci -q get $uci_path)
+        if [ -z "$value" ]; then
+            echo "$default_value (Default value)"
+        else
+            echo "$value"
+        fi
+    }
+
+    # Extract default values
+    DEFAULT_WAN=$(get_default_value "DEFAULT_WAN")
+    DEFAULT_DOWNRATE=$(get_default_value "DEFAULT_DOWNRATE")
+    DEFAULT_UPRATE=$(get_default_value "DEFAULT_UPRATE")
+    DEFAULT_GAMEQDISC=$(get_default_value "gameqdisc")
+
+    echo "==== qosmate Status ===="
+    
+    # Check if the service is enabled
+    if /etc/init.d/qosmate enabled; then
+        echo "qosmate service is enabled."
+    else
+        echo "qosmate service is not enabled."
+    fi
+
+    # Check if traffic shaping is active
+    WAN=$(uci -q get qosmate.settings.WAN || echo "$DEFAULT_WAN")
+    IFB="ifb-$WAN"
+    
+    if tc qdisc show dev $WAN 2>/dev/null | grep -q "qdisc cake"; then
+        if /etc/init.d/qosmate enabled; then
+            echo "Traffic shaping is active on the egress interface ($WAN)."
+        else
+            echo "Default CAKE qdisc is active on the egress interface ($WAN), but qosmate is not managing it."
+        fi
+    elif tc qdisc show dev $WAN 2>/dev/null | grep -q "qdisc hfsc"; then
+        echo "Traffic shaping (HFSC) is active on the egress interface ($WAN)."
+    else
+        echo "No qosmate traffic shaping is active on the egress interface ($WAN)."
+    fi
+
+    if tc qdisc show dev $IFB 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; then
+        echo "Traffic shaping is active on the ingress interface ($IFB)."
+    else
+        echo "Traffic shaping is not active on the ingress interface ($IFB)."
+    fi
+
+    echo "==== Overall Status ===="
+    # Determine if the service is actually running
+    if /etc/init.d/qosmate enabled && { tc qdisc show dev $WAN 2>/dev/null | grep -q "qdisc hfsc" || tc qdisc show dev $IFB 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; }; then
+        echo "qosmate is currently active and managing traffic shaping."
+    else
+        echo "qosmate is not currently active or managing traffic shaping."
+    fi
+
+    echo "==== Current Settings ===="
+    # Show summary of current settings
+    echo "Upload rate: $(get_current_or_default qosmate.settings.UPRATE "$DEFAULT_UPRATE") kbps"
+    echo "Download rate: $(get_current_or_default qosmate.settings.DOWNRATE "$DEFAULT_DOWNRATE") kbps"
+    
+    # For GAMEUP and GAMEDOWN, we need to evaluate the expressions
+    UPRATE=$(uci -q get qosmate.settings.UPRATE || echo "$DEFAULT_UPRATE")
+    DOWNRATE=$(uci -q get qosmate.settings.DOWNRATE || echo "$DEFAULT_DOWNRATE")
+    DEFAULT_GAMEUP=$((UPRATE*15/100+400))
+    DEFAULT_GAMEDOWN=$((DOWNRATE*15/100+400))
+    
+    echo "Game traffic upload: $(get_current_or_default qosmate.performance.GAMEUP "$DEFAULT_GAMEUP") kbps"
+    echo "Game traffic download: $(get_current_or_default qosmate.performance.GAMEDOWN "$DEFAULT_GAMEDOWN") kbps"
+    echo "Queue discipline: $(get_current_or_default qosmate.qdisc.gameqdisc "$DEFAULT_GAMEQDISC")"
+
+    echo
+    echo "==== Detailed Technical Information ===="
+    echo "Traffic Control (tc) Queues:"
     tc -s qdisc
 
     echo
-    echo "==== Nftables Ruleset: dscptag ===="
+    echo "==== Nftables Ruleset (dscptag) ===="
     nft list ruleset | grep 'chain dscptag' -A 100
 }
 
