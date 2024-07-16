@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.1"
+VERSION="0.5.2"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -13,35 +13,43 @@ DEFAULT_OH="44"
 
 load_config() {
     # Global settings
+    ROOT_QDISC=$(uci -q get qosmate.settings.ROOT_QDISC || echo "hfsc")
     WAN=$(uci -q get qosmate.settings.WAN || echo "$DEFAULT_WAN")
     DOWNRATE=$(uci -q get qosmate.settings.DOWNRATE || echo "$DEFAULT_DOWNRATE")
     UPRATE=$(uci -q get qosmate.settings.UPRATE || echo "$DEFAULT_UPRATE")
-    OH=$(uci -q get qosmate.settings.OH || echo "$DEFAULT_OH")
-    PRESERVE_CONFIG_FILES=$(uci -q get qosmate.settings.PRESERVE_CONFIG_FILES || echo "0")
-    LINKTYPE=$(uci -q get qosmate.settings.LINKTYPE || echo "ethernet")    
     
-    # Performance settings
-    BWMAXRATIO=$(uci -q get qosmate.performance.BWMAXRATIO || echo "20")
-    GAMEUP=$(uci -q get qosmate.performance.GAMEUP || echo "$((UPRATE*15/100+400))")
-    GAMEDOWN=$(uci -q get qosmate.performance.GAMEDOWN || echo "$((DOWNRATE*15/100+400))")
-    
-    # Qdisc selection
-    gameqdisc=$(uci -q get qosmate.qdisc.gameqdisc || echo "pfifo")
-    nongameqdisc=$(uci -q get qosmate.qdisc.nongameqdisc || echo "fq_codel")
-    nongameqdiscoptions=$(uci -q get qosmate.qdisc.nongameqdiscoptions || echo "besteffort ack-filter")
-    
-    # General Qdisc Parameters
-    MAXDEL=$(uci -q get qosmate.qdisc.MAXDEL || echo "32")
-    PFIFOMIN=$(uci -q get qosmate.qdisc.PFIFOMIN || echo "5")
-    PACKETSIZE=$(uci -q get qosmate.qdisc.PACKETSIZE || echo "450")
-    
-    # netem Qdisc Settings
-    netemdelayms=$(uci -q get qosmate.qdisc.netemdelayms || echo "30")
-    netemjitterms=$(uci -q get qosmate.qdisc.netemjitterms || echo "7")
-    netemdist=$(uci -q get qosmate.qdisc.netemdist || echo "normal")
-    pktlossp=$(uci -q get qosmate.qdisc.pktlossp || echo "none")
-    
-    # Cake Qdisc Settings
+    # Advanced settings
+    PRESERVE_CONFIG_FILES=$(uci -q get qosmate.advanced.PRESERVE_CONFIG_FILES || echo "0")
+    WASHDSCPUP=$(uci -q get qosmate.advanced.WASHDSCPUP || echo "0")
+    WASHDSCPDOWN=$(uci -q get qosmate.advanced.WASHDSCPDOWN || echo "0")
+    BWMAXRATIO=$(uci -q get qosmate.advanced.BWMAXRATIO || echo "20")
+    GAMEUP=$(uci -q get qosmate.advanced.GAMEUP || echo "$((UPRATE*15/100+400))")
+    GAMEDOWN=$(uci -q get qosmate.advanced.GAMEDOWN || echo "$((DOWNRATE*15/100+400))")
+    ACKRATE=$(uci -q get qosmate.advanced.ACKRATE || echo "$((UPRATE * 5 / 100))")
+    UDP_RATE_LIMIT_ENABLED=$(uci -q get qosmate.advanced.UDP_RATE_LIMIT_ENABLED || echo "1")
+    UDPBULKPORT=$(uci -q get qosmate.advanced.UDPBULKPORT || echo "51413")
+    TCPBULKPORT=$(uci -q get qosmate.advanced.TCPBULKPORT || echo "51413,6881-6889")
+    VIDCONFPORTS=$(uci -q get qosmate.advanced.VIDCONFPORTS || echo "10000,3478-3479,8801-8802,19302-19309,5938,53")
+    REALTIME4=$(uci -q get qosmate.advanced.REALTIME4 || echo "")
+    REALTIME6=$(uci -q get qosmate.advanced.REALTIME6 || echo "")
+    LOWPRIOLAN4=$(uci -q get qosmate.advanced.LOWPRIOLAN4 || echo "")
+    LOWPRIOLAN6=$(uci -q get qosmate.advanced.LOWPRIOLAN6 || echo "")
+
+    # HFSC specific settings
+    LINKTYPE=$(uci -q get qosmate.hfsc.LINKTYPE || echo "ethernet")
+    OH=$(uci -q get qosmate.hfsc.OH || echo "$DEFAULT_OH")
+    gameqdisc=$(uci -q get qosmate.hfsc.gameqdisc || echo "pfifo")
+    nongameqdisc=$(uci -q get qosmate.hfsc.nongameqdisc || echo "fq_codel")
+    nongameqdiscoptions=$(uci -q get qosmate.hfsc.nongameqdiscoptions || echo "besteffort ack-filter")
+    MAXDEL=$(uci -q get qosmate.hfsc.MAXDEL || echo "32")
+    PFIFOMIN=$(uci -q get qosmate.hfsc.PFIFOMIN || echo "5")
+    PACKETSIZE=$(uci -q get qosmate.hfsc.PACKETSIZE || echo "450")
+    netemdelayms=$(uci -q get qosmate.hfsc.netemdelayms || echo "30")
+    netemjitterms=$(uci -q get qosmate.hfsc.netemjitterms || echo "7")
+    netemdist=$(uci -q get qosmate.hfsc.netemdist || echo "normal")
+    pktlossp=$(uci -q get qosmate.hfsc.pktlossp || echo "none")
+
+    # CAKE specific settings
     COMMON_LINK_PRESETS=$(uci -q get qosmate.cake.COMMON_LINK_PRESETS || echo "ethernet")
     OVERHEAD=$(uci -q get qosmate.cake.OVERHEAD || echo "")
     MPU=$(uci -q get qosmate.cake.MPU || echo "")
@@ -59,26 +67,7 @@ load_config() {
     AUTORATE_INGRESS=$(uci -q get qosmate.cake.AUTORATE_INGRESS || echo "0")
     EXTRA_PARAMETERS_INGRESS=$(uci -q get qosmate.cake.EXTRA_PARAMETERS_INGRESS || echo "")
     EXTRA_PARAMETERS_EGRESS=$(uci -q get qosmate.cake.EXTRA_PARAMETERS_EGRESS || echo "")
-    
-    # Port/IP settings
-    UDPBULKPORT=$(uci -q get qosmate.ports.UDPBULKPORT || echo "51413")
-    TCPBULKPORT=$(uci -q get qosmate.ports.TCPBULKPORT || echo "51413,6881-6889")
-    VIDCONFPORTS=$(uci -q get qosmate.ports.VIDCONFPORTS || echo "10000,3478-3479,8801-8802,19302-19309,5938,53")
-    REALTIME4=$(uci -q get qosmate.ips.REALTIME4 || echo "")
-    REALTIME6=$(uci -q get qosmate.ips.REALTIME6 || echo "")
-    LOWPRIOLAN4=$(uci -q get qosmate.ips.LOWPRIOLAN4 || echo "")
-    LOWPRIOLAN6=$(uci -q get qosmate.ips.LOWPRIOLAN6 || echo "")
-    
-    # ACK settings
-    ACKRATE=$(uci -q get qosmate.performance.ACKRATE || echo "$((UPRATE * 5 / 100))")
-    
-    # UDP rate limiting
-    UDP_RATE_LIMIT_ENABLED=$(uci -q get qosmate.performance.UDP_RATE_LIMIT_ENABLED || echo "1")
-    
-    # Traffic washing settings
-    WASHDSCPUP=$(uci -q get qosmate.settings.WASHDSCPUP || echo "0")
-    WASHDSCPDOWN=$(uci -q get qosmate.settings.WASHDSCPDOWN || echo "0")
-    
+
     # Calculated values
     FIRST500MS=$((DOWNRATE * 500 / 8))
     FIRST10S=$((DOWNRATE * 10000 / 8))
@@ -90,11 +79,6 @@ load_config
 if [ $((DOWNRATE > UPRATE*BWMAXRATIO)) -eq 1 ]; then
     echo "We limit the downrate to at most $BWMAXRATIO times the upstream rate to ensure no upstream ACK floods occur which can cause game packet drops"
     DOWNRATE=$((BWMAXRATIO*UPRATE))
-fi
-
-if [ $gameqdisc != "fq_codel" -a $gameqdisc != "red" -a $gameqdisc != "pfifo" -a $gameqdisc != "bfifo" -a $gameqdisc != "cake" -a $gameqdisc != "netem" ]; then
-    echo "Other qdiscs are not tested and do not work on OpenWrt yet anyway, reverting to red"
-    gameqdisc="red"
 fi
 
 ##############################
@@ -519,7 +503,7 @@ your gaming, and there is NOTHING that your router can do about it.
 EOF
 
 
-if [ "$gameqdisc" != "cake" ]; then
+if [ "$ROOT_QDISC" = "hfsc" ]; then
 setqdisc () {
 DEV=$1
 RATE=$2
@@ -655,7 +639,7 @@ case $useqdisc in
 
 esac
 
-if [ "$DOWNSHAPING_METHOD" = "ctinfo" ] && [ "$DIR" = "lan" ]; then
+if [ "$DIR" = "lan" ]; then
     # Apply the filters on the IFB interface's egress
     tc filter add dev $DEV parent 1: protocol ip prio 1 u32 match ip dsfield 0xb8 0xfc classid 1:11 # ef (46)
     tc filter add dev $DEV parent 1: protocol ip prio 1 u32 match ip dsfield 0xa0 0xfc classid 1:11 # cs5 (40)
@@ -681,35 +665,19 @@ for i in 12 13 14 15; do
     fi
 done
 
-
-
 }
 fi
 
-if [ "$gameqdisc" = "cake" ]; then
+setup_cake() {
     tc qdisc del dev "$WAN" root > /dev/null 2>&1
+    tc qdisc del dev "$LAN" root > /dev/null 2>&1
     
+    # Egress (Upload) CAKE setup
     EGRESS_CAKE_OPTS="bandwidth ${UPRATE}kbit"
-    
-    if [ "$PRIORITY_QUEUE_EGRESS" != "" ]; then
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $PRIORITY_QUEUE_EGRESS"
-    fi
-    
-    if [ "$HOST_ISOLATION" -eq 1 ]; then
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS dual-srchost"
-    fi
-    
-    if [ "$NAT_EGRESS" -eq 1 ]; then
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nat"
-    else
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nonat"
-    fi
-    
-    if [ "$WASH_EGRESS" -eq 1 ]; then
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS wash"
-    else
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nowash"
-    fi
+    [ -n "$PRIORITY_QUEUE_EGRESS" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $PRIORITY_QUEUE_EGRESS"
+    [ "$HOST_ISOLATION" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS dual-srchost"
+    [ "$NAT_EGRESS" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nat" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nonat"
+    [ "$WASH_EGRESS" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS wash" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nowash"
     
     if [ "$ACK_FILTER_EGRESS" -eq 1 ] || { [ "$ACK_FILTER_EGRESS" = "auto" ] && [ $((DOWNRATE / UPRATE)) -ge 15 ]; }; then
         EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS ack-filter"
@@ -717,116 +685,53 @@ if [ "$gameqdisc" = "cake" ]; then
         EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS no-ack-filter"
     fi
     
-    if [ -n "$RTT" ]; then
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS rtt ${RTT}ms"
-    fi
-    
-    if [ -n "$COMMON_LINK_PRESETS" ]; then
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $COMMON_LINK_PRESETS"
-    fi
-    
-    if [ -n "$ETHER_VLAN_KEYWORD" ]; then
-        i=1
-        while [ $i -le $ETHER_VLAN_KEYWORD ]; do
-            EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS ether-vlan"
-            i=$((i + 1))
-        done
-    fi
-    
-    if [ -n "$LINK_COMPENSATION" ]; then
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $LINK_COMPENSATION"
-    else
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS noatm"
-    fi
-    
-    if [ -n "$OVERHEAD" ]; then
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS overhead $OVERHEAD"
-    fi
-    
-    if [ -n "$MPU" ]; then
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS mpu $MPU"
-    fi
-    
-    if [ -n "$EXTRA_PARAMETERS_EGRESS" ]; then
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $EXTRA_PARAMETERS_EGRESS"
-    fi
+    [ -n "$RTT" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS rtt ${RTT}ms"
+    [ -n "$COMMON_LINK_PRESETS" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $COMMON_LINK_PRESETS"
+    [ -n "$LINK_COMPENSATION" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $LINK_COMPENSATION" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS noatm"
+    [ -n "$OVERHEAD" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS overhead $OVERHEAD"
+    [ -n "$MPU" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS mpu $MPU"
+    [ -n "$EXTRA_PARAMETERS_EGRESS" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $EXTRA_PARAMETERS_EGRESS"
     
     tc qdisc add dev $WAN root cake $EGRESS_CAKE_OPTS
     
-    tc qdisc del dev "$LAN" root > /dev/null 2>&1
+    # Ingress (Download) CAKE setup
+    INGRESS_CAKE_OPTS="bandwidth ${DOWNRATE}kbit ingress"
+    [ "$AUTORATE_INGRESS" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS autorate-ingress"
+    [ -n "$PRIORITY_QUEUE_INGRESS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $PRIORITY_QUEUE_INGRESS"
+    [ "$HOST_ISOLATION" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS dual-dsthost"
+    [ "$NAT_INGRESS" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nat" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nonat"
+    [ "$WASH_INGRESS" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS wash" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nowash"
     
-    INGRESS_CAKE_OPTS="bandwidth ${DOWNRATE}kbit"
-    
-    if [ "$AUTORATE_INGRESS" -eq 1 ]; then
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS autorate-ingress"
-    fi
-    
-    if [ "$PRIORITY_QUEUE_INGRESS" != "" ]; then
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $PRIORITY_QUEUE_INGRESS"
-    fi
-    
-    if [ "$HOST_ISOLATION" -eq 1 ]; then
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS dual-dsthost"
-    fi
-    
-    if [ "$NAT_INGRESS" -eq 1 ]; then
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nat"
-    else
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nonat"
-    fi
-    
-    if [ "$WASH_INGRESS" -eq 1 ]; then
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS wash"
-    else
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nowash"
-    fi
-    
-    INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS ingress"
-    
-    if [ -n "$RTT" ]; then
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS rtt ${RTT}ms"
-    fi
-    
-    if [ -n "$COMMON_LINK_PRESETS" ]; then
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $COMMON_LINK_PRESETS"
-    fi
-    
-    if [ -n "$ETHER_VLAN_KEYWORD" ]; then
-        i=1
-        while [ $i -le $ETHER_VLAN_KEYWORD ]; do
-            INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS ether-vlan"
-            i=$((i + 1))
-        done
-    fi
-    
-    if [ -n "$LINK_COMPENSATION" ]; then
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $LINK_COMPENSATION"
-    else
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS noatm"
-    fi
-    
-    if [ -n "$OVERHEAD" ]; then
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS overhead $OVERHEAD"
-    fi
-    
-    if [ -n "$MPU" ]; then
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS mpu $MPU"
-    fi
-    
-    if [ -n "$EXTRA_PARAMETERS_INGRESS" ]; then
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $EXTRA_PARAMETERS_INGRESS"
-    fi
+    [ -n "$RTT" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS rtt ${RTT}ms"
+    [ -n "$COMMON_LINK_PRESETS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $COMMON_LINK_PRESETS"
+    [ -n "$LINK_COMPENSATION" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $LINK_COMPENSATION" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS noatm"
+    [ -n "$OVERHEAD" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS overhead $OVERHEAD"
+    [ -n "$MPU" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS mpu $MPU"
+    [ -n "$EXTRA_PARAMETERS_INGRESS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $EXTRA_PARAMETERS_INGRESS"
     
     tc qdisc add dev $LAN root cake $INGRESS_CAKE_OPTS
+}
+
+# Main logic for selecting and applying the QoS system
+if [ "$ROOT_QDISC" = "hfsc" ]; then
+    if [ "$gameqdisc" != "fq_codel" ] && [ "$gameqdisc" != "red" ] && [ "$gameqdisc" != "pfifo" ] && [ "$gameqdisc" != "bfifo" ] && [ "$gameqdisc" != "netem" ]; then
+        echo "Warning: $gameqdisc is not tested and may not work on OpenWrt. Reverting to red."
+        gameqdisc="red"
+    fi
+    setqdisc $WAN $UPRATE $GAMEUP $gameqdisc wan
+    setqdisc $LAN $DOWNRATE $GAMEDOWN $gameqdisc lan
+elif [ "$ROOT_QDISC" = "cake" ]; then
+    setup_cake
 else
+    echo "Unsupported ROOT_QDISC: $ROOT_QDISC. Using HFSC as default."
+    ROOT_QDISC="hfsc"
     setqdisc $WAN $UPRATE $GAMEUP $gameqdisc wan
     setqdisc $LAN $DOWNRATE $GAMEDOWN $gameqdisc lan
 fi
 
 echo "DONE!"
 
-
-if [ "$gameqdisc" = "red" ]; then
+if [ "$ROOT_QDISC" = "hfsc" ] && [ "$gameqdisc" = "red" ]; then
    echo "Can not output tc -s qdisc because it crashes on OpenWrt when using RED qdisc, but things are working!"
 else
    tc -s qdisc
