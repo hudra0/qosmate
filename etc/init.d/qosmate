@@ -233,9 +233,13 @@ status_service() {
     DEFAULT_GAMEUP=$((UPRATE*15/100+400))
     DEFAULT_GAMEDOWN=$((DOWNRATE*15/100+400))
     
-    echo "Game traffic upload: $(get_current_or_default qosmate.performance.GAMEUP "$DEFAULT_GAMEUP") kbps"
-    echo "Game traffic download: $(get_current_or_default qosmate.performance.GAMEDOWN "$DEFAULT_GAMEDOWN") kbps"
-    echo "Queue discipline: $(get_current_or_default qosmate.qdisc.gameqdisc "$DEFAULT_GAMEQDISC")"
+    echo "Game traffic upload: $(get_current_or_default qosmate.advanced.GAMEUP "$DEFAULT_GAMEUP") kbps"
+    echo "Game traffic download: $(get_current_or_default qosmate.advanced.GAMEDOWN "$DEFAULT_GAMEDOWN") kbps"
+    if [ "$(get_current_or_default qosmate.settings.ROOT_QDISC "hfsc")" = "cake" ]; then
+        echo "Queue discipline: CAKE (Root qdisc)"
+    else
+        echo "Queue discipline: $(get_current_or_default qosmate.hfsc.gameqdisc "$DEFAULT_GAMEQDISC") (for game traffic in HFSC)"
+    fi
 
     echo
     echo "==== Detailed Technical Information ===="
