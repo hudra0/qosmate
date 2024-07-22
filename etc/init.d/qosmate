@@ -393,8 +393,8 @@ auto_setup() {
     UPRATE=$(awk -v speed="$UPLOAD_SPEED" 'BEGIN {print int(speed * 1000 * 0.9)}')
 
     echo "QoS configuration:"
-    echo "DOWNRATE: $DOWNRATE kbps (80% of measured download speed)"
-    echo "UPRATE: $UPRATE kbps (80% of measured upload speed)"
+    echo "DOWNRATE: $DOWNRATE kbps (90% of measured download speed)"
+    echo "UPRATE: $UPRATE kbps (90% of measured upload speed)"
 
     sed -i "/option WAN/c\    option WAN '$FINAL_INTERFACE'" /etc/config/qosmate
     sed -i "/option DOWNRATE/c\    option DOWNRATE '$DOWNRATE'" /etc/config/qosmate
