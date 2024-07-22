@@ -354,39 +354,39 @@ auto_setup() {
         return 0
     fi
 
-    if ! command -v speedtest-go &> /dev/null; then
-        echo "speedtest-go is not installed. Checking available space..."
+    if ! command -v speedtest &> /dev/null; then
+        echo "python3-speedtest-cli is not installed. Checking available space..."
         
-        # Check for at least 15MB of free space (9.54MB for the app + buffer)
+        # Check for at least 1MB of free space (300KB for the packages + buffer)
         FREE_SPACE=$(df /overlay | awk 'NR==2 {print $4}')
-        if [ "$FREE_SPACE" -lt 15360 ]; then
-            echo "Error: Not enough free space to install speedtest-go (need at least 15MB)."
+        if [ "$FREE_SPACE" -lt 1024 ]; then
+            echo "Error: Not enough free space to install python3-speedtest-cli (need at least 1MB)."
             echo "Auto-setup cannot continue. Please free up some space and try again."
             return 1
         fi
 
-        echo "Installing speedtest-go..."
+        echo "Installing python3-speedtest-cli..."
         opkg update
-        opkg install speedtest-go
+        opkg install python3-speedtest-cli python3-speedtest-cli-src
         if [ $? -ne 0 ]; then
-            echo "Error: Failed to install speedtest-go. Please install it manually and try again."
+            echo "Error: Failed to install python3-speedtest-cli. Please install it manually and try again."
             return 1
         fi
     else
-        echo "speedtest-go is already installed."
+        echo "python3-speedtest-cli is already installed."
     fi
 
     echo "Running speed test... This may take a few minutes."
-    SPEED_RESULT=$(speedtest-go)
+    SPEED_RESULT=$(speedtest --simple)
     
-    DOWNLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Download:" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
-    UPLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Upload:" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
-    PACKET_LOSS=$(echo "$SPEED_RESULT" | grep "Packet Loss:" | grep -oE '[0-9]+\.[0-9]+')
+    DOWNLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Download:" | awk '{print $2}')
+    UPLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Upload:" | awk '{print $2}')
+    PING=$(echo "$SPEED_RESULT" | grep "Ping:" | awk '{print $2}')
 
     echo "Speed test results:"
-    echo "Download speed: $DOWNLOAD_SPEED Mbps"
-    echo "Upload speed: $UPLOAD_SPEED Mbps"
-    echo "Packet Loss: $PACKET_LOSS%"
+    echo "Download speed: $DOWNLOAD_SPEED Mbit/s"
+    echo "Upload speed: $UPLOAD_SPEED Mbit/s"
+    echo "Ping: $PING ms"
 
     # Convert speeds to kbps and apply 90% rule
     DOWNRATE=$(awk -v speed="$DOWNLOAD_SPEED" 'BEGIN {print int(speed * 1000 * 0.9)}')
@@ -395,7 +395,7 @@ auto_setup() {
     echo "QoS configuration:"
     echo "DOWNRATE: $DOWNRATE kbps (90% of measured download speed)"
     echo "UPRATE: $UPRATE kbps (90% of measured upload speed)"
-
+    
     sed -i "/option WAN/c\    option WAN '$FINAL_INTERFACE'" /etc/config/qosmate
     sed -i "/option DOWNRATE/c\    option DOWNRATE '$DOWNRATE'" /etc/config/qosmate
     sed -i "/option UPRATE/c\    option UPRATE '$UPRATE'" /etc/config/qosmate
