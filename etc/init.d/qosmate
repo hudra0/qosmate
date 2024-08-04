@@ -5,11 +5,12 @@ STOP=99
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="check_version update auto_setup expand_config"
+EXTRA_COMMANDS="check_version update auto_setup expand_config auto_setup_noninteractive"
 EXTRA_HELP="        check_version   Check for updates
         update          Update qosmate
         auto_setup      Automatically configure qosmate
-        expand_config   Expand the configuration with all possible options"        
+        expand_config   Expand the configuration with all possible options
+        auto_setup_noninteractive   Automatically configure qosmate with no interaction"        
 
 REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake"
 SCRIPT_URL="https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh"
@@ -482,6 +483,119 @@ EOF
 
     echo "Auto-setup complete. qosmate has been configured with detected settings."
     echo "To apply these changes, please restart qosmate by running: /etc/init.d/qosmate restart"
+}
+
+auto_setup_noninteractive() {
+    local gaming_ip="$1"
+    local output_file="/tmp/qosmate_auto_setup_output.txt"
+    {
+    echo "Starting qosmate non-interactive auto-setup..."
+
+    # Stop qosmate if it's running
+    if /etc/init.d/qosmate status > /dev/null; then
+        echo "Stopping qosmate for accurate speed test results..."
+        /etc/init.d/qosmate stop
+        sleep 5  # Give some time for the network to stabilize
+    fi
+
+    # Detect WAN interface
+    WAN_INTERFACE=$(ifstatus wan | grep -e '"device"' | cut -d'"' -f4)
+    L3_DEVICE=$(ifstatus wan | grep -e '"l3_device"' | cut -d'"' -f4)
+    
+    if [ -z "$WAN_INTERFACE" ] && [ -z "$L3_DEVICE" ]; then
+        echo "Error: Unable to detect WAN interface. Please set it manually in the configuration."
+        return 1
+    fi
+
+    FINAL_INTERFACE=${L3_DEVICE:-$WAN_INTERFACE}
+    echo "Detected WAN interface: $FINAL_INTERFACE"
+
+    sed -i "/option WAN/c\    option WAN '$FINAL_INTERFACE'" /etc/config/qosmate
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to update WAN interface in configuration. Please check the file /etc/config/qosmate"
+        return 1
+    fi
+
+    # Check for speedtest-go first, then fallback to python3-speedtest-cli
+    if command -v speedtest-go &> /dev/null; then
+        SPEEDTEST_CMD="speedtest-go"
+    elif command -v speedtest &> /dev/null; then
+        SPEEDTEST_CMD="speedtest --simple"
+    else
+        echo "Error: No speedtest tool found. Please install speedtest-go or python3-speedtest-cli."
+        return 1
+    fi
+
+    echo "Running speed test... This may take a few minutes."
+    SPEED_RESULT=$($SPEEDTEST_CMD)
+    
+    if [ "$SPEEDTEST_CMD" = "speedtest-go" ]; then
+        DOWNLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Download:" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
+        UPLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Upload:" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
+    else
+        DOWNLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Download:" | awk '{print $2}')
+        UPLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Upload:" | awk '{print $2}')
+    fi
+
+    echo "Speed test results:"
+    echo "Download speed: $DOWNLOAD_SPEED Mbit/s"
+    echo "Upload speed: $UPLOAD_SPEED Mbit/s"
+
+    # Convert speeds to kbps and apply 90% rule
+    DOWNRATE=$(awk -v speed="$DOWNLOAD_SPEED" 'BEGIN {print int(speed * 1000 * 0.9)}')
+    UPRATE=$(awk -v speed="$UPLOAD_SPEED" 'BEGIN {print int(speed * 1000 * 0.9)}')
+
+    echo "QoS configuration:"
+    echo "DOWNRATE: $DOWNRATE kbps (90% of measured download speed)"
+    echo "UPRATE: $UPRATE kbps (90% of measured upload speed)"
+    
+    sed -i "/option DOWNRATE/c\    option DOWNRATE '$DOWNRATE'" /etc/config/qosmate
+    sed -i "/option UPRATE/c\    option UPRATE '$UPRATE'" /etc/config/qosmate
+
+    echo "Configuration updated. New settings:"
+    grep -E "option (WAN|DOWNRATE|UPRATE)" /etc/config/qosmate
+
+    # Add gaming device IP if provided
+    if [ -n "$gaming_ip" ]; then
+        if [[ $gaming_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            # Check if rules for this IP already exist
+            if grep -q "option src_ip '$gaming_ip'" /etc/config/qosmate || grep -q "option dest_ip '$gaming_ip'" /etc/config/qosmate; then
+                echo "Rules for IP $gaming_ip already exist. Skipping addition of new rules."
+            else
+                # Add the rules to the configuration file
+                cat << EOF >> /etc/config/qosmate
+
+config rule
+    option name 'Game_Console_Outbound'
+    option proto 'udp'
+    option src_ip '$gaming_ip'
+    list dest_port '!=80'
+    list dest_port '!=443'
+    option class 'cs5'
+    option counter '1'
+
+config rule
+    option name 'Game_Console_Inbound'
+    option proto 'udp'
+    option dest_ip '$gaming_ip'
+    list src_port '!=80'
+    list src_port '!=443'
+    option class 'cs5'
+    option counter '1'
+EOF
+                echo "Gaming device rules added for IP: $gaming_ip"
+            fi
+        else
+            echo "Invalid IP address format. No gaming device rules added."
+        fi
+    fi
+
+    echo "Auto-setup complete. qosmate has been configured with detected settings."
+    echo "To apply these changes, please restart qosmate by running: /etc/init.d/qosmate restart"
+    
+    } > "$output_file" 2>&1
+    echo "$output_file"        
 }
 
 expand_config() {
