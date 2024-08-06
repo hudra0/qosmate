@@ -517,14 +517,47 @@ auto_setup_noninteractive() {
         return 1
     fi
 
-    # Check for speedtest-go first, then fallback to python3-speedtest-cli
+    # Check for speedtest-go first
     if command -v speedtest-go &> /dev/null; then
+        echo "speedtest-go is already installed. Using it for the speed test."
         SPEEDTEST_CMD="speedtest-go"
-    elif command -v speedtest &> /dev/null; then
-        SPEEDTEST_CMD="speedtest --simple"
     else
-        echo "Error: No speedtest tool found. Please install speedtest-go or python3-speedtest-cli."
-        return 1
+        echo "speedtest-go is not found. Checking for python3-speedtest-cli..."
+        if command -v speedtest &> /dev/null; then
+            echo "python3-speedtest-cli is already installed. Using it for the speed test."
+            SPEEDTEST_CMD="speedtest --simple"
+        else
+            echo "Neither speedtest-go nor python3-speedtest-cli is installed. Attempting to install speedtest-go..."
+            
+            # Check for sufficient space (adjust the required space as needed)
+            FREE_SPACE=$(df /overlay | awk 'NR==2 {print $4}')
+            if [ "$FREE_SPACE" -lt 15360 ]; then  # Assuming 15MB for speedtest-go
+                echo "Not enough space for speedtest-go. Attempting to install python3-speedtest-cli instead..."
+            else
+                opkg update && opkg install speedtest-go
+                if [ $? -eq 0 ]; then
+                    SPEEDTEST_CMD="speedtest-go"
+                else
+                    echo "Failed to install speedtest-go. Attempting to install python3-speedtest-cli instead..."
+                fi
+            fi
+
+            # If speedtest-go installation failed or there wasn't enough space, try python3-speedtest-cli
+            if [ -z "$SPEEDTEST_CMD" ]; then
+                if [ "$FREE_SPACE" -lt 1024 ]; then  # 1MB for python3-speedtest-cli
+                    echo "Error: Not enough free space to install any speedtest tool."
+                    echo "Auto-setup cannot continue. Please free up some space and try again."
+                    return 1
+                fi
+                opkg update && opkg install python3-speedtest-cli python3-speedtest-cli-src
+                if [ $? -eq 0 ]; then
+                    SPEEDTEST_CMD="speedtest --simple"
+                else
+                    echo "Failed to install python3-speedtest-cli. Auto-setup cannot continue."
+                    return 1
+                fi
+            fi
+        fi
     fi
 
     echo "Running speed test... This may take a few minutes."
