@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.9"
+VERSION="0.5.10"
 
 . /lib/functions.sh
 config_load 'qosmate'
