@@ -59,7 +59,6 @@ install_packages() {
 
 download_scripts() {
     [ ! -f /etc/qosmate.sh ] && wget -O /etc/qosmate.sh $SCRIPT_URL && chmod a+x /etc/qosmate.sh
-    [ ! -f /etc/hotplug.d/iface/13-qosmateHotplug ] && wget -O /etc/hotplug.d/iface/13-qosmateHotplug $HOTPLUG_SCRIPT_URL
     
     # Create the directory for tc-Netem distributions if it does not exist
     mkdir -p /usr/lib/tc
@@ -77,6 +76,24 @@ download_scripts() {
             wget -O "/usr/lib/tc/$FILE" "$DIST_URL/$FILE" || echo "Error downloading $FILE"
         fi
     done
+}
+
+create_hotplug_script() {
+    cat > /etc/hotplug.d/iface/13-qosmateHotplug << 'EOF'
+#!/bin/sh
+
+[ -n "$DEVICE" ] || exit 0
+[ "$ACTION" = ifup ] && {
+    enabled=$(uci get qosmate.global.enabled 2>/dev/null)
+    if [ "$enabled" = "1" ]; then
+        /etc/init.d/qosmate enable
+        /etc/init.d/qosmate restart
+        logger -t qosmate "Reloading qosmate.sh due to $ACTION of $INTERFACE ($DEVICE)"
+    else
+        logger -t qosmate "qosmate is disabled in the configuration. Not executing the script."
+    fi
+}
+EOF
 }
 
 check_and_download_config() {
@@ -121,6 +138,7 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
 start_service() {
     install_packages
     download_scripts
+    create_hotplug_script  # Create the hotplug script instead of downloading it    
     check_and_download_config || return 1    
     migrate_config    
     /etc/qosmate.sh    
