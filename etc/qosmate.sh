@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.10"
+VERSION="0.5.11"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -74,6 +74,25 @@ load_config() {
 }
 
 load_config
+
+validate_and_adjust_rates() {
+    if [ "$ROOT_QDISC" = "hfsc" ]; then
+        if [ -z "$DOWNRATE" ] || [ "$DOWNRATE" -eq 0 ]; then
+            echo "Warning: DOWNRATE is zero or not set for HFSC. Setting to minimum value of 1000 kbps."
+            DOWNRATE=1000
+            uci set qosmate.settings.DOWNRATE=1000
+        fi
+        if [ -z "$UPRATE" ] || [ "$UPRATE" -eq 0 ]; then
+            echo "Warning: UPRATE is zero or not set for HFSC. Setting to minimum value of 1000 kbps."
+            UPRATE=1000
+            uci set qosmate.settings.UPRATE=1000
+        fi
+        uci commit qosmate
+    fi
+}
+
+# Aufruf der neuen Funktion
+validate_and_adjust_rates
 
 # Adjust DOWNRATE based on BWMAXRATIO
 if [ $((DOWNRATE > UPRATE*BWMAXRATIO)) -eq 1 ]; then
