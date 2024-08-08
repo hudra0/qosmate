@@ -140,10 +140,14 @@ start_service() {
     download_scripts
     create_hotplug_script  # Create the hotplug script instead of downloading it    
     check_and_download_config || return 1    
-    migrate_config    
+    migrate_config 
+
+    # Enable the global option
+    uci set qosmate.global.enabled='1'
+    uci commit qosmate    
+
     /etc/qosmate.sh    
     /etc/init.d/firewall reload
-    sed -i "s/\(option enabled\).*/\1 '1'/" /etc/config/qosmate
     echo "Service started" | logger -t qosmate    
     /etc/init.d/qosmate enable     
 }
@@ -152,7 +156,11 @@ stop_service() {
     load_config    
     echo "Stopping service qosmate..."
     /etc/init.d/qosmate disable
-    sed -i "s/\(option enabled\).*/\1 '0'/" /etc/config/qosmate
+
+    # Disable the global option
+    uci set qosmate.global.enabled='0'
+    uci commit qosmate
+
     ## Delete files
     rm -f /etc/hotplug.d/iface/13-qosmateHotplug
     rm -f /usr/share/nftables.d/ruleset-post/dscptag.nft
