@@ -144,7 +144,7 @@ calculate_ack_rates
 # Create rules
 create_nft_rule() {
     local config="$1"
-    local src_ip src_port dest_ip dest_port proto class counter name
+    local src_ip src_port dest_ip dest_port proto class counter name enabled
     config_get src_ip "$config" src_ip
     config_get src_port "$config" src_port
     config_get dest_ip "$config" dest_ip
@@ -153,6 +153,10 @@ create_nft_rule() {
     config_get class "$config" class
     config_get_bool counter "$config" counter 0
     config_get name "$config" name
+    config_get_bool enabled "$config" enabled 1  # Default to enabled if not set
+
+    # Check if the rule is enabled
+    [ "$enabled" = "0" ] && return 0
 
     # Convert class to lowercase
     class=$(echo "$class" | tr 'A-Z' 'a-z')
@@ -226,7 +230,16 @@ create_nft_rule() {
 generate_dynamic_nft_rules() {
     . /lib/functions.sh
     config_load 'qosmate'
-    config_foreach create_nft_rule rule
+    
+    # Check global enable setting
+    local global_enabled
+    config_get_bool global_enabled global enabled 1  # Default to enabled if not set
+    
+    if [ "$global_enabled" = "1" ]; then
+        config_foreach create_nft_rule rule
+    else
+        echo "# QoSmate rules are globally disabled"
+    fi
 }
 
 # Generate dynamic rules
