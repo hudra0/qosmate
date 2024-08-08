@@ -697,7 +697,13 @@ setup_cake() {
     [ "$NAT_EGRESS" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nat" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nonat"
     [ "$WASH_EGRESS" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS wash" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nowash"
     
-    if [ "$ACK_FILTER_EGRESS" -eq 1 ] || { [ "$ACK_FILTER_EGRESS" = "auto" ] && [ $((DOWNRATE / UPRATE)) -ge 15 ]; }; then
+    if [ "$ACK_FILTER_EGRESS" = "auto" ]; then
+        if [ $((DOWNRATE / UPRATE)) -ge 15 ]; then
+            EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS ack-filter"
+        else
+            EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS no-ack-filter"
+        fi
+    elif [ "$ACK_FILTER_EGRESS" -eq 1 ]; then
         EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS ack-filter"
     else
         EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS no-ack-filter"
