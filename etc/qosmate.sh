@@ -91,7 +91,6 @@ validate_and_adjust_rates() {
     fi
 }
 
-# Aufruf der neuen Funktion
 validate_and_adjust_rates
 
 # Adjust DOWNRATE based on BWMAXRATIO
