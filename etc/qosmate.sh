@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.12"
+VERSION="0.5.13"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -27,9 +27,9 @@ load_config() {
     GAMEDOWN=$(uci -q get qosmate.advanced.GAMEDOWN || echo "$((DOWNRATE*15/100+400))")
     ACKRATE=$(uci -q get qosmate.advanced.ACKRATE || echo "$((UPRATE * 5 / 100))")
     UDP_RATE_LIMIT_ENABLED=$(uci -q get qosmate.advanced.UDP_RATE_LIMIT_ENABLED || echo "0")
-    UDPBULKPORT=$(uci -q get qosmate.advanced.UDPBULKPORT || echo "51413")
-    TCPBULKPORT=$(uci -q get qosmate.advanced.TCPBULKPORT || echo "51413,6881-6889")
-    VIDCONFPORTS=$(uci -q get qosmate.advanced.VIDCONFPORTS || echo "3478-3479,19302-19309,5938,53")
+    UDPBULKPORT=$(uci -q get qosmate.advanced.UDPBULKPORT || echo "")
+    TCPBULKPORT=$(uci -q get qosmate.advanced.TCPBULKPORT || echo "")
+    VIDCONFPORTS=$(uci -q get qosmate.advanced.VIDCONFPORTS || echo "")
     REALTIME4=$(uci -q get qosmate.advanced.REALTIME4 || echo "")
     REALTIME6=$(uci -q get qosmate.advanced.REALTIME6 || echo "")
     LOWPRIOLAN4=$(uci -q get qosmate.advanced.LOWPRIOLAN4 || echo "")
