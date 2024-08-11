@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.13"
+VERSION="0.5.14"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -23,8 +23,6 @@ load_config() {
     WASHDSCPUP=$(uci -q get qosmate.advanced.WASHDSCPUP || echo "1")
     WASHDSCPDOWN=$(uci -q get qosmate.advanced.WASHDSCPDOWN || echo "1")
     BWMAXRATIO=$(uci -q get qosmate.advanced.BWMAXRATIO || echo "20")
-    GAMEUP=$(uci -q get qosmate.advanced.GAMEUP || echo "$((UPRATE*15/100+400))")
-    GAMEDOWN=$(uci -q get qosmate.advanced.GAMEDOWN || echo "$((DOWNRATE*15/100+400))")
     ACKRATE=$(uci -q get qosmate.advanced.ACKRATE || echo "$((UPRATE * 5 / 100))")
     UDP_RATE_LIMIT_ENABLED=$(uci -q get qosmate.advanced.UDP_RATE_LIMIT_ENABLED || echo "0")
     UDPBULKPORT=$(uci -q get qosmate.advanced.UDPBULKPORT || echo "")
@@ -39,6 +37,8 @@ load_config() {
     LINKTYPE=$(uci -q get qosmate.hfsc.LINKTYPE || echo "ethernet")
     OH=$(uci -q get qosmate.hfsc.OH || echo "$DEFAULT_OH")
     gameqdisc=$(uci -q get qosmate.hfsc.gameqdisc || echo "pfifo")
+    GAMEUP=$(uci -q get qosmate.hfsc.GAMEUP || echo "$((UPRATE*15/100+400))")
+    GAMEDOWN=$(uci -q get qosmate.hfsc.GAMEDOWN || echo "$((DOWNRATE*15/100+400))")    
     nongameqdisc=$(uci -q get qosmate.hfsc.nongameqdisc || echo "fq_codel")
     nongameqdiscoptions=$(uci -q get qosmate.hfsc.nongameqdiscoptions || echo "besteffort ack-filter")
     MAXDEL=$(uci -q get qosmate.hfsc.MAXDEL || echo "24")
