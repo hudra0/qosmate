@@ -262,8 +262,8 @@ status_service() {
     DEFAULT_GAMEUP=$((UPRATE*15/100+400))
     DEFAULT_GAMEDOWN=$((DOWNRATE*15/100+400))
     
-    echo "Game traffic upload: $(get_current_or_default qosmate.advanced.GAMEUP "$DEFAULT_GAMEUP") kbps"
-    echo "Game traffic download: $(get_current_or_default qosmate.advanced.GAMEDOWN "$DEFAULT_GAMEDOWN") kbps"
+    echo "Game traffic upload: $(get_current_or_default qosmate.hfsc.GAMEUP "$DEFAULT_GAMEUP") kbps"
+    echo "Game traffic download: $(get_current_or_default qosmate.hfsc.GAMEDOWN "$DEFAULT_GAMEDOWN") kbps"
     if [ "$(get_current_or_default qosmate.settings.ROOT_QDISC "hfsc")" = "cake" ]; then
         echo "Queue discipline: CAKE (Root qdisc)"
     else
@@ -719,8 +719,8 @@ expand_config() {
     # Add options for each section
     add_options global enabled
     add_options settings WAN DOWNRATE UPRATE ROOT_QDISC
-    add_options advanced PRESERVE_CONFIG_FILES WASHDSCPUP WASHDSCPDOWN BWMAXRATIO GAMEUP GAMEDOWN ACKRATE UDP_RATE_LIMIT_ENABLED UDPBULKPORT TCPBULKPORT VIDCONFPORTS REALTIME4 REALTIME6 LOWPRIOLAN4 LOWPRIOLAN6
-    add_options hfsc LINKTYPE OH gameqdisc nongameqdisc nongameqdiscoptions MAXDEL PFIFOMIN PACKETSIZE netemdelayms netemjitterms netemdist pktlossp
+    add_options advanced PRESERVE_CONFIG_FILES WASHDSCPUP WASHDSCPDOWN BWMAXRATIO ACKRATE UDP_RATE_LIMIT_ENABLED UDPBULKPORT TCPBULKPORT VIDCONFPORTS REALTIME4 REALTIME6 LOWPRIOLAN4 LOWPRIOLAN6
+    add_options hfsc LINKTYPE OH gameqdisc GAMEUP GAMEDOWN nongameqdisc nongameqdiscoptions MAXDEL PFIFOMIN PACKETSIZE netemdelayms netemjitterms netemdist pktlossp
     add_options cake COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD PRIORITY_QUEUE_INGRESS PRIORITY_QUEUE_EGRESS HOST_ISOLATION NAT_INGRESS NAT_EGRESS WASH_INGRESS WASH_EGRESS ACK_FILTER_EGRESS RTT AUTORATE_INGRESS EXTRA_PARAMETERS_INGRESS EXTRA_PARAMETERS_EGRESS
 
     echo "Configuration expanded successfully. You can now edit all available options in $config_file"
