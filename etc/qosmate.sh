@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.14"
+VERSION="0.5.15"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -419,8 +419,8 @@ table inet dscptag {
         type filter hook forward priority 0; policy accept;
 
         
-        $(if [ "$WASHDSCPDOWN" -eq 1 ]; then
-            echo "# wash all the DSCP to begin with ... "
+        $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPDOWN" -eq 1 ]; then
+            echo "# wash all the DSCP on ingress ... "
             echo "        ip dscp set cs0 counter"
             echo "        ip6 dscp set cs0 counter"
           fi
@@ -464,14 +464,13 @@ ${DYNAMIC_RULES}
         ct mark set ip dscp or 128 counter
         ct mark set ip6 dscp or 128 counter
 
-        $(if [ "$WASHDSCPUP" -eq 1 ]; then
+        $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPUP" -eq 1 ]; then
+            echo "# wash all DSCP on egress ... "
             echo "meta oifname \$wan ip dscp set cs0"
             echo "        meta oifname \$wan ip6 dscp set cs0"
           fi
         )
-
     }
-    
 }
 DSCPEOF
 
@@ -708,7 +707,8 @@ setup_cake() {
     [ -n "$PRIORITY_QUEUE_EGRESS" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $PRIORITY_QUEUE_EGRESS"
     [ "$HOST_ISOLATION" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS dual-srchost"
     [ "$NAT_EGRESS" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nat" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nonat"
-    [ "$WASH_EGRESS" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS wash" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nowash"
+    
+    [ "$WASHDSCPUP" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS wash" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nowash"
     
     if [ "$ACK_FILTER_EGRESS" = "auto" ]; then
         if [ $((DOWNRATE / UPRATE)) -ge 15 ]; then
@@ -737,7 +737,8 @@ setup_cake() {
     [ -n "$PRIORITY_QUEUE_INGRESS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $PRIORITY_QUEUE_INGRESS"
     [ "$HOST_ISOLATION" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS dual-dsthost"
     [ "$NAT_INGRESS" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nat" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nonat"
-    [ "$WASH_INGRESS" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS wash" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nowash"
+    
+    [ "$WASHDSCPDOWN" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS wash" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nowash"
     
     [ -n "$RTT" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS rtt ${RTT}ms"
     [ -n "$COMMON_LINK_PRESETS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $COMMON_LINK_PRESETS"
