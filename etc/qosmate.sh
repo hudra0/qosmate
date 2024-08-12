@@ -60,8 +60,6 @@ load_config() {
     HOST_ISOLATION=$(uci -q get qosmate.cake.HOST_ISOLATION || echo "1")
     NAT_INGRESS=$(uci -q get qosmate.cake.NAT_INGRESS || echo "1")
     NAT_EGRESS=$(uci -q get qosmate.cake.NAT_EGRESS || echo "0")
-    WASH_INGRESS=$(uci -q get qosmate.cake.WASH_INGRESS || echo "0")
-    WASH_EGRESS=$(uci -q get qosmate.cake.WASH_EGRESS || echo "0")
     ACK_FILTER_EGRESS=$(uci -q get qosmate.cake.ACK_FILTER_EGRESS || echo "auto")
     RTT=$(uci -q get qosmate.cake.RTT || echo "")
     AUTORATE_INGRESS=$(uci -q get qosmate.cake.AUTORATE_INGRESS || echo "0")
