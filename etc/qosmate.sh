@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.15"
+VERSION="0.5.16"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -25,6 +25,7 @@ load_config() {
     BWMAXRATIO=$(uci -q get qosmate.advanced.BWMAXRATIO || echo "20")
     ACKRATE=$(uci -q get qosmate.advanced.ACKRATE || echo "$((UPRATE * 5 / 100))")
     UDP_RATE_LIMIT_ENABLED=$(uci -q get qosmate.advanced.UDP_RATE_LIMIT_ENABLED || echo "0")
+    TCP_UPGRADE_ENABLED=$(uci -q get qosmate.advanced.TCP_UPGRADE_ENABLED || echo "1")
     UDPBULKPORT=$(uci -q get qosmate.advanced.UDPBULKPORT || echo "")
     TCPBULKPORT=$(uci -q get qosmate.advanced.TCPBULKPORT || echo "")
     VIDCONFPORTS=$(uci -q get qosmate.advanced.VIDCONFPORTS || echo "")
@@ -328,6 +329,15 @@ else
     udp_rate_limit_rules="# UDP rate limiting is disabled."
 fi
 
+# Check if TCP upgrade for slow connections should be applied
+if [ "$TCP_UPGRADE_ENABLED" -eq 1 ]; then
+    tcp_upgrade_rules="
+ip protocol tcp add @slowtcp4 {ip saddr . ip daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets } ip dscp set af42 counter
+        ip6 nexthdr tcp add @slowtcp6 {ip6 saddr . ip6 daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
+else
+    tcp_upgrade_rules="# TCP upgrade for slow connections is disabled"
+fi
+
 ##############################
 #       dscptag.nft
 ##############################
@@ -448,10 +458,8 @@ table inet dscptag {
         # downgrade tcp that has transferred more than 10 seconds worth of packets
         ip protocol tcp ct bytes > \$first10s ip dscp < cs4 ip dscp set cs1 counter
 
-        ## tcp with less than 150 pps gets upgraded to cs4
-        ip protocol tcp add @slowtcp4 {ip saddr . ip daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets } ip dscp set af42 counter
-        ip6 nexthdr tcp add @slowtcp6 {ip6 saddr . ip6 daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets} ip6 dscp set af42 counter
-
+        $tcp_upgrade_rules
+        
 ${DYNAMIC_RULES}
 
         ## classify for the HFSC queues:
