@@ -2,7 +2,7 @@
 
 QoSmate is a Quality of Service (QoS) solution for OpenWrt routers that aims to optimize network performance while allowing for controlled prioritization of specific traffic types. It uses nftables for packet classification and offers both CAKE (Common Applications Kept Enhanced) and HFSC (Hierarchical Fair Service Curve) queueing disciplines for traffic management.
 
-The project builds upon the amazing work of Daniel Lakeland and his SimpleHFSCgamerscript, extending its capabilities and adding a user-friendly interface. QoSmate integrates concepts from various QoS systems, including SQM, DSCPCLASSIFY and cake-qos-simple to provide a comprehensive approach to traffic control.
+The project builds upon the amazing work of [@dlakelan](https://github.com/dlakelan) and his SimpleHFSCgamerscript, extending its capabilities and adding a user-friendly interface. QoSmate integrates concepts from various QoS systems, including SQM, DSCPCLASSIFY and cake-qos-simple to provide a comprehensive approach to traffic control.
 
 Key aspects of QoSmate include:
 - Support for both HFSC and CAKE queueing disciplines
