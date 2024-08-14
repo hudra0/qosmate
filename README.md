@@ -18,7 +18,7 @@ Important Note: Effective QoS is about strategic prioritization, not blanket ele
 
 Before installing QoSmate, ensure that:
 
-1. Any existing QoS services or scripts (e.g., SQM, Qosify, DSCPCLASSIFY, SimpleHFSCgamerscript) are disabled and stopped to avoid conflicts.
+1. Any existing QoS services or scripts (e.g., SQM, Qosify, DSCPCLASSIFY, SimpleHFSCgamerscript...) are disabled and stopped to avoid conflicts.
 2. Your router is rebooted to clear out old settings for a clean start.
 
 ### a) Backend Installation
