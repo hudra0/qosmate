@@ -31,7 +31,7 @@ wget -O /etc/init.d/qosmate https://raw.githubusercontent.com/hudra0/qosmate/mai
 
 ### b) Frontend Installation
 
-Install the LuCI frontend for QoSmate with this command:
+Install [luci-app-qosmate](https://github.com/hudra0/luci-app-qosmate) with this command:
 
 ```bash
 mkdir -p /www/luci-static/resources/view/qosmate /usr/share/luci/menu.d /usr/share/rpcd/acl.d && \
