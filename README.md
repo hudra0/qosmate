@@ -1,10 +1,10 @@
 # QoSmate: Quality of Service for OpenWrt
 
-QoSmate is a Quality of Service (QoS) solution for OpenWrt routers that aims to optimize network performance while allowing for controlled prioritization of specific traffic types. It uses nftables for packet classification and offers both CAKE (Common Applications Kept Enhanced) and HFSC (Hierarchical Fair Service Curve) queueing disciplines for traffic management.
+QoSmate is a Quality of Service (QoS) solution for OpenWrt routers that aims to optimize network performance while allowing for controlled prioritization of specific traffic types. It uses nftables for packet classification and offers both CAKE (Common Applications Kept Enhanced) and HFSC (Hierarchical Fair Service Curve) queueing disciplines for traffic management. It uses tc-ctinfo to restore DSCP marks on ingress.
 
-The project builds upon the amazing work of [@dlakelan](https://github.com/dlakelan) and his SimpleHFSCgamerscript, extending its capabilities and adding a user-friendly interface. QoSmate integrates concepts from various QoS systems, including SQM, DSCPCLASSIFY and cake-qos-simple to provide a comprehensive approach to traffic control.
+The project builds upon the amazing work of [@dlakelan](https://github.com/dlakelan) and his [SimpleHFSCgamerscript](https://github.com/dlakelan/routerperf/blob/master/SimpleHFSCgamerscript.sh), extending its capabilities and adding a user-friendly interface. QoSmate integrates concepts from various QoS systems, including SQM, DSCPCLASSIFY and cake-qos-simple to provide a comprehensive approach to traffic control.
 
-Key aspects of QoSmate include:
+Key aspects of QoSmate include
 - Support for both HFSC and CAKE queueing disciplines
 - A LuCI-based interface for easy configuration
 - DSCP marking and traffic prioritization options via CLI and UI
@@ -239,7 +239,7 @@ This is more or less equivalent to the `realtime4` and `realtime6` variables fro
 This rule is also applied when the auto-setup is used via CLI or UI and a Gaming Device IP (optional) is entered.
 
 ## Troubleshooting
-
+WIP...
 (Include troubleshooting steps, such as how to verify if QoSmate is working correctly, common issues and their solutions, etc.)
 
 ## Uninstallation
