@@ -239,8 +239,32 @@ This is more or less equivalent to the `realtime4` and `realtime6` variables fro
 This rule is also applied when the auto-setup is used via CLI or UI and a Gaming Device IP (optional) is entered.
 
 ## Troubleshooting
+If you encounter issues with the script or want to verify that it's working correctly, follow these steps:
+
+1. Disable DSCP washing (egress and ingress)
+2. Update and install tcpdump: `opkg update && opkg install tcpdump`
+3. Mark an ICMP ping to a reliable destination (e.g., 1.1.1.1) with a specific DSCP value using a DSCP Marking Rules.
+4. Ping the destination from your LAN client.
+5. Use `tcpdump -i <your wan interface> -v -n -Q out icmp` to display outgoing traffic (upload) and verify that the TOS value is not 0x0. Make sure to **set the right interface (WAN Interface).** 
+6. Use `tcpdump -i ifb-<your wan interface> -v -n icmp` to display incoming traffic (download) and verify that the TOS value is not 0x0. Make sure to **set the right interface (ifb + <yourwaninterface)**
+7. Install watch: `opkg update && opkg install procps-ng-watch`
+8. Check traffic control queues:
+
+   - When using HFSC as root qdisc:
+     ```
+     watch -n 2 'tc -s qdisc | grep -A 2 "parent 1:11"'
+     ```
+     Replace "1:11" with the desired class. The packet count should increase with the ping in both directions.
+
+   - When using CAKE as root qdisc:
+     ```
+     watch -n 1 'tc -s qdisc show | grep -A 20 -B 2 "diffserv4"'
+     ```
+
+   The output will show you if packets are landing in the correct queue.
+
 WIP...
-(Include troubleshooting steps, such as how to verify if QoSmate is working correctly, common issues and their solutions, etc.)
+(Include additional troubleshooting steps, such as how to verify if QoSmate is working correctly, common issues and their solutions, etc.)
 
 ## Uninstallation
 
