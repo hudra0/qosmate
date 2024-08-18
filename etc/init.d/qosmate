@@ -49,12 +49,30 @@ install_packages() {
     for pkg in $REQUIRED_PACKAGES; do
         if ! opkg list-installed | grep -q "^$pkg "; then
             echo "Installing $pkg..."
+            logger -t qosmate "Installing $pkg..."
             opkg install "$pkg" || {
                 echo "Failed to install $pkg."
+                logger -t qosmate "Failed to install $pkg."
                 return 1 # Abort if the installation fails
             }
         fi
     done
+}
+
+check_package_status() {
+    local missing_packages=""
+    for pkg in $REQUIRED_PACKAGES; do
+        if ! opkg list-installed | grep -q "^$pkg "; then
+            missing_packages="$missing_packages $pkg"
+        fi
+    done
+    
+    if [ -n "$missing_packages" ]; then
+        echo "Missing required packages:$missing_packages"
+        logger -t qosmate "Missing required packages:$missing_packages"
+        return 1
+    fi
+    return 0
 }
 
 download_scripts() {
@@ -270,6 +288,13 @@ status_service() {
         echo "Queue discipline: $(get_current_or_default qosmate.hfsc.gameqdisc "$DEFAULT_GAMEQDISC") (for game traffic in HFSC)"
     fi
 
+    echo "==== Package Status ===="
+    if check_package_status; then
+        echo "All required packages are installed."
+    else
+        echo "Some required packages are missing. QoSmate may not function correctly."
+    fi
+
     echo
     echo "==== Detailed Technical Information ===="
     echo "Traffic Control (tc) Queues:"
@@ -291,22 +316,32 @@ reload_service() {
 }
 
 check_version() {
-    local current_version=$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)
-    local latest_version=$(wget -qO- https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh | grep '^VERSION=' | cut -d'"' -f2)
+    local current_backend_version=$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)
+    local latest_backend_version=$(wget -qO- https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh | grep '^VERSION=' | cut -d'"' -f2)
     
-    if [ -z "$latest_version" ]; then
-        echo "Error: Could not retrieve the latest version."
+    local current_frontend_version=$(grep '^const UI_VERSION' /www/luci-static/resources/view/qosmate/settings.js | cut -d"'" -f2)
+    local latest_frontend_version=$(wget -qO- https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/settings.js | grep '^const UI_VERSION' | cut -d"'" -f2)
+    
+    if [ -z "$latest_backend_version" ] || [ -z "$latest_frontend_version" ]; then
+        echo "Error: Could not retrieve the latest versions."
         return 1
     fi
     
-    echo "Current version: $current_version"
-    echo "Latest version: $latest_version"
+    echo "Backend versions:"
+    echo "  Current version: $current_backend_version"
+    echo "  Latest version:  $latest_backend_version"
+    echo
+    echo "Frontend versions:"
+    echo "  Current version: $current_frontend_version"
+    echo "  Latest version:  $latest_frontend_version"
     
-    if [ "$current_version" != "$latest_version" ]; then
-        echo "A new version of qosmate is available."
+    if [ "$current_backend_version" != "$latest_backend_version" ] || [ "$current_frontend_version" != "$latest_frontend_version" ]; then
+        echo
+        echo "A new version of QoSmate is available."
         echo "To update, run: /etc/init.d/qosmate update"
     else
-        echo "qosmate is up to date."
+        echo
+        echo "QoSmate is up to date."
     fi
 }
 
