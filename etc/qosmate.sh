@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.18"
+VERSION="0.5.19"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -140,6 +140,14 @@ calculate_ack_rates() {
 # Call the function to perform the ACK rates calculations
 calculate_ack_rates
 
+# Function to check if an IP is IPv6
+is_ipv6() {
+    case "$1" in
+        *:*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # Create rules
 create_nft_rule() {
     local config="$1"
@@ -203,15 +211,31 @@ create_nft_rule() {
     fi
 
     # Append source IP and port if provided
-    [ -n "$src_ip" ] && rule_cmd="$rule_cmd $(handle_multiple_values "$src_ip" "ip saddr")"
+    if [ -n "$src_ip" ]; then
+        local ip_cmd="ip saddr"
+        if is_ipv6 "$src_ip"; then
+            ip_cmd="ip6 saddr"
+        fi
+        rule_cmd="$rule_cmd $(handle_multiple_values "$src_ip" "$ip_cmd")"
+    fi
     [ -n "$src_port" ] && rule_cmd="$rule_cmd $(handle_multiple_values "$src_port" "th sport")"
 
     # Append destination IP and port if provided
-    [ -n "$dest_ip" ] && rule_cmd="$rule_cmd $(handle_multiple_values "$dest_ip" "ip daddr")"
+    if [ -n "$dest_ip" ]; then
+        local ip_cmd="ip daddr"
+        if is_ipv6 "$dest_ip"; then
+            ip_cmd="ip6 daddr"
+        fi
+        rule_cmd="$rule_cmd $(handle_multiple_values "$dest_ip" "$ip_cmd")"
+    fi
     [ -n "$dest_port" ] && rule_cmd="$rule_cmd $(handle_multiple_values "$dest_port" "th dport")"
 
     # Append class and counter if provided
-    rule_cmd="$rule_cmd ip dscp set $class"
+    if is_ipv6 "$src_ip" || is_ipv6 "$dest_ip"; then
+        rule_cmd="$rule_cmd ip6 dscp set $class"
+    else
+        rule_cmd="$rule_cmd ip dscp set $class"
+    fi
     [ "$counter" -eq 1 ] && rule_cmd="$rule_cmd counter"
 
     # Add comment if name is provided
