@@ -238,6 +238,35 @@ This is more or less equivalent to the `realtime4` and `realtime6` variables fro
 
 This rule is also applied when the auto-setup is used via CLI or UI and a Gaming Device IP (optional) is entered.
 
+## Command Line Interface
+QoSmate can be controlled and configured via the command line. The basic syntax is:
+```
+/etc/init.d/qosmate [command]
+```
+```
+Available commands:
+        start           Start the service
+        stop            Stop the service
+        restart         Restart the service
+        reload          Reload configuration files (or restart if service does not implement reload)
+        enable          Enable service autostart
+        disable         Disable service autostart
+        enabled         Check if service is started on boot
+        running         Check if service is running
+        status          Service status
+        trace           Start with syscall trace
+        info            Dump procd service info
+        check_version   Check for updates
+        update          Update qosmate
+        auto_setup      Automatically configure qosmate
+        expand_config   Expand the configuration with all possible options
+        auto_setup_noninteractive   Automatically configure qosmate with no interaction
+```
+### Update QoSmate
+```
+/etc/init.d/qosmate update
+```
+
 ## Troubleshooting
 If you encounter issues with the script or want to verify that it's working correctly, follow these steps:
 
