@@ -437,7 +437,7 @@ update() {
     echo "Updating QoSmate..."
     
     # Update backend
-    if [ "$current_backend_version" != "$latest_backend_version" ]; then
+    if [ "$force_update" -eq 1 ] || [ "$current_backend_version" != "$latest_backend_version" ]; then
         echo "Updating backend..."
         if wget -O /etc/qosmate.sh https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh && \
            wget -O /etc/init.d/qosmate https://raw.githubusercontent.com/hudra0/qosmate/main/etc/init.d/qosmate && \
@@ -451,7 +451,7 @@ update() {
     fi
     
     # Update frontend
-    if [ "$current_frontend_version" != "$latest_frontend_version" ]; then
+    if [ "$force_update" -eq 1 ] || [ "$current_frontend_version" != "$latest_frontend_version" ]; then
         echo "Updating frontend..."
         if  wget -O /www/luci-static/resources/view/qosmate/settings.js https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/settings.js && \
             wget -O /www/luci-static/resources/view/qosmate/hfsc.js https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/hfsc.js && \
