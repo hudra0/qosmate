@@ -56,6 +56,8 @@ config cake 'cake'
     option EXTRA_PARAMETERS_INGRESS ''
     option EXTRA_PARAMETERS_EGRESS ''
 
+config qosmate 'custom_rules'
+
 #config rule 'cod1'
 #	option name 'cod1'
 #	option proto 'udp'
