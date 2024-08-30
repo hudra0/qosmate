@@ -396,6 +396,12 @@ check_version() {
 }
 
 update() {
+    local force_update=0
+
+    if [ "$QOSMATE_FORCE" = "1" ]; then
+        force_update=1
+    fi
+
     local current_backend_version=$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)
     local latest_backend_version=$(wget -qO- https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh | grep '^VERSION=' | cut -d'"' -f2)
     
@@ -412,9 +418,13 @@ update() {
     echo "Current frontend version: $current_frontend_version"
     echo "Latest frontend version: $latest_frontend_version"
     
-    if [ "$current_backend_version" = "$latest_backend_version" ] && [ "$current_frontend_version" = "$latest_frontend_version" ]; then
-        echo "Both backend and frontend are up to date."
-        return 0
+    if [ "$force_update" -eq 0 ]; then
+        if [ "$current_backend_version" = "$latest_backend_version" ] && [ "$current_frontend_version" = "$latest_frontend_version" ]; then
+            echo "Both backend and frontend are up to date."
+            return 0
+        fi
+    else
+        echo "Force update enabled. Proceeding with update even if versions are identical."
     fi
     
     echo "Updates available. Do you want to update? [y/N] "
@@ -460,7 +470,7 @@ update() {
             return 1
         fi
     fi
-
+    expand_config
     
     echo "Update complete. Please restart QoSmate."
     /etc/init.d/qosmate restart
@@ -785,7 +795,7 @@ expand_config() {
     echo "Expanding qosmate configuration with all possible options..."
 
     # Ensure all sections exist
-    for section in global settings advanced hfsc cake; do
+    for section in global settings advanced hfsc cake custom_rules; do
         if ! grep -q "config $section '$section'" "$config_file"; then
             echo >> "$config_file"  # Add a newline before the new section
             echo "config $section '$section'" >> "$config_file"
