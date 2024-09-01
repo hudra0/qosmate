@@ -45,6 +45,7 @@ wget -O /www/luci-static/resources/view/qosmate/custom_rules.js https://raw.gith
 wget -O /usr/share/luci/menu.d/luci-app-qosmate.json https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/root/usr/share/luci/menu.d/luci-app-qosmate.json && \
 wget -O /usr/share/rpcd/acl.d/luci-app-qosmate.json https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/root/usr/share/rpcd/acl.d/luci-app-qosmate.json && \
 wget -O /usr/libexec/rpcd/luci.qosmate https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/root/usr/libexec/rpcd/luci.qosmate && \
+chmod +x /usr/libexec/rpcd/luci.qosmate && \
 /etc/init.d/rpcd restart && \
 /etc/init.d/uhttpd restart
 
