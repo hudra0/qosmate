@@ -353,6 +353,18 @@ status_service() {
     echo
     echo "==== Nftables Ruleset (dscptag) ===="
     nft list ruleset | grep 'chain dscptag' -A 100
+
+
+    echo
+    echo "==== Custom Rules Table Status ===="
+    if nft list table inet qosmate_custom &>/dev/null; then
+        echo "Custom rules table (qosmate_custom) is active."
+        echo "Current custom rules:"
+        nft list table inet qosmate_custom
+    else
+        echo "Custom rules table (qosmate_custom) is not active or doesn't exist."
+    fi
+
 }
 
 restart() {
