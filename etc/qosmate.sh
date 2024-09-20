@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.23"
+VERSION="0.5.24"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -33,6 +33,7 @@ load_config() {
     REALTIME6=$(uci -q get qosmate.advanced.REALTIME6 || echo "")
     LOWPRIOLAN4=$(uci -q get qosmate.advanced.LOWPRIOLAN4 || echo "")
     LOWPRIOLAN6=$(uci -q get qosmate.advanced.LOWPRIOLAN6 || echo "")
+    MSS=$(uci -q get qosmate.advanced.MSS || echo "536")
 
     # HFSC specific settings
     LINKTYPE=$(uci -q get qosmate.hfsc.LINKTYPE || echo "ethernet")
@@ -362,6 +363,20 @@ else
     tcp_upgrade_rules="# TCP upgrade for slow connections is disabled"
 fi
 
+# Conditionally defining TCPMSS rules based on UPRATE and DOWNRATE
+
+if [ "$UPRATE" -lt 3000 ]; then
+    RULE_SET_TCPMSS_UP="meta oifname \"$WAN\" tcp flags syn tcp option maxseg size set $MSS counter;"
+else
+    RULE_SET_TCPMSS_UP=''
+fi
+
+if [ "$DOWNRATE" -lt 3000 ]; then
+    RULE_SET_TCPMSS_DOWN="meta iifname \"$WAN\" tcp flags syn tcp option maxseg size set $MSS counter;"
+else
+    RULE_SET_TCPMSS_DOWN=''
+fi
+
 ##############################
 #       dscptag.nft
 ##############################
@@ -457,6 +472,9 @@ table inet dscptag {
             echo "        ip6 dscp set cs0 counter"
           fi
         )
+
+        $RULE_SET_TCPMSS_UP
+        $RULE_SET_TCPMSS_DOWN
 
         $udpbulkport_rules
 
