@@ -22,6 +22,7 @@ config advanced 'advanced'
     option REALTIME6 ''
     option LOWPRIOLAN4 ''
     option LOWPRIOLAN6 ''
+    option MSS ''
 
 config hfsc 'hfsc'
     option LINKTYPE 'ethernet'
