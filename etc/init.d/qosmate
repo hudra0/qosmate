@@ -175,6 +175,20 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
     else
         echo "Enabled option already exists."
     fi
+
+    # Check for and correct the custom_rules section
+    if grep -q "config qosmate 'custom_rules'" $CONFIG_FILE; then
+        echo "Incorrect custom_rules section found. Correcting..."
+        sed -i "s/config qosmate 'custom_rules'/config custom_rules 'custom_rules'/" $CONFIG_FILE
+        echo "custom_rules section corrected."
+    fi
+
+    # Remove duplicate custom_rules sections if both incorrect and correct versions exist
+    if grep -q "config qosmate 'custom_rules'" $CONFIG_FILE && grep -q "config custom_rules 'custom_rules'" $CONFIG_FILE; then
+        echo "Both incorrect and correct custom_rules sections found. Removing the incorrect one..."
+        sed -i "/config qosmate 'custom_rules'/d" $CONFIG_FILE
+        echo "Incorrect custom_rules section removed."
+    fi
 }
 
 manage_custom_rules_file() {
