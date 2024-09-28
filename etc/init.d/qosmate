@@ -221,6 +221,10 @@ start_service() {
     uci set qosmate.global.enabled='1'
     uci commit qosmate    
 
+    # Save the current WAN interface to a temporary file
+    load_config
+    echo "$WAN" > /tmp/qosmate_wan
+
     # Create custom rules file if it doesn't exist
     manage_custom_rules_file create
     nft -f /etc/qosmate.d/custom_rules.nft    
@@ -232,7 +236,14 @@ start_service() {
 }
 
 stop_service() {
-    load_config    
+    # Read the old WAN interface from the temporary file
+    OLD_WAN=$(cat /tmp/qosmate_wan 2>/dev/null)
+    if [ -z "$OLD_WAN" ]; then
+        # If the temporary file doesn't exist, fall back to WAN from config
+        load_config
+        OLD_WAN="$WAN"
+    fi
+
     echo "Stopping service qosmate..."
     /etc/init.d/qosmate disable
 
@@ -247,15 +258,18 @@ stop_service() {
     rm -f /etc/hotplug.d/iface/13-qosmateHotplug
     rm -f /usr/share/nftables.d/ruleset-post/dscptag.nft
 
-    ## Delete the old qdiscs created by the script
-    tc qdisc del dev $WAN root > /dev/null 2>&1
-    tc qdisc del dev ifb-$WAN root > /dev/null 2>&1
-    tc qdisc del dev $WAN ingress > /dev/null 2>&1 
+    ## Delete the old qdiscs and IFB associated with the old WAN interface
+    tc qdisc del dev $OLD_WAN root > /dev/null 2>&1
+    tc qdisc del dev ifb-$OLD_WAN root > /dev/null 2>&1
+    tc qdisc del dev $OLD_WAN ingress > /dev/null 2>&1 
 
     # Remove IFB interface
-    ip link del ifb-$WAN 2>/dev/null
+    ip link del ifb-$OLD_WAN 2>/dev/null
 
     nft delete table inet dscptag
+
+    # Remove the temporary file
+    rm -f /tmp/qosmate_wan
 
     echo "Reloading network service..."
     /etc/init.d/network reload
