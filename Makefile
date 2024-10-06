@@ -20,17 +20,25 @@ define Package/qosmate/description
   QoSmate is a Quality of Service management tool for OpenWrt
 endef
 
+define Build/Prepare
+endef
+
+define Build/Compile
+endef
+
+define Package/qosmate/conffiles
+/etc/config/qosmate
+endef
+
 define Package/qosmate/install
 	$(INSTALL_DIR) $(1)/etc
-	$(INSTALL_BIN) ./etc/qosmate.sh $(1)/etc/
-	
 	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) ./etc/init.d/qosmate $(1)/etc/init.d/
-	
 	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
-	$(INSTALL_DATA) ./etc/hotplug.d/iface/13-qosmateHotplug $(1)/etc/hotplug.d/iface/
-	
 	$(INSTALL_DIR) $(1)/etc/config
+
+	$(INSTALL_BIN) ./etc/qosmate.sh $(1)/etc/
+	$(INSTALL_BIN) ./etc/init.d/qosmate $(1)/etc/init.d/
+	$(INSTALL_CONF) ./etc/hotplug.d/iface/13-qosmateHotplug $(1)/etc/hotplug.d/iface/
 	$(INSTALL_CONF) ./etc/config/qosmate $(1)/etc/config/
 endef
 
