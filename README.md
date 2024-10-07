@@ -325,6 +325,19 @@ rm /usr/share/rpcd/acl.d/luci-app-qosmate.json
 ```
 5. Reboot your router to clear any remaining settings.
 
+## Building qosmate and Luci-app-qosmate Packages for OpenWrt
+
+1. Navigate to Your OpenWrt Buildroot Directory:
+`cd /path/to/your/openwrt
+`
+2. Clone the QoSmate Package:
+`mkdir -p package/qosmate
+git clone https://github.com/hudra0/qosmate.git package/qosmate
+`
+3. Clone the LuCI QoSmate Package:
+`mkdir -p package/luci-app-qosmate
+git clone https://github.com/hudra0/luci-app-qosmate.git package/luci-app-qosmate`
+
 ## Contributing
 
 Contributions to QoSmate are welcome! Please submit issues and pull requests on the GitHub repository.
