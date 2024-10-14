@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.28"
+VERSION="0.5.29"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -34,6 +34,8 @@ load_config() {
     LOWPRIOLAN4=$(uci -q get qosmate.advanced.LOWPRIOLAN4 || echo "")
     LOWPRIOLAN6=$(uci -q get qosmate.advanced.LOWPRIOLAN6 || echo "")
     MSS=$(uci -q get qosmate.advanced.MSS || echo "536")
+    NFT_HOOK=$(uci -q get qosmate.advanced.NFT_HOOK || echo "forward")
+    NFT_PRIORITY=$(uci -q get qosmate.advanced.NFT_PRIORITY || echo "0")
 
     # HFSC specific settings
     LINKTYPE=$(uci -q get qosmate.hfsc.LINKTYPE || echo "ethernet")
@@ -463,7 +465,7 @@ table inet dscptag {
 
 
     chain dscptag {
-        type filter hook forward priority 0; policy accept;
+        type filter hook $NFT_HOOK priority $NFT_PRIORITY; policy accept;
 
         
         $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPDOWN" -eq 1 ]; then
