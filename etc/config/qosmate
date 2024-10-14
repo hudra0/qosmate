@@ -23,6 +23,8 @@ config advanced 'advanced'
     option LOWPRIOLAN4 ''
     option LOWPRIOLAN6 ''
     option MSS ''
+	option NFT_HOOK 'forward'
+	option NFT_PRIORITY '0'
 
 config hfsc 'hfsc'
     option LINKTYPE 'ethernet'
