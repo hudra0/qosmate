@@ -245,11 +245,13 @@ stop_service() {
     fi
 
     echo "Stopping service qosmate..."
-    /etc/init.d/qosmate disable
-
-    # Disable the global option
-    uci set qosmate.global.enabled='0'
-    uci commit qosmate
+    
+    # Only disable if not in restart
+    if [ "$DISABLE_ON_STOP" != "0" ]; then
+        /etc/init.d/qosmate disable
+        uci set qosmate.global.enabled='0'
+        uci commit qosmate
+    fi
 
     # Remove custom rules table
     nft delete table inet qosmate_custom 2>/dev/null
@@ -396,7 +398,7 @@ status_service() {
 }
 
 restart() {
-    /etc/init.d/qosmate stop
+    DISABLE_ON_STOP=0 /etc/init.d/qosmate stop
     sleep 1 # Ensure all processes have been properly terminated
     /etc/init.d/qosmate start    
 }
