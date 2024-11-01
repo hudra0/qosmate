@@ -274,10 +274,10 @@ DYNAMIC_RULES=$(generate_dynamic_nft_rules)
 # Check if ACKRATE is greater than 0
 if [ "$ACKRATE" -gt 0 ]; then
     ack_rules="\
-ip protocol tcp tcp flags & ack == ack meta length < 100 add @xfst4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${XFSTACKRATE}/second} counter jump drop995
-        ip protocol tcp tcp flags & ack == ack meta length < 100 add @fast4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${FASTACKRATE}/second} counter jump drop95
-        ip protocol tcp tcp flags & ack == ack meta length < 100 add @med4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${MEDACKRATE}/second} counter jump drop50
-        ip protocol tcp tcp flags & ack == ack meta length < 100 add @slow4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${SLOWACKRATE}/second} counter jump drop50"
+meta length < 100 ip protocol tcp tcp flags & ack == ack add @xfst4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${XFSTACKRATE}/second} counter jump drop995
+        meta length < 100 ip protocol tcp tcp flags & ack == ack add @fast4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${FASTACKRATE}/second} counter jump drop95
+        meta length < 100 ip protocol tcp tcp flags & ack == ack add @med4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${MEDACKRATE}/second} counter jump drop50
+        meta length < 100 ip protocol tcp tcp flags & ack == ack add @slow4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${SLOWACKRATE}/second} counter jump drop50"
 else
     ack_rules="# ACK rate regulation disabled as ACKRATE=0 or not set."
 fi
