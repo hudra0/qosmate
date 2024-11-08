@@ -17,11 +17,6 @@ REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ct
 SCRIPT_URL="https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh"
 HOTPLUG_SCRIPT_URL="https://raw.githubusercontent.com/hudra0/qosmate/main/etc/hotplug.d/iface/13-qosmateHotplug"
 
-service_triggers() {
-    procd_add_reload_trigger "network"
-    procd_add_reload_trigger "firewall"
-}
-
 load_config() {
     config_load 'qosmate'
     config_get WAN settings 'WAN' 'eth1'
