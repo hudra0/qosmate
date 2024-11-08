@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.32"
+VERSION="0.5.33"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -368,13 +368,17 @@ fi
 # Conditionally defining TCPMSS rules based on UPRATE and DOWNRATE
 
 if [ "$UPRATE" -lt 3000 ]; then
-    RULE_SET_TCPMSS_UP="meta oifname \"$WAN\" tcp flags syn tcp option maxseg size set $MSS counter;"
+    # Clamp MSS between 536 and 1500
+    SAFE_MSS=$(( MSS > 1500 ? 1500 : (MSS < 536 ? 536 : MSS) ))
+    RULE_SET_TCPMSS_UP="meta oifname \"$WAN\" tcp flags syn tcp option maxseg size set $SAFE_MSS counter;"
 else
     RULE_SET_TCPMSS_UP=''
 fi
 
 if [ "$DOWNRATE" -lt 3000 ]; then
-    RULE_SET_TCPMSS_DOWN="meta iifname \"$WAN\" tcp flags syn tcp option maxseg size set $MSS counter;"
+    # Clamp MSS between 536 and 1500
+    SAFE_MSS=$(( MSS > 1500 ? 1500 : (MSS < 536 ? 536 : MSS) ))
+    RULE_SET_TCPMSS_DOWN="meta iifname \"$WAN\" tcp flags syn tcp option maxseg size set $SAFE_MSS counter;"
 else
     RULE_SET_TCPMSS_DOWN=''
 fi
