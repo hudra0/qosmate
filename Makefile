@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=qosmate
-PKG_VERSION:=0.5.27
+PKG_VERSION:=0.5.31
 PKG_RELEASE:=1
 
 PKG_MAINTAINER:=Markus Hütter <mh@hudra.net>
@@ -13,7 +13,7 @@ define Package/qosmate
   SECTION:=net
   CATEGORY:=Base system
   TITLE:=QoSmate - Quality of Service management tool
-  DEPENDS:=+kmod-sched +ip-full +kmod-veth +tc-full +kmod-netem +kmod-sched-ctinfo +kmod-ifb +kmod-sched-cake
+  DEPENDS:=+ip-full +tc-full +kmod-veth +kmod-netem +kmod-sched +kmod-sched-ctinfo +kmod-sched-cake +kmod-ifb
 endef
 
 define Package/qosmate/description
@@ -32,14 +32,23 @@ endef
 
 define Package/qosmate/install
 	$(INSTALL_DIR) $(1)/etc
-	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
 	$(INSTALL_DIR) $(1)/etc/config
+	$(INSTALL_DIR) $(1)/etc/init.d
+	$(INSTALL_DIR) $(1)/etc/uci-defaults
+	$(INSTALL_DIR) $(1)/etc/hotplug.d/iface
+	$(INSTALL_DIR) $(1)/usr/lib/tc
 
-	$(INSTALL_BIN) ./etc/qosmate.sh $(1)/etc/
-	$(INSTALL_BIN) ./etc/init.d/qosmate $(1)/etc/init.d/
-	$(INSTALL_CONF) ./etc/hotplug.d/iface/13-qosmateHotplug $(1)/etc/hotplug.d/iface/
-	$(INSTALL_CONF) ./etc/config/qosmate $(1)/etc/config/
+	$(INSTALL_BIN) $(CURDIR)/files/qosmate.sh $(1)/etc/qosmate.sh
+	$(INSTALL_CONF) $(CURDIR)/files/qosmate.conf $(1)/etc/config/qosmate
+	$(INSTALL_BIN) $(CURDIR)/files/qosmate.init $(1)/etc/init.d/qosmate
+	$(INSTALL_BIN) $(CURDIR)/files/qosmate.migrate $(1)/etc/uci-defaults/99_migrate_qosmate
+	$(INSTALL_BIN) $(CURDIR)/files/qosmate.hotplug $(1)/etc/hotplug.d/iface/13-qosmate
+	
+	$(INSTALL_DATA) $(CURDIR)/files/tc-libs/experimental.dist $(1)/usr/lib/tc/experimental.dist
+	$(INSTALL_DATA) $(CURDIR)/files/tc-libs/normal.dist $(1)/usr/lib/tc/normal.dist
+	$(INSTALL_DATA) $(CURDIR)/files/tc-libs/normmix20-64.dist $(1)/usr/lib/tc/normmix20-64.dist
+	$(INSTALL_DATA) $(CURDIR)/files/tc-libs/pareto.dist $(1)/usr/lib/tc/pareto.dist
+	$(INSTALL_DATA) $(CURDIR)/files/tc-libs/paretonormal.dist $(1)/usr/lib/tc/paretonormal.dist
 endef
 
 $(eval $(call BuildPackage,qosmate))

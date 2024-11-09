@@ -5,25 +5,19 @@ STOP=99
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="check_version update auto_setup expand_config auto_setup_noninteractive validate_custom_rules"
-EXTRA_HELP="        check_version   Check for updates
-        update          Update qosmate
-        auto_setup      Automatically configure qosmate
-        expand_config   Expand the configuration with all possible options
+EXTRA_COMMANDS="auto_setup auto_setup_noninteractive expand_config validate_custom_rules"
+EXTRA_HELP="        auto_setup      Automatically configure qosmate
         auto_setup_noninteractive   Automatically configure qosmate with no interaction
+        expand_config   Expand the configuration with all possible options
         validate_custom_rules    Validate custom rules"
 
-REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake luci-lib-jsonc lua"
-SCRIPT_URL="https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh"
-HOTPLUG_SCRIPT_URL="https://raw.githubusercontent.com/hudra0/qosmate/main/etc/hotplug.d/iface/13-qosmateHotplug"
-
 service_triggers() {
-    procd_add_reload_trigger "network"
-    procd_add_reload_trigger "firewall"
+    procd_add_reload_trigger "qosmate" "network" "firewall"
 }
 
 load_config() {
     config_load 'qosmate'
+    config_get_bool enabled global 'enabled' 0
     config_get WAN settings 'WAN' 'eth1'
 }
 
@@ -50,131 +44,8 @@ validate_custom_rules() {
     fi
 }
 
-install_packages() {
-    # Flag to indicate if opkg update is needed
-    need_update=0
-
-    # Check if any packages are missing
-    for pkg in $REQUIRED_PACKAGES; do
-        if ! opkg list-installed | grep -q "^$pkg "; then
-            echo "$pkg is not installed."
-            need_update=1
-            break
-        fi
-    done
-
-    # Run opkg update if at least one package is missing
-    if [ "$need_update" -eq 1 ]; then
-        echo "Updating opkg list..."
-        opkg update
-    fi
-
-    # Install missing packages
-    for pkg in $REQUIRED_PACKAGES; do
-        if ! opkg list-installed | grep -q "^$pkg "; then
-            echo "Installing $pkg..."
-            logger -t qosmate "Installing $pkg..."
-            opkg install "$pkg" || {
-                echo "Failed to install $pkg."
-                logger -t qosmate "Failed to install $pkg."
-                return 1 # Abort if the installation fails
-            }
-        fi
-    done
-}
-
-check_package_status() {
-    local missing_packages=""
-    for pkg in $REQUIRED_PACKAGES; do
-        if ! opkg list-installed | grep -q "^$pkg "; then
-            missing_packages="$missing_packages $pkg"
-        fi
-    done
-    
-    if [ -n "$missing_packages" ]; then
-        echo "Missing required packages:$missing_packages"
-        logger -t qosmate "Missing required packages:$missing_packages"
-        return 1
-    fi
-    return 0
-}
-
-download_scripts() {
-    [ ! -f /etc/qosmate.sh ] && wget -O /etc/qosmate.sh $SCRIPT_URL && chmod a+x /etc/qosmate.sh
-    
-    # Create the directory for tc-Netem distributions if it does not exist
-    mkdir -p /usr/lib/tc
-
-    # Base URL for the repository
-    DIST_URL="https://raw.githubusercontent.com/hudra0/qosmate/main/usr/lib/tc"
-
-    # List of files
-    DIST_FILES="experimental.dist normal.dist normmix20-64.dist pareto.dist paretonormal.dist"
-
-    # Iterate through the list and download each file
-    for FILE in $DIST_FILES; do
-        if [ ! -f "/usr/lib/tc/$FILE" ]; then
-            echo "Downloading $FILE..."
-            wget -O "/usr/lib/tc/$FILE" "$DIST_URL/$FILE" || echo "Error downloading $FILE"
-        fi
-    done
-}
-
-create_hotplug_script() {
-    cat > /etc/hotplug.d/iface/13-qosmateHotplug << 'EOF'
-#!/bin/sh
-
-[ -n "$DEVICE" ] || exit 0
-[ "$ACTION" = ifup ] && {
-    enabled=$(uci get qosmate.global.enabled 2>/dev/null)
-    if [ "$enabled" = "1" ]; then
-        /etc/init.d/qosmate enable
-        /etc/init.d/qosmate restart
-        logger -t qosmate "Reloading qosmate.sh due to $ACTION of $INTERFACE ($DEVICE)"
-    else
-        logger -t qosmate "qosmate is disabled in the configuration. Not executing the script."
-    fi
-}
-EOF
-}
-
-check_and_download_config() {
-    local config_path="/etc/config/qosmate"
-    if [ ! -f "$config_path" ]; then
-        echo "Configuration file not found, downloading the latest version..."
-        wget -O $config_path "https://raw.githubusercontent.com/hudra0/qosmate/main/etc/config/qosmate" || {
-            echo "Error downloading configuration. Please check your internet connection and try again."
-            return 1
-        }
-        echo "Configuration file downloaded successfully."
-    else
-        echo "Configuration file already exists."
-    fi
-}
-
 migrate_config() {
     CONFIG_FILE="/etc/config/qosmate"
-
-    # Function to add the global enabled option if it does not exist
-    if ! grep -q "config global 'global'" $CONFIG_FILE; then
-        echo "Adding global configuration section..."
-        sed -i '1i\
-config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
-        echo "Global configuration section added."
-    else
-        echo "Global configuration section already exists."
-    fi
-
-    # Ensure the enabled option is present in the global section
-    if ! grep -q "option enabled" $CONFIG_FILE; then
-        echo "Adding enabled option to global section..."
-        sed -i "/config global 'global'/a\\
-    option enabled '1'
-" $CONFIG_FILE
-        echo "Enabled option added."
-    else
-        echo "Enabled option already exists."
-    fi
 
     # Check for and correct the custom_rules section
     if grep -q "config qosmate 'custom_rules'" $CONFIG_FILE; then
@@ -198,7 +69,7 @@ manage_custom_rules_file() {
         create)
             # Ensure the directory exists
             [ ! -d "/etc/qosmate.d" ] && mkdir -p "/etc/qosmate.d"
-            
+
             # Create the file if it doesn't exist
             [ ! -f "/etc/qosmate.d/custom_rules.nft" ] && touch "/etc/qosmate.d/custom_rules.nft"
 
@@ -211,59 +82,58 @@ manage_custom_rules_file() {
 }
 
 start_service() {
-    install_packages
-    download_scripts
-    create_hotplug_script  # Create the hotplug script instead of downloading it    
-    check_and_download_config || return 1    
-    migrate_config 
+    migrate_config
+    load_config
 
-    # Enable the global option
-    uci set qosmate.global.enabled='1'
-    uci commit qosmate    
+    # Check if enabled
+    if [ "$enabled" == 0 ]; then
+        return
+    fi
+
+    # Update the status
+    uci_set qosmate global status 1
+    uci_commit qosmate
 
     # Save the current WAN interface to a temporary file
-    load_config
     echo "$WAN" > /tmp/qosmate_wan
 
     # Create custom rules file if it doesn't exist
     manage_custom_rules_file create
-    nft -f /etc/qosmate.d/custom_rules.nft    
+    nft -f /etc/qosmate.d/custom_rules.nft
 
-    /etc/qosmate.sh    
+    /etc/qosmate.sh
     /etc/init.d/firewall reload
-    echo "Service started" | logger -t qosmate    
-    /etc/init.d/qosmate enable     
+    logger -t qosmate "Service started"
 }
 
 stop_service() {
+    load_config
+
+    # Check if enabled
+    if [ "$enabled" == 0 ]; then
+        uci_set qosmate global status 0
+        uci_commit qosmate
+    fi
+
     # Read the old WAN interface from the temporary file
     OLD_WAN=$(cat /tmp/qosmate_wan 2>/dev/null)
     if [ -z "$OLD_WAN" ]; then
         # If the temporary file doesn't exist, fall back to WAN from config
-        load_config
         OLD_WAN="$WAN"
     fi
 
-    echo "Stopping service qosmate..."
-    
-    # Only disable if not in restart
-    if [ "$DISABLE_ON_STOP" != "0" ]; then
-        /etc/init.d/qosmate disable
-        uci set qosmate.global.enabled='0'
-        uci commit qosmate
-    fi
+    logger -t qosmate "Stopping service qosmate..."
 
     # Remove custom rules table
     nft delete table inet qosmate_custom 2>/dev/null
 
     ## Delete files
-    rm -f /etc/hotplug.d/iface/13-qosmateHotplug
     rm -f /usr/share/nftables.d/ruleset-post/dscptag.nft
 
     ## Delete the old qdiscs and IFB associated with the old WAN interface
     tc qdisc del dev $OLD_WAN root > /dev/null 2>&1
     tc qdisc del dev ifb-$OLD_WAN root > /dev/null 2>&1
-    tc qdisc del dev $OLD_WAN ingress > /dev/null 2>&1 
+    tc qdisc del dev $OLD_WAN ingress > /dev/null 2>&1
 
     # Remove IFB interface
     ip link del ifb-$OLD_WAN 2>/dev/null
@@ -273,17 +143,23 @@ stop_service() {
     # Remove the temporary file
     rm -f /tmp/qosmate_wan
 
-    echo "Reloading network service..."
+    # Reload services
+    logger -t qosmate "Reloading services..."
+
     /etc/init.d/network reload
     /etc/init.d/firewall reload
-    echo "Service stopped" | logger -t qosmate     
-    exit 0
+
+    logger -t qosmate "Service stopped"
+}
+
+reload_service() {
+    stop
+    start
 }
 
 status_service() {
     # Load configuration
-    . /lib/functions.sh
-    config_load 'qosmate'
+    load_config
 
     # Function to extract default values from the main script
     get_default_value() {
@@ -311,9 +187,9 @@ status_service() {
     DEFAULT_GAMEQDISC=$(get_default_value "gameqdisc")
 
     echo "==== qosmate Status ===="
-    
+
     # Check if the service is enabled
-    if /etc/init.d/qosmate enabled; then
+    if [ "$enabled" == 1 ]; then
         echo "qosmate service is enabled."
     else
         echo "qosmate service is not enabled."
@@ -322,9 +198,9 @@ status_service() {
     # Check if traffic shaping is active
     WAN=$(uci -q get qosmate.settings.WAN || echo "$DEFAULT_WAN")
     IFB="ifb-$WAN"
-    
+
     if tc qdisc show dev $WAN 2>/dev/null | grep -q "qdisc cake"; then
-        if /etc/init.d/qosmate enabled; then
+        if [ "$enabled" == 1 ]; then
             echo "Traffic shaping is active on the egress interface ($WAN)."
         else
             echo "Default CAKE qdisc is active on the egress interface ($WAN), but qosmate is not managing it."
@@ -343,7 +219,7 @@ status_service() {
 
     echo "==== Overall Status ===="
     # Determine if the service is actually running
-    if /etc/init.d/qosmate enabled && { tc qdisc show dev $WAN 2>/dev/null | grep -q "qdisc hfsc" || tc qdisc show dev $IFB 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; }; then
+    if [ "$enabled" == 1 ] && { tc qdisc show dev $WAN 2>/dev/null | grep -q "qdisc hfsc" || tc qdisc show dev $IFB 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; }; then
         echo "qosmate is currently active and managing traffic shaping."
     else
         echo "qosmate is not currently active or managing traffic shaping."
@@ -359,20 +235,13 @@ status_service() {
     DOWNRATE=$(uci -q get qosmate.settings.DOWNRATE || echo "$DEFAULT_DOWNRATE")
     DEFAULT_GAMEUP=$((UPRATE*15/100+400))
     DEFAULT_GAMEDOWN=$((DOWNRATE*15/100+400))
-    
+
     echo "Game traffic upload: $(get_current_or_default qosmate.hfsc.GAMEUP "$DEFAULT_GAMEUP") kbps"
     echo "Game traffic download: $(get_current_or_default qosmate.hfsc.GAMEDOWN "$DEFAULT_GAMEDOWN") kbps"
     if [ "$(get_current_or_default qosmate.settings.ROOT_QDISC "hfsc")" = "cake" ]; then
         echo "Queue discipline: CAKE (Root qdisc)"
     else
         echo "Queue discipline: $(get_current_or_default qosmate.hfsc.gameqdisc "$DEFAULT_GAMEQDISC") (for game traffic in HFSC)"
-    fi
-
-    echo "==== Package Status ===="
-    if check_package_status; then
-        echo "All required packages are installed."
-    else
-        echo "Some required packages are missing. QoSmate may not function correctly."
     fi
 
     echo
@@ -395,129 +264,6 @@ status_service() {
         echo "Custom rules table (qosmate_custom) is not active or doesn't exist."
     fi
 
-}
-
-restart() {
-    DISABLE_ON_STOP=0 /etc/init.d/qosmate stop
-    sleep 1 # Ensure all processes have been properly terminated
-    /etc/init.d/qosmate start    
-}
-
-reload_service() {
-    restart
-}
-
-check_version() {
-    local current_backend_version=$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)
-    local latest_backend_version=$(wget -qO- https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh | grep '^VERSION=' | cut -d'"' -f2)
-    
-    local current_frontend_version=$(grep '^const UI_VERSION' /www/luci-static/resources/view/qosmate/settings.js | cut -d"'" -f2)
-    local latest_frontend_version=$(wget -qO- https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/settings.js | grep '^const UI_VERSION' | cut -d"'" -f2)
-    
-    if [ -z "$latest_backend_version" ] || [ -z "$latest_frontend_version" ]; then
-        echo "Error: Could not retrieve the latest versions."
-        return 1
-    fi
-    
-    echo "Backend versions:"
-    echo "  Current version: $current_backend_version"
-    echo "  Latest version:  $latest_backend_version"
-    echo
-    echo "Frontend versions:"
-    echo "  Current version: $current_frontend_version"
-    echo "  Latest version:  $latest_frontend_version"
-    
-    if [ "$current_backend_version" != "$latest_backend_version" ] || [ "$current_frontend_version" != "$latest_frontend_version" ]; then
-        echo
-        echo "A new version of QoSmate is available."
-        echo "To update, run: /etc/init.d/qosmate update"
-    else
-        echo
-        echo "QoSmate is up to date."
-    fi
-}
-
-update() {
-    local force_update=0
-
-    if [ "$QOSMATE_FORCE" = "1" ]; then
-        force_update=1
-    fi
-
-    local current_backend_version=$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)
-    local latest_backend_version=$(wget -qO- https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh | grep '^VERSION=' | cut -d'"' -f2)
-    
-    local current_frontend_version=$(grep '^const UI_VERSION' /www/luci-static/resources/view/qosmate/settings.js | cut -d"'" -f2)
-    local latest_frontend_version=$(wget -qO- https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/settings.js | grep '^const UI_VERSION' | cut -d"'" -f2)
-    
-    if [ -z "$latest_backend_version" ] || [ -z "$latest_frontend_version" ]; then
-        echo "Error: Could not retrieve the latest versions."
-        return 1
-    fi
-    
-    echo "Current backend version: $current_backend_version"
-    echo "Latest backend version: $latest_backend_version"
-    echo "Current frontend version: $current_frontend_version"
-    echo "Latest frontend version: $latest_frontend_version"
-    
-    if [ "$force_update" -eq 0 ]; then
-        if [ "$current_backend_version" = "$latest_backend_version" ] && [ "$current_frontend_version" = "$latest_frontend_version" ]; then
-            echo "Both backend and frontend are up to date."
-            return 0
-        fi
-    else
-        echo "Force update enabled. Proceeding with update even if versions are identical."
-    fi
-    
-    echo "Updates available. Do you want to update? [y/N] "
-    read answer
-    if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
-        echo "Update cancelled."
-        return 0
-    fi
-    
-    echo "Updating QoSmate..."
-    
-    # Update backend
-    if [ "$force_update" -eq 1 ] || [ "$current_backend_version" != "$latest_backend_version" ]; then
-        echo "Updating backend..."
-        if wget -O /etc/qosmate.sh https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh && \
-           wget -O /etc/init.d/qosmate https://raw.githubusercontent.com/hudra0/qosmate/main/etc/init.d/qosmate && \
-           wget -O /etc/hotplug.d/iface/13-qosmateHotplug https://raw.githubusercontent.com/hudra0/qosmate/main/etc/hotplug.d/iface/13-qosmateHotplug; then
-            chmod +x /etc/qosmate.sh /etc/init.d/qosmate
-            echo "Backend update complete."
-        else
-            echo "Backend update failed."
-            return 1
-        fi
-    fi
-    
-    # Update frontend
-    if [ "$force_update" -eq 1 ] || [ "$current_frontend_version" != "$latest_frontend_version" ]; then
-        echo "Updating frontend..."
-        if  wget -O /www/luci-static/resources/view/qosmate/settings.js https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/settings.js && \
-            wget -O /www/luci-static/resources/view/qosmate/hfsc.js https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/hfsc.js && \
-            wget -O /www/luci-static/resources/view/qosmate/cake.js https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/cake.js && \
-            wget -O /www/luci-static/resources/view/qosmate/advanced.js https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/advanced.js && \
-            wget -O /www/luci-static/resources/view/qosmate/rules.js https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/rules.js && \
-            wget -O /www/luci-static/resources/view/qosmate/connections.js https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/connections.js && \
-            wget -O /www/luci-static/resources/view/qosmate/custom_rules.js https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/custom_rules.js && \
-            wget -O /usr/share/luci/menu.d/luci-app-qosmate.json https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/root/usr/share/luci/menu.d/luci-app-qosmate.json && \
-            wget -O /usr/share/rpcd/acl.d/luci-app-qosmate.json https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/root/usr/share/rpcd/acl.d/luci-app-qosmate.json && \
-            wget -O /usr/libexec/rpcd/luci.qosmate https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/root/usr/libexec/rpcd/luci.qosmate; then
-            chmod +x /usr/libexec/rpcd/luci.qosmate
-            echo "Frontend update complete."
-            /etc/init.d/rpcd restart
-            /etc/init.d/uhttpd restart
-        else
-            echo "Frontend update failed."
-            return 1
-        fi
-    fi
-    expand_config
-    
-    echo "Update complete. Please restart QoSmate."
-    /etc/init.d/qosmate restart
 }
 
 auto_setup() {
@@ -702,7 +448,7 @@ auto_setup_noninteractive() {
     # Detect WAN interface
     WAN_INTERFACE=$(ifstatus wan | grep -e '"device"' | cut -d'"' -f4)
     L3_DEVICE=$(ifstatus wan | grep -e '"l3_device"' | cut -d'"' -f4)
-    
+
     if [ -z "$WAN_INTERFACE" ] && [ -z "$L3_DEVICE" ]; then
         echo "Error: Unable to detect WAN interface. Please set it manually in the configuration."
         return 1
@@ -763,7 +509,7 @@ auto_setup_noninteractive() {
 
     echo "Running speed test... This may take a few minutes."
     SPEED_RESULT=$($SPEEDTEST_CMD)
-    
+
     if [ "$SPEEDTEST_CMD" = "speedtest-go" ]; then
         DOWNLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Download:" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
         UPLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Upload:" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
@@ -783,7 +529,7 @@ auto_setup_noninteractive() {
     echo "QoS configuration:"
     echo "DOWNRATE: $DOWNRATE kbps (90% of measured download speed)"
     echo "UPRATE: $UPRATE kbps (90% of measured upload speed)"
-    
+
     sed -i "/option DOWNRATE/c\    option DOWNRATE '$DOWNRATE'" /etc/config/qosmate
     sed -i "/option UPRATE/c\    option UPRATE '$UPRATE'" /etc/config/qosmate
 
@@ -829,7 +575,7 @@ EOF
     echo "To apply these changes, please restart qosmate by running: /etc/init.d/qosmate restart"
     
     } > "$output_file" 2>&1
-    echo "$output_file"        
+    echo "$output_file"
 }
 
 expand_config() {

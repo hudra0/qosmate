@@ -1,8 +1,9 @@
 #!/bin/sh
 
+. "$IPKG_INSTROOT/lib/functions.sh"
+
 VERSION="0.5.31"
 
-. /lib/functions.sh
 config_load 'qosmate'
 
 # Default values
@@ -19,7 +20,6 @@ load_config() {
     UPRATE=$(uci -q get qosmate.settings.UPRATE || echo "$DEFAULT_UPRATE")
     
     # Advanced settings
-    PRESERVE_CONFIG_FILES=$(uci -q get qosmate.advanced.PRESERVE_CONFIG_FILES || echo "0")
     WASHDSCPUP=$(uci -q get qosmate.advanced.WASHDSCPUP || echo "1")
     WASHDSCPDOWN=$(uci -q get qosmate.advanced.WASHDSCPDOWN || echo "1")
     BWMAXRATIO=$(uci -q get qosmate.advanced.BWMAXRATIO || echo "20")
@@ -42,7 +42,7 @@ load_config() {
     OH=$(uci -q get qosmate.hfsc.OH || echo "$DEFAULT_OH")
     gameqdisc=$(uci -q get qosmate.hfsc.gameqdisc || echo "pfifo")
     GAMEUP=$(uci -q get qosmate.hfsc.GAMEUP || echo "$((UPRATE*15/100+400))")
-    GAMEDOWN=$(uci -q get qosmate.hfsc.GAMEDOWN || echo "$((DOWNRATE*15/100+400))")    
+    GAMEDOWN=$(uci -q get qosmate.hfsc.GAMEDOWN || echo "$((DOWNRATE*15/100+400))")
     nongameqdisc=$(uci -q get qosmate.hfsc.nongameqdisc || echo "fq_codel")
     nongameqdiscoptions=$(uci -q get qosmate.hfsc.nongameqdiscoptions || echo "besteffort ack-filter")
     MAXDEL=$(uci -q get qosmate.hfsc.MAXDEL || echo "24")
@@ -100,31 +100,6 @@ if [ $((DOWNRATE > UPRATE*BWMAXRATIO)) -eq 1 ]; then
     echo "We limit the downrate to at most $BWMAXRATIO times the upstream rate to ensure no upstream ACK floods occur which can cause game packet drops"
     DOWNRATE=$((BWMAXRATIO*UPRATE))
 fi
-
-##############################
-# Function to preserve configuration files
-##############################
-preserve_config_files() {
-    if [ "$PRESERVE_CONFIG_FILES" -eq 1 ]; then
-        {
-            echo "/etc/qosmate.sh"
-            echo "/etc/init.d/qosmate"
-            echo "/etc/hotplug.d/iface/13-qosmateHotplug" 
-        } | while read LINE; do
-            grep -qxF "$LINE" /etc/sysupgrade.conf || echo "$LINE" >> /etc/sysupgrade.conf
-        done
-        echo "Config files have been added to sysupgrade.conf for preservation."
-    else
-        echo "Preservation of config files is disabled."
-             
-        # Remove the config files from sysupgrade.conf if they exist
-        sed -i '\|/etc/qosmate.sh|d' /etc/sysupgrade.conf
-        sed -i '\|/etc/init.d/qosmate|d' /etc/sysupgrade.conf
-        sed -i '\|/etc/hotplug.d/iface/13-qosmateHotplug|d' /etc/sysupgrade.conf
-    fi
-}
-
-preserve_config_files
 
 ##############################
 # Variable checks and dynamic rule generation
@@ -186,12 +161,12 @@ create_nft_rule() {
         local prefix="$2"
         local result=""
         local exclude=0
-        
+
         if [ $(echo "$values" | grep -c "!=") -gt 0 ]; then
             exclude=1
             values=$(echo "$values" | sed 's/!=//g')
         fi
-        
+
         if [ $(echo "$values" | wc -w) -gt 1 ]; then
             if [ $exclude -eq 1 ]; then
                 result="$prefix != { $(echo $values | tr ' ' ',') }"
@@ -751,15 +726,15 @@ fi
 setup_cake() {
     tc qdisc del dev "$WAN" root > /dev/null 2>&1
     tc qdisc del dev "$LAN" root > /dev/null 2>&1
-    
+
     # Egress (Upload) CAKE setup
     EGRESS_CAKE_OPTS="bandwidth ${UPRATE}kbit"
     [ -n "$PRIORITY_QUEUE_EGRESS" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $PRIORITY_QUEUE_EGRESS"
     [ "$HOST_ISOLATION" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS dual-srchost"
     [ "$NAT_EGRESS" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nat" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nonat"
-    
+
     [ "$WASHDSCPUP" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS wash" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nowash"
-    
+
     if [ "$ACK_FILTER_EGRESS" = "auto" ]; then
         if [ $((DOWNRATE / UPRATE)) -ge 15 ]; then
             EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS ack-filter"
@@ -771,32 +746,32 @@ setup_cake() {
     else
         EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS no-ack-filter"
     fi
-    
+
     [ -n "$RTT" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS rtt ${RTT}ms"
     [ -n "$COMMON_LINK_PRESETS" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $COMMON_LINK_PRESETS"
     [ -n "$LINK_COMPENSATION" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $LINK_COMPENSATION" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS noatm"
     [ -n "$OVERHEAD" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS overhead $OVERHEAD"
     [ -n "$MPU" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS mpu $MPU"
     [ -n "$EXTRA_PARAMETERS_EGRESS" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $EXTRA_PARAMETERS_EGRESS"
-    
+
     tc qdisc add dev $WAN root cake $EGRESS_CAKE_OPTS
-    
+
     # Ingress (Download) CAKE setup
     INGRESS_CAKE_OPTS="bandwidth ${DOWNRATE}kbit ingress"
     [ "$AUTORATE_INGRESS" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS autorate-ingress"
     [ -n "$PRIORITY_QUEUE_INGRESS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $PRIORITY_QUEUE_INGRESS"
     [ "$HOST_ISOLATION" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS dual-dsthost"
     [ "$NAT_INGRESS" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nat" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nonat"
-    
+
     [ "$WASHDSCPDOWN" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS wash" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nowash"
-    
+
     [ -n "$RTT" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS rtt ${RTT}ms"
     [ -n "$COMMON_LINK_PRESETS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $COMMON_LINK_PRESETS"
     [ -n "$LINK_COMPENSATION" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $LINK_COMPENSATION" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS noatm"
     [ -n "$OVERHEAD" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS overhead $OVERHEAD"
     [ -n "$MPU" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS mpu $MPU"
     [ -n "$EXTRA_PARAMETERS_INGRESS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $EXTRA_PARAMETERS_INGRESS"
-    
+
     tc qdisc add dev $LAN root cake $INGRESS_CAKE_OPTS
 }
 
