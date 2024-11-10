@@ -463,6 +463,14 @@ table inet dscptag {
         numgen random mod 100 < 50 drop
     }
 
+    chain mark_500ms {
+        ip dscp < cs4 ip dscp set cs0 counter return
+        ip6 dscp < cs4 ip6 dscp set cs0 counter
+    }
+    chain mark_10s {
+        ip dscp < cs4 ip dscp set cs1 counter return
+        ip6 dscp < cs4 ip6 dscp set cs1 counter
+    }
 
     chain dscptag {
         type filter hook $NFT_HOOK priority $NFT_PRIORITY; policy accept;
@@ -497,10 +505,10 @@ table inet dscptag {
         $udp_rate_limit_rules
         
         # down prioritize the first 500ms of tcp packets
-        ip protocol tcp ct bytes < \$first500ms ip dscp < cs4 ip dscp set cs0 counter
+        meta l4proto tcp ct bytes < \$first500ms jump mark_500ms
 
         # downgrade tcp that has transferred more than 10 seconds worth of packets
-        ip protocol tcp ct bytes > \$first10s ip dscp < cs4 ip dscp set cs1 counter
+        meta l4proto tcp ct bytes > \$first10s jump mark_10s
 
         $tcp_upgrade_rules
         
