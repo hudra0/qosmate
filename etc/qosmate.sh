@@ -285,10 +285,8 @@ fi
 # Check if UDPBULKPORT is set
 if [ -n "$UDPBULKPORT" ]; then
     udpbulkport_rules="\
-ip protocol udp udp sport \$udpbulkport ip dscp set cs1 counter
-        ip6 nexthdr udp udp sport \$udpbulkport ip6 dscp set cs1 counter
-        ip protocol udp udp dport \$udpbulkport ip dscp set cs1 counter
-        ip6 nexthdr udp udp dport \$udpbulkport ip6 dscp set cs1 counter"
+meta l4proto udp ct original proto-src \$udpbulkport counter jump mark_bulk
+        meta l4proto udp ct original proto-dst \$udpbulkport counter jump mark_bulk"
 else
     udpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
 fi
@@ -296,10 +294,8 @@ fi
 # Check if TCPBULKPORT is set
 if [ -n "$TCPBULKPORT" ]; then
     tcpbulkport_rules="\
-ip protocol tcp tcp sport \$tcpbulkport ip dscp set cs1 counter
-        ip6 nexthdr tcp tcp sport \$tcpbulkport ip6 dscp set cs1 counter
-        ip protocol tcp tcp dport \$tcpbulkport ip dscp set cs1 counter
-        ip6 nexthdr tcp tcp dport \$tcpbulkport ip6 dscp set cs1 counter"
+meta l4proto tcp ct original proto-src \$tcpbulkport counter jump mark_bulk
+        meta l4proto tcp ct original proto-dst \$tcpbulkport counter jump mark_bulk"
 else
     tcpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
 fi
@@ -463,6 +459,10 @@ table inet dscptag {
         numgen random mod 100 < 50 drop
     }
 
+    chain mark_bulk {
+        ip6 dscp set cs1
+        ip dscp set cs1
+    }
 
     chain dscptag {
         type filter hook $NFT_HOOK priority $NFT_PRIORITY; policy accept;
