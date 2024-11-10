@@ -460,8 +460,8 @@ table inet dscptag {
     }
 
     chain mark_bulk {
+        ip dscp set cs1 return
         ip6 dscp set cs1
-        ip dscp set cs1
     }
 
     chain dscptag {
