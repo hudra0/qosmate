@@ -307,8 +307,7 @@ fi
 # Check if VIDCONFPORTS is set
 if [ -n "$VIDCONFPORTS" ]; then
     vidconfports_rules="\
-ip protocol udp udp dport \$vidconfports ip dscp set af42 counter
-        ip6 nexthdr udp udp dport \$vidconfports ip6 dscp set af42 counter"
+udp dport \$vidconfports counter jump mark_video"
 else
     vidconfports_rules="# VIDCONFPORTS Port rules disabled, no ports defined."
 fi
@@ -463,6 +462,10 @@ table inet dscptag {
         numgen random mod 100 < 50 drop
     }
 
+    chain mark_video {
+        ip dscp set af42 return
+        ip6 dscp set af42
+    }
 
     chain dscptag {
         type filter hook $NFT_HOOK priority $NFT_PRIORITY; policy accept;
