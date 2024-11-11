@@ -285,8 +285,8 @@ fi
 # Check if UDPBULKPORT is set
 if [ -n "$UDPBULKPORT" ]; then
     udpbulkport_rules="\
-meta l4proto udp ct original proto-src \$udpbulkport counter jump mark_bulk
-        meta l4proto udp ct original proto-dst \$udpbulkport counter jump mark_bulk"
+meta l4proto udp ct original proto-src \$udpbulkport counter jump mark_cs1
+        meta l4proto udp ct original proto-dst \$udpbulkport counter jump mark_cs1"
 else
     udpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
 fi
@@ -294,7 +294,7 @@ fi
 # Check if TCPBULKPORT is set
 if [ -n "$TCPBULKPORT" ]; then
     tcpbulkport_rules="\
-meta l4proto tcp ct original proto-dst \$tcpbulkport counter jump mark_bulk"
+meta l4proto tcp ct original proto-dst \$tcpbulkport counter jump mark_cs1"
 else
     tcpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
 fi
@@ -458,7 +458,7 @@ table inet dscptag {
         numgen random mod 100 < 50 drop
     }
 
-    chain mark_bulk {
+    chain mark_cs1 {
         ip dscp set cs1 return
         ip6 dscp set cs1
     }
