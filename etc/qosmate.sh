@@ -307,7 +307,7 @@ fi
 # Check if VIDCONFPORTS is set
 if [ -n "$VIDCONFPORTS" ]; then
     vidconfports_rules="\
-meta l4proto udp ct original proto-dst \$vidconfports counter jump mark_video"
+meta l4proto udp ct original proto-dst \$vidconfports counter jump mark_af42"
 else
     vidconfports_rules="# VIDCONFPORTS Port rules disabled, no ports defined."
 fi
@@ -462,7 +462,7 @@ table inet dscptag {
         numgen random mod 100 < 50 drop
     }
 
-    chain mark_video {
+    chain mark_af42 {
         ip dscp set af42 return
         ip6 dscp set af42
     }
