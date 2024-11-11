@@ -307,7 +307,7 @@ fi
 # Check if VIDCONFPORTS is set
 if [ -n "$VIDCONFPORTS" ]; then
     vidconfports_rules="\
-udp dport \$vidconfports counter jump mark_video"
+meta l4proto udp ct original proto-dst \$vidconfports counter jump mark_video"
 else
     vidconfports_rules="# VIDCONFPORTS Port rules disabled, no ports defined."
 fi
