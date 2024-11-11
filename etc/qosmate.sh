@@ -294,8 +294,7 @@ fi
 # Check if TCPBULKPORT is set
 if [ -n "$TCPBULKPORT" ]; then
     tcpbulkport_rules="\
-meta l4proto tcp ct original proto-src \$tcpbulkport counter jump mark_bulk
-        meta l4proto tcp ct original proto-dst \$tcpbulkport counter jump mark_bulk"
+meta l4proto tcp ct original proto-dst \$tcpbulkport counter jump mark_bulk"
 else
     tcpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
 fi
