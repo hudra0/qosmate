@@ -458,13 +458,16 @@ table inet dscptag {
     }
 
     chain drop995 {
-        numgen random mod 1000 < 995 drop
+	numgen random mod 1000 ge 995 return
+	drop
     }
     chain drop95 {
-        numgen random mod 100 < 95 drop
+	numgen random mod 1000 ge 950 return
+	drop
     }
     chain drop50 {
-        numgen random mod 100 < 50 drop
+	numgen random mod 1000 ge 500 return
+	drop
     }
 
 
