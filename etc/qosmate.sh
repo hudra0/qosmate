@@ -274,10 +274,10 @@ DYNAMIC_RULES=$(generate_dynamic_nft_rules)
 # Check if ACKRATE is greater than 0
 if [ "$ACKRATE" -gt 0 ]; then
     ack_rules="\
-meta length < 100 ip protocol tcp tcp flags & ack == ack add @xfst4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${XFSTACKRATE}/second} counter jump drop995
-        meta length < 100 ip protocol tcp tcp flags & ack == ack add @fast4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${FASTACKRATE}/second} counter jump drop95
-        meta length < 100 ip protocol tcp tcp flags & ack == ack add @med4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${MEDACKRATE}/second} counter jump drop50
-        meta length < 100 ip protocol tcp tcp flags & ack == ack add @slow4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${SLOWACKRATE}/second} counter jump drop50"
+meta length < 100 tcp flags & ack == ack add @xfst4ack {ct id limit rate over ${XFSTACKRATE}/second} counter jump drop995
+        meta length < 100 tcp flags & ack == ack add @fast4ack {ct id limit rate over ${FASTACKRATE}/second} counter jump drop95
+        meta length < 100 tcp flags & ack == ack add @med4ack {ct id limit rate over ${MEDACKRATE}/second} counter jump drop50
+        meta length < 100 tcp flags & ack == ack add @slow4ack {ct id limit rate over ${SLOWACKRATE}/second} counter jump drop50"
 else
     ack_rules="# ACK rate regulation disabled as ACKRATE=0 or not set."
 fi
@@ -344,8 +344,8 @@ fi
 # Check if UDP rate limiting should be applied
 if [ "$UDP_RATE_LIMIT_ENABLED" -eq 1 ]; then
     udp_rate_limit_rules="\
-ip protocol udp ip dscp > cs2 add @udp_meter4 {ip saddr . ip daddr . udp sport . udp dport limit rate over 450/second} counter ip dscp set cs0 counter
-        ip6 nexthdr udp ip6 dscp > cs2 add @udp_meter6 {ip6 saddr . ip6 daddr . udp sport . udp dport limit rate over 450/second} counter ip6 dscp set cs0 counter"
+meta l4proto udp ip dscp > cs2 add @udp_meter {ct id limit rate over 450/second} counter ip dscp set cs0 counter
+        meta l4proto udp ip6 dscp > cs2 add @udp_meter {ct id limit rate over 450/second} counter ip6 dscp set cs0 counter"
 else
     udp_rate_limit_rules="# UDP rate limiting is disabled."
 fi
@@ -353,8 +353,8 @@ fi
 # Check if TCP upgrade for slow connections should be applied
 if [ "$TCP_UPGRADE_ENABLED" -eq 1 ]; then
     tcp_upgrade_rules="
-ip protocol tcp add @slowtcp4 {ip saddr . ip daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets } ip dscp set af42 counter
-        ip6 nexthdr tcp add @slowtcp6 {ip6 saddr . ip6 daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
+meta l4proto tcp add @slowtcp {ct id limit rate 150/second burst 150 packets } ip dscp set af42 counter
+        meta l4proto tcp add @slowtcp {ct id limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
 else
     tcp_upgrade_rules="# TCP upgrade for slow connections is disabled"
 fi
@@ -418,35 +418,27 @@ table inet dscptag {
     }
 
 
-    set xfst4ack { typeof ip daddr . ip saddr . tcp dport . tcp sport
+    set xfst4ack { typeof ct id
         flags dynamic;
         timeout 5m
     }
-    set fast4ack { typeof ip daddr . ip saddr . tcp dport . tcp sport
+    set fast4ack { typeof ct id
         flags dynamic;
         timeout 5m
     }
-    set med4ack { typeof ip daddr . ip saddr . tcp dport . tcp sport
+    set med4ack { typeof ct id
         flags dynamic;
         timeout 5m
     }
-    set slow4ack { typeof ip daddr . ip saddr . tcp dport . tcp sport
+    set slow4ack { typeof ct id
         flags dynamic;
         timeout 5m
     }
-    set udp_meter4 {typeof ip saddr . ip daddr . udp sport . udp dport
+    set udp_meter {typeof ct id
         flags dynamic;
         timeout 5m
     }
-    set udp_meter6 {typeof ip6 saddr . ip6 daddr . udp sport . udp dport
-        flags dynamic;
-        timeout 5m
-    }
-    set slowtcp4 {typeof ip saddr . ip daddr . tcp sport . tcp dport
-        flags dynamic;
-        timeout 5m
-    }
-    set slowtcp6 {typeof ip6 saddr . ip6 daddr . tcp sport . tcp dport
+    set slowtcp {typeof ct id
         flags dynamic;
         timeout 5m
     }
