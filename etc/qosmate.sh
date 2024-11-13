@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.31"
+VERSION="0.5.33"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -285,10 +285,8 @@ fi
 # Check if UDPBULKPORT is set
 if [ -n "$UDPBULKPORT" ]; then
     udpbulkport_rules="\
-ip protocol udp udp sport \$udpbulkport ip dscp set cs1 counter
-        ip6 nexthdr udp udp sport \$udpbulkport ip6 dscp set cs1 counter
-        ip protocol udp udp dport \$udpbulkport ip dscp set cs1 counter
-        ip6 nexthdr udp udp dport \$udpbulkport ip6 dscp set cs1 counter"
+meta l4proto udp ct original proto-src \$udpbulkport counter jump mark_cs1
+        meta l4proto udp ct original proto-dst \$udpbulkport counter jump mark_cs1"
 else
     udpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
 fi
@@ -296,10 +294,7 @@ fi
 # Check if TCPBULKPORT is set
 if [ -n "$TCPBULKPORT" ]; then
     tcpbulkport_rules="\
-ip protocol tcp tcp sport \$tcpbulkport ip dscp set cs1 counter
-        ip6 nexthdr tcp tcp sport \$tcpbulkport ip6 dscp set cs1 counter
-        ip protocol tcp tcp dport \$tcpbulkport ip dscp set cs1 counter
-        ip6 nexthdr tcp tcp dport \$tcpbulkport ip6 dscp set cs1 counter"
+meta l4proto tcp ct original proto-dst \$tcpbulkport counter jump mark_cs1"
 else
     tcpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
 fi
@@ -307,8 +302,7 @@ fi
 # Check if VIDCONFPORTS is set
 if [ -n "$VIDCONFPORTS" ]; then
     vidconfports_rules="\
-ip protocol udp udp dport \$vidconfports ip dscp set af42 counter
-        ip6 nexthdr udp udp dport \$vidconfports ip6 dscp set af42 counter"
+meta l4proto udp ct original proto-dst \$vidconfports counter jump mark_af42"
 else
     vidconfports_rules="# VIDCONFPORTS Port rules disabled, no ports defined."
 fi
@@ -316,16 +310,16 @@ fi
 # Check if REALTIME4 and REALTIME6 are set
 if [ -n "$REALTIME4" ]; then
     realtime4_rules="\
-ip protocol udp ip daddr \$realtime4 ip dscp set cs5 counter
-        ip protocol udp ip saddr \$realtime4 ip dscp set cs5 counter"
+meta l4proto udp ip daddr \$realtime4 ip dscp set cs5 counter
+        meta l4proto udp ip saddr \$realtime4 ip dscp set cs5 counter"
 else
     realtime4_rules="# REALTIME4 rules disabled, address not defined."
 fi
 
 if [ -n "$REALTIME6" ]; then
     realtime6_rules="\
-ip6 nexthdr udp ip6 daddr \$realtime6 ip6 dscp set cs5 counter
-        ip6 nexthdr udp ip6 saddr \$realtime6 ip6 dscp set cs5 counter"
+meta l4proto udp ip6 daddr \$realtime6 ip6 dscp set cs5 counter
+        meta l4proto udp ip6 saddr \$realtime6 ip6 dscp set cs5 counter"
 else
     realtime6_rules="# REALTIME6 rules disabled, address not defined."
 fi
@@ -333,16 +327,16 @@ fi
 # Check if LOWPRIOLAN4 and LOWPRIOLAN6 are set
 if [ -n "$LOWPRIOLAN4" ]; then
     lowpriolan4_rules="\
-ip protocol udp ip daddr \$lowpriolan4 ip dscp set cs0 counter
-        ip protocol udp ip saddr \$lowpriolan4 ip dscp set cs0 counter"
+meta l4proto udp ip daddr \$lowpriolan4 ip dscp set cs0 counter
+        meta l4proto udp ip saddr \$lowpriolan4 ip dscp set cs0 counter"
 else
     lowpriolan4_rules="# LOWPRIOLAN4 rules disabled, address not defined."
 fi
 
 if [ -n "$LOWPRIOLAN6" ]; then
     lowpriolan6_rules="\
-ip6 nexthdr udp ip6 daddr \$lowpriolan6 ip6 dscp set cs0 counter
-        ip6 nexthdr udp ip6 saddr \$lowpriolan6 ip6 dscp set cs0 counter"
+meta l4proto udp ip6 daddr \$lowpriolan6 ip6 dscp set cs0 counter
+        meta l4proto udp ip6 saddr \$lowpriolan6 ip6 dscp set cs0 counter"
 else
     lowpriolan6_rules="# LOWPRIOLAN6 rules disabled, address not defined."
 fi
@@ -368,13 +362,17 @@ fi
 # Conditionally defining TCPMSS rules based on UPRATE and DOWNRATE
 
 if [ "$UPRATE" -lt 3000 ]; then
-    RULE_SET_TCPMSS_UP="meta oifname \"$WAN\" tcp flags syn tcp option maxseg size set $MSS counter;"
+    # Clamp MSS between 536 and 1500
+    SAFE_MSS=$(( MSS > 1500 ? 1500 : (MSS < 536 ? 536 : MSS) ))
+    RULE_SET_TCPMSS_UP="meta oifname \"$WAN\" tcp flags syn tcp option maxseg size set $SAFE_MSS counter;"
 else
     RULE_SET_TCPMSS_UP=''
 fi
 
 if [ "$DOWNRATE" -lt 3000 ]; then
-    RULE_SET_TCPMSS_DOWN="meta iifname \"$WAN\" tcp flags syn tcp option maxseg size set $MSS counter;"
+    # Clamp MSS between 536 and 1500
+    SAFE_MSS=$(( MSS > 1500 ? 1500 : (MSS < 536 ? 536 : MSS) ))
+    RULE_SET_TCPMSS_DOWN="meta iifname \"$WAN\" tcp flags syn tcp option maxseg size set $SAFE_MSS counter;"
 else
     RULE_SET_TCPMSS_DOWN=''
 fi
@@ -454,13 +452,16 @@ table inet dscptag {
     }
 
     chain drop995 {
-        numgen random mod 1000 < 995 drop
+	numgen random mod 1000 ge 995 return
+	drop
     }
     chain drop95 {
-        numgen random mod 100 < 95 drop
+	numgen random mod 1000 ge 950 return
+	drop
     }
     chain drop50 {
-        numgen random mod 100 < 50 drop
+	numgen random mod 1000 ge 500 return
+	drop
     }
 
     chain mark_500ms {
@@ -470,6 +471,15 @@ table inet dscptag {
     chain mark_10s {
         ip dscp < cs4 ip dscp set cs1 counter return
         ip6 dscp < cs4 ip6 dscp set cs1 counter
+    }
+    
+    chain mark_cs1 {
+        ip dscp set cs1 return
+        ip6 dscp set cs1
+    }
+    chain mark_af42 {
+        ip dscp set af42 return
+        ip6 dscp set af42
     }
 
     chain dscptag {
