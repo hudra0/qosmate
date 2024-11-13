@@ -310,16 +310,16 @@ fi
 # Check if REALTIME4 and REALTIME6 are set
 if [ -n "$REALTIME4" ]; then
     realtime4_rules="\
-ip protocol udp ip daddr \$realtime4 ip dscp set cs5 counter
-        ip protocol udp ip saddr \$realtime4 ip dscp set cs5 counter"
+meta l4proto udp ip daddr \$realtime4 ip dscp set cs5 counter
+        meta l4proto udp ip saddr \$realtime4 ip dscp set cs5 counter"
 else
     realtime4_rules="# REALTIME4 rules disabled, address not defined."
 fi
 
 if [ -n "$REALTIME6" ]; then
     realtime6_rules="\
-ip6 nexthdr udp ip6 daddr \$realtime6 ip6 dscp set cs5 counter
-        ip6 nexthdr udp ip6 saddr \$realtime6 ip6 dscp set cs5 counter"
+meta l4proto udp ip6 daddr \$realtime6 ip6 dscp set cs5 counter
+        meta l4proto udp ip6 saddr \$realtime6 ip6 dscp set cs5 counter"
 else
     realtime6_rules="# REALTIME6 rules disabled, address not defined."
 fi
@@ -327,16 +327,16 @@ fi
 # Check if LOWPRIOLAN4 and LOWPRIOLAN6 are set
 if [ -n "$LOWPRIOLAN4" ]; then
     lowpriolan4_rules="\
-ip protocol udp ip daddr \$lowpriolan4 ip dscp set cs0 counter
-        ip protocol udp ip saddr \$lowpriolan4 ip dscp set cs0 counter"
+meta l4proto udp ip daddr \$lowpriolan4 ip dscp set cs0 counter
+        meta l4proto udp ip saddr \$lowpriolan4 ip dscp set cs0 counter"
 else
     lowpriolan4_rules="# LOWPRIOLAN4 rules disabled, address not defined."
 fi
 
 if [ -n "$LOWPRIOLAN6" ]; then
     lowpriolan6_rules="\
-ip6 nexthdr udp ip6 daddr \$lowpriolan6 ip6 dscp set cs0 counter
-        ip6 nexthdr udp ip6 saddr \$lowpriolan6 ip6 dscp set cs0 counter"
+meta l4proto udp ip6 daddr \$lowpriolan6 ip6 dscp set cs0 counter
+        meta l4proto udp ip6 saddr \$lowpriolan6 ip6 dscp set cs0 counter"
 else
     lowpriolan6_rules="# LOWPRIOLAN6 rules disabled, address not defined."
 fi
