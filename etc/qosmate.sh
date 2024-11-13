@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.31"
+VERSION="0.5.33"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -302,8 +302,7 @@ fi
 # Check if VIDCONFPORTS is set
 if [ -n "$VIDCONFPORTS" ]; then
     vidconfports_rules="\
-ip protocol udp udp dport \$vidconfports ip dscp set af42 counter
-        ip6 nexthdr udp udp dport \$vidconfports ip6 dscp set af42 counter"
+meta l4proto udp ct original proto-dst \$vidconfports counter jump mark_af42"
 else
     vidconfports_rules="# VIDCONFPORTS Port rules disabled, no ports defined."
 fi
@@ -363,13 +362,17 @@ fi
 # Conditionally defining TCPMSS rules based on UPRATE and DOWNRATE
 
 if [ "$UPRATE" -lt 3000 ]; then
-    RULE_SET_TCPMSS_UP="meta oifname \"$WAN\" tcp flags syn tcp option maxseg size set $MSS counter;"
+    # Clamp MSS between 536 and 1500
+    SAFE_MSS=$(( MSS > 1500 ? 1500 : (MSS < 536 ? 536 : MSS) ))
+    RULE_SET_TCPMSS_UP="meta oifname \"$WAN\" tcp flags syn tcp option maxseg size set $SAFE_MSS counter;"
 else
     RULE_SET_TCPMSS_UP=''
 fi
 
 if [ "$DOWNRATE" -lt 3000 ]; then
-    RULE_SET_TCPMSS_DOWN="meta iifname \"$WAN\" tcp flags syn tcp option maxseg size set $MSS counter;"
+    # Clamp MSS between 536 and 1500
+    SAFE_MSS=$(( MSS > 1500 ? 1500 : (MSS < 536 ? 536 : MSS) ))
+    RULE_SET_TCPMSS_DOWN="meta iifname \"$WAN\" tcp flags syn tcp option maxseg size set $SAFE_MSS counter;"
 else
     RULE_SET_TCPMSS_DOWN=''
 fi
@@ -449,18 +452,25 @@ table inet dscptag {
     }
 
     chain drop995 {
-        numgen random mod 1000 < 995 drop
+	numgen random mod 1000 ge 995 return
+	drop
     }
     chain drop95 {
-        numgen random mod 100 < 95 drop
+	numgen random mod 1000 ge 950 return
+	drop
     }
     chain drop50 {
-        numgen random mod 100 < 50 drop
+	numgen random mod 1000 ge 500 return
+	drop
     }
 
     chain mark_cs1 {
         ip dscp set cs1 return
         ip6 dscp set cs1
+    }
+    chain mark_af42 {
+        ip dscp set af42 return
+        ip6 dscp set af42
     }
 
     chain dscptag {
