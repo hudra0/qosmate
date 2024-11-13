@@ -353,8 +353,7 @@ fi
 # Check if TCP upgrade for slow connections should be applied
 if [ "$TCP_UPGRADE_ENABLED" -eq 1 ]; then
     tcp_upgrade_rules="
-meta l4proto tcp add @slowtcp {ct id limit rate 150/second burst 150 packets } ip dscp set af42 counter
-        meta l4proto tcp add @slowtcp {ct id limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
+meta l4proto tcp add @slowtcp {ct id limit rate 150/second burst 150 packets } counter jump mark_af42"
 else
     tcp_upgrade_rules="# TCP upgrade for slow connections is disabled"
 fi
