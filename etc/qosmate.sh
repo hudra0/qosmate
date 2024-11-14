@@ -221,7 +221,7 @@ create_nft_rule() {
         fi
         rule_cmd="$rule_cmd $(handle_multiple_values "$src_ip" "$ip_cmd")"
     fi
-    [ -n "$src_port" ] && rule_cmd="$rule_cmd $(handle_multiple_values "$src_port" "th sport")"
+    [ -n "$src_port" ] && rule_cmd="$rule_cmd $(handle_multiple_values "$src_port" "ct original proto-src")"
 
     # Append destination IP and port if provided
     if [ -n "$dest_ip" ]; then
@@ -231,7 +231,7 @@ create_nft_rule() {
         fi
         rule_cmd="$rule_cmd $(handle_multiple_values "$dest_ip" "$ip_cmd")"
     fi
-    [ -n "$dest_port" ] && rule_cmd="$rule_cmd $(handle_multiple_values "$dest_port" "th dport")"
+    [ -n "$dest_port" ] && rule_cmd="$rule_cmd $(handle_multiple_values "$dest_port" "ct original proto-dst")"
 
     # Append class and counter if provided
     if is_ipv6 "$src_ip" || is_ipv6 "$dest_ip"; then
