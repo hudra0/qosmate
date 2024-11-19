@@ -457,12 +457,12 @@ table inet dscptag {
     }
 
     chain mark_500ms {
-        ip dscp < cs4 ip dscp set cs0 counter return
-        ip6 dscp < cs4 ip6 dscp set cs0 counter
+        ip dscp { 0x01-0x07, 0x09-0x1f } ip dscp set cs0 counter return
+        ip6 dscp { 0x01-0x07, 0x09-0x1f } ip6 dscp set cs0 counter
     }
     chain mark_10s {
-        ip dscp < cs4 ip dscp set cs1 counter return
-        ip6 dscp < cs4 ip6 dscp set cs1 counter
+        ip dscp { 0x00-0x07, 0x09-0x1f } ip dscp set cs1 counter return
+        ip6 dscp { 0x00-0x07, 0x09-0x1f } ip6 dscp set cs1 counter
     }
     
     chain mark_cs1 {
