@@ -45,50 +45,102 @@ validate_custom_rules() {
     fi
 }
 
-install_packages() {
-    # Flag to indicate if opkg update is needed
-    need_update=0
+# Detect package manager (opkg or apk)
+detect_package_manager() {
+    if command -v apk >/dev/null 2>&1; then
+        echo "apk"
+    elif command -v opkg >/dev/null 2>&1; then
+        echo "opkg"
+    else
+        echo "unknown"
+    fi
+}
 
+# Check if a package is installed
+check_package() {
+    local pkg="$1"
+    local pkg_manager=$(detect_package_manager)
+    
+    case "$pkg_manager" in
+        "apk")
+            apk list -I "$pkg" 2>/dev/null | grep -q "^$pkg-[0-9]"
+            return $?
+            ;;
+        "opkg")
+            opkg list-installed | grep -q "^$pkg "
+            return $?
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+install_packages() {
+    local pkg_manager=$(detect_package_manager)
+    # Flag to indicate if opkg update is needed    
+    local need_update=0
+    
     # Check if any packages are missing
     for pkg in $REQUIRED_PACKAGES; do
-        if ! opkg list-installed | grep -q "^$pkg "; then
+        if ! check_package "$pkg"; then
             echo "$pkg is not installed."
             need_update=1
             break
         fi
     done
 
-    # Run opkg update if at least one package is missing
+    # Run update if at least one package is missing
     if [ "$need_update" -eq 1 ]; then
-        echo "Updating opkg list..."
-        opkg update
-    fi
+        echo "Updating package list..."
+        case "$pkg_manager" in
+            "apk")
+                apk update
+                ;;
+            "opkg")
+                opkg update
+                ;;
+        esac
 
-    # Install missing packages
-    for pkg in $REQUIRED_PACKAGES; do
-        if ! opkg list-installed | grep -q "^$pkg "; then
-            echo "Installing $pkg..."
-            logger -t qosmate "Installing $pkg..."
-            opkg install "$pkg" || {
-                echo "Failed to install $pkg."
-                logger -t qosmate "Failed to install $pkg."
-                return 1 # Abort if the installation fails
-            }
-        fi
-    done
+        # Install missing packages
+        for pkg in $REQUIRED_PACKAGES; do
+            if ! check_package "$pkg"; then
+                echo "Installing $pkg..."
+                logger -t qosmate "Installing $pkg..."
+                case "$pkg_manager" in
+                    "apk")
+                        apk add "$pkg" || {
+                            echo "Failed to install $pkg."
+                            logger -t qosmate "Failed to install $pkg."
+                            return 1  # Abort if the installation fails
+                        }
+                        ;;
+                    "opkg")
+                        opkg install "$pkg" || {
+                            echo "Failed to install $pkg."
+                            logger -t qosmate "Failed to install $pkg."
+                            return 1  # Abort if the installation fails
+                        }
+                        ;;
+                esac
+            fi
+        done
+    fi
 }
 
 check_package_status() {
+    local pkg_manager=$(detect_package_manager)
     local missing_packages=""
+    
     for pkg in $REQUIRED_PACKAGES; do
-        if ! opkg list-installed | grep -q "^$pkg "; then
+        if ! check_package "$pkg"; then
             missing_packages="$missing_packages $pkg"
         fi
     done
     
     if [ -n "$missing_packages" ]; then
-        echo "Missing required packages:$missing_packages"
-        logger -t qosmate "Missing required packages:$missing_packages"
+        echo "Missing packages:$missing_packages"
+        logger -t qosmate "Missing packages:$missing_packages"
         return 1
     fi
     return 0
@@ -577,7 +629,14 @@ auto_setup() {
                 if [ "$FREE_SPACE" -lt 15360 ]; then  # Assuming 15MB for speedtest-go
                     echo "Not enough space for speedtest-go. Attempting to install python3-speedtest-cli instead..."
                 else
-                    opkg update && opkg install speedtest-go
+                    case "$(detect_package_manager)" in
+                        "apk")
+                            apk update && apk add speedtest-go
+                            ;;
+                        "opkg")
+                            opkg update && opkg install speedtest-go
+                            ;;
+                    esac
                     if [ $? -eq 0 ]; then
                         SPEEDTEST_CMD="speedtest-go"
                     else
@@ -592,7 +651,14 @@ auto_setup() {
                         echo "Auto-setup cannot continue. Please free up some space and try again."
                         return 1
                     fi
-                    opkg update && opkg install python3-speedtest-cli python3-speedtest-cli-src
+                    case "$(detect_package_manager)" in
+                        "apk")
+                            apk update && apk add python3-speedtest-cli
+                            ;;
+                        "opkg")
+                            opkg update && opkg install python3-speedtest-cli python3-speedtest-cli-src
+                            ;;
+                    esac
                     if [ $? -eq 0 ]; then
                         SPEEDTEST_CMD="speedtest --simple"
                     else
@@ -730,7 +796,14 @@ auto_setup_noninteractive() {
             if [ "$FREE_SPACE" -lt 15360 ]; then  # Assuming 15MB for speedtest-go
                 echo "Not enough space for speedtest-go. Attempting to install python3-speedtest-cli instead..."
             else
-                opkg update && opkg install speedtest-go
+                case "$(detect_package_manager)" in
+                    "apk")
+                        apk update && apk add speedtest-go
+                        ;;
+                    "opkg")
+                        opkg update && opkg install speedtest-go
+                        ;;
+                esac
                 if [ $? -eq 0 ]; then
                     SPEEDTEST_CMD="speedtest-go"
                 else
@@ -745,7 +818,14 @@ auto_setup_noninteractive() {
                     echo "Auto-setup cannot continue. Please free up some space and try again."
                     return 1
                 fi
-                opkg update && opkg install python3-speedtest-cli python3-speedtest-cli-src
+                case "$(detect_package_manager)" in
+                    "apk")
+                        apk update && apk add python3-speedtest-cli
+                        ;;
+                    "opkg")
+                        opkg update && opkg install python3-speedtest-cli python3-speedtest-cli-src
+                        ;;
+                esac
                 if [ $? -eq 0 ]; then
                     SPEEDTEST_CMD="speedtest --simple"
                 else
