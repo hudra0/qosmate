@@ -529,7 +529,7 @@ ${DYNAMIC_RULES}
 
         $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPUP" -eq 1 ]; then
             echo "# wash all DSCP on egress ... "
-            echo "meta oifname \$wan goto mark_cs0"
+            echo "meta oifname \$wan jump mark_cs0"
           fi
         )
     }
