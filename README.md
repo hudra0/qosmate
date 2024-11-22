@@ -308,7 +308,7 @@ WIP...
 
 ## QoSmate Issue Report Template
 
-Please use this template when reporting issues with QoSmate. Providing complete information helps us identify and resolve problems more quickly.
+Please use this template when reporting issues with QoSmate. Providing complete information helps identify and resolve problems more quickly.
 
 ### System Information and Configuration
 
