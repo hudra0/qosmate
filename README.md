@@ -306,6 +306,76 @@ If you encounter issues with the script or want to verify that it's working corr
 WIP...
 (Include additional troubleshooting steps, such as how to verify if QoSmate is working correctly, common issues and their solutions, etc.)
 
+## QoSmate Issue Report Template
+
+Please use this template when reporting issues with QoSmate. Providing complete information helps identify and resolve problems more quickly.
+
+### System Information and Configuration
+
+Please run these commands and provide their complete output:
+
+```bash
+ubus call system board
+/etc/init.d/qosmate check_version
+/etc/init.d/qosmate status
+cat /etc/config/qosmate
+```
+
+### Connection Details
+
+1. Subscribed bandwidth:
+   - Download speed (Mbps): 
+   - Upload speed (Mbps):
+2. Connection type (DSL/Cable/Fiber):
+
+### Bufferbloat Test Results
+
+Please provide Waveform bufferbloat test results (https://www.waveform.com/tools/bufferbloat):
+
+1. Test without QoSmate:
+   - Screenshot or link to test results: 
+
+2. Test with QoSmate enabled:
+   - Screenshot or link to test results: 
+
+### Issue Description
+
+1. What's the problem? (Be specific)
+2. When did it start? (After an update, configuration change, etc.)
+3. Can you reliably reproduce the issue?
+4. What have you tried to resolve it?
+
+### Steps to Reproduce
+
+1.
+2.
+3.
+
+### Expected Behavior
+
+What should happen?
+
+### Actual Behavior
+
+What actually happens?
+
+### Additional Information
+
+- Have you reviewed the QoSmate documentation?
+- Have you checked the OpenWrt forum thread for similar issues?
+- Are there any relevant log messages? (Check with `logread | grep qosmate`)
+- If gaming-related, what game/platform are you using?
+
+### Checklist
+
+Please confirm:
+- [ ] I've provided all system information requested above
+- [ ] I've included my complete QoSmate configuration
+- [ ] I've provided bufferbloat test results both with and without QoSmate
+- [ ] I've checked the documentation and forum for similar issues
+- [ ] I'm using the latest version of QoSmate
+- [ ] I've disabled all other QoS solutions (SQM, etc.)
+
 ## Uninstallation
 
 To remove QoSmate from your OpenWrt router:
