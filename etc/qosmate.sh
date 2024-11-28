@@ -456,8 +456,8 @@ table inet dscptag {
     }
 
     chain mark_500ms {
-        ip dscp < cs4 ip dscp set cs0 counter return
-        ip6 dscp < cs4 ip6 dscp set cs0 counter
+        ip dscp < cs4 ip dscp != cs1 ip dscp set cs0 counter return
+        ip6 dscp < cs4 ip6 dscp != cs1 ip6 dscp set cs0 counter
     }
     chain mark_10s {
         ip dscp < cs4 ip dscp set cs1 counter return
