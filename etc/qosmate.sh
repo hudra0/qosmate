@@ -274,10 +274,10 @@ DYNAMIC_RULES=$(generate_dynamic_nft_rules)
 # Check if ACKRATE is greater than 0
 if [ "$ACKRATE" -gt 0 ]; then
     ack_rules="\
-meta length < 100 tcp flags & ack == ack add @xfst4ack {ct id limit rate over ${XFSTACKRATE}/second} counter jump drop995
-        meta length < 100 tcp flags & ack == ack add @fast4ack {ct id limit rate over ${FASTACKRATE}/second} counter jump drop95
-        meta length < 100 tcp flags & ack == ack add @med4ack {ct id limit rate over ${MEDACKRATE}/second} counter jump drop50
-        meta length < 100 tcp flags & ack == ack add @slow4ack {ct id limit rate over ${SLOWACKRATE}/second} counter jump drop50"
+meta length < 100 tcp flags & ack == ack add @xfst4ack {ct id . ct direction limit rate over ${XFSTACKRATE}/second} counter jump drop995
+        meta length < 100 tcp flags & ack == ack add @fast4ack {ct id . ct direction limit rate over ${FASTACKRATE}/second} counter jump drop95
+        meta length < 100 tcp flags & ack == ack add @med4ack {ct id . ct direction limit rate over ${MEDACKRATE}/second} counter jump drop50
+        meta length < 100 tcp flags & ack == ack add @slow4ack {ct id . ct direction limit rate over ${SLOWACKRATE}/second} counter jump drop50"
 else
     ack_rules="# ACK rate regulation disabled as ACKRATE=0 or not set."
 fi
@@ -344,8 +344,8 @@ fi
 # Check if UDP rate limiting should be applied
 if [ "$UDP_RATE_LIMIT_ENABLED" -eq 1 ]; then
     udp_rate_limit_rules="\
-meta l4proto udp ip dscp > cs2 add @udp_meter {ct id limit rate over 450/second} counter ip dscp set cs0 counter
-        meta l4proto udp ip6 dscp > cs2 add @udp_meter {ct id limit rate over 450/second} counter ip6 dscp set cs0 counter"
+meta l4proto udp ip dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip dscp set cs0 counter
+        meta l4proto udp ip6 dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip6 dscp set cs0 counter"
 else
     udp_rate_limit_rules="# UDP rate limiting is disabled."
 fi
@@ -353,8 +353,8 @@ fi
 # Check if TCP upgrade for slow connections should be applied
 if [ "$TCP_UPGRADE_ENABLED" -eq 1 ]; then
     tcp_upgrade_rules="
-meta l4proto tcp add @slowtcp {ct id limit rate 150/second burst 150 packets } ip dscp set af42 counter
-        meta l4proto tcp add @slowtcp {ct id limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
+meta l4proto tcp add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets } ip dscp set af42 counter
+        meta l4proto tcp add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
 else
     tcp_upgrade_rules="# TCP upgrade for slow connections is disabled"
 fi
@@ -418,27 +418,27 @@ table inet dscptag {
     }
 
 
-    set xfst4ack { typeof ct id
+    set xfst4ack { typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
-    set fast4ack { typeof ct id
+    set fast4ack { typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
-    set med4ack { typeof ct id
+    set med4ack { typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
-    set slow4ack { typeof ct id
+    set slow4ack { typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
-    set udp_meter {typeof ct id
+    set udp_meter {typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
-    set slowtcp {typeof ct id
+    set slowtcp {typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
