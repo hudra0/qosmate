@@ -464,7 +464,11 @@ table inet dscptag {
         ip dscp < cs4 ip dscp set cs1 counter return
         ip6 dscp < cs4 ip6 dscp set cs1 counter
     }
-    
+
+    chain mark_cs0 {
+        ip dscp set cs0 return
+        ip6 dscp set cs0
+    }
     chain mark_cs1 {
         ip dscp set cs1 return
         ip6 dscp set cs1
@@ -480,8 +484,7 @@ table inet dscptag {
         
         $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPDOWN" -eq 1 ]; then
             echo "# wash all the DSCP on ingress ... "
-            echo "        ip dscp set cs0 counter"
-            echo "        ip6 dscp set cs0 counter"
+            echo "        counter jump mark_cs0"
           fi
         )
 
@@ -526,8 +529,7 @@ ${DYNAMIC_RULES}
 
         $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPUP" -eq 1 ]; then
             echo "# wash all DSCP on egress ... "
-            echo "meta oifname \$wan ip dscp set cs0"
-            echo "        meta oifname \$wan ip6 dscp set cs0"
+            echo "meta oifname \$wan jump mark_cs0"
           fi
         )
     }
