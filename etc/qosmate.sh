@@ -674,9 +674,17 @@ tc class add dev "$DEV" parent 1:1 classid 1:15 hfsc ls m1 "$((RATE*3/100))kbit"
 ## packets for a little while than play a whole game lagged by a full
 ## tick
 
-REDMIN=$((RATE*MAXDEL/3/8)) 
+# Calculate REDMIN and REDMAX based on gamerate and MAXDEL
+REDMIN=$((gamerate * MAXDEL / 3 / 8))
+REDMAX=$((gamerate * MAXDEL / 8))
 
-REDMAX=$((RATE * MAXDEL/8)) 
+# Calculate BURST: (min + min + max)/(3 * avpkt) as per RED documentation
+BURST=$(( (REDMIN + REDMIN + REDMAX) / (3 * 500) ))
+
+# Ensure BURST is at least 2 packets
+if [ $BURST -lt 2 ]; then
+    BURST=2
+fi
 
 # for fq_codel
 INTVL=$((100+2*1500*8/RATE))
@@ -718,7 +726,7 @@ case $useqdisc in
  	#tc qdisc add dev "$DEV" parent 1:11 handle 10: bfifo limit $((MAXDEL * RATE / 8))   
 	;;    
     "red")
-	tc qdisc add dev "$DEV" parent 1:11 handle 10: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth ${RATE}kbit  probability 1.0
+	tc qdisc add dev "$DEV" parent 1:11 handle 10: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth ${RATE}kbit burst $BURST probability 1.0
 	## send game packets to 10:, they're all treated the same
 	;;
     "fq_codel")
