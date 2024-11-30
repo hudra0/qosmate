@@ -12,7 +12,12 @@ Key aspects of QoSmate include
 
 While QoSmate can benefit various types of network traffic, including gaming and other latency-sensitive applications, it is designed to improve overall network performance when configured properly.
 
-Important Note: Effective QoS is about strategic prioritization, not blanket elevation of all traffic. QoSmate allows you to prioritize specific traffic types, but it's crucial to use this capability judiciously. Over-prioritization can negate the benefits of QoS, as elevating too much traffic essentially equates to no prioritization at all. Remember that for every packet given preferential treatment, others may experience increased delay or even drops. The goal is to create a balanced, efficient network environment, not to prioritize everything.
+### ⚠️ Important Note:
+
+**Effective QoS is about strategic prioritization, not blanket elevation of all traffic.**  
+QoSmate allows you to prioritize specific traffic types, but it's crucial to use this capability **judiciously**. Over-prioritization can negate the benefits of QoS, as elevating too much traffic essentially equates to no prioritization at all.
+
+> Remember that for every packet given preferential treatment, others may experience increased delay or even drops. The goal is to create a balanced, efficient network environment, not to prioritize everything.
 
 ## 1. Installation
 
