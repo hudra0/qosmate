@@ -211,6 +211,8 @@ create_nft_rule() {
     # Handle multiple protocols
     if [ -n "$proto" ]; then
         rule_cmd="$rule_cmd $(handle_multiple_values "$proto" "meta l4proto")"
+    else
+	rule_cmd="$rule_cmd meta l4proto {tcp,udp}"
     fi
 
     # Append source IP and port if provided
