@@ -733,8 +733,31 @@ case $useqdisc in
 	tc qdisc add dev "$DEV" parent "1:11" fq_codel memory_limit $((RATE*200/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
 	;;
     "netem")
-	tc qdisc add dev "$DEV" parent 1:11 handle 10: netem limit $((4+9*RATE/8/500)) delay "${netemdelayms}ms" "${netemjitterms}ms" distribution "$netemdist"
-	;;
+        NETEM_CMD="tc qdisc add dev \"$DEV\" parent 1:11 handle 10: netem limit $((4+9*RATE/8/500))"
+        
+        # If jitter is set but delay is 0, force minimum delay of 1ms
+        if [ "$netemjitterms" -ne 0 ] && [ "$netemdelayms" -eq 0 ]; then
+            netemdelayms=1
+        fi
+
+        # Add delay parameter if set (either original or forced minimum)
+        if [ "$netemdelayms" -ne 0 ]; then
+            NETEM_CMD="$NETEM_CMD delay ${netemdelayms}ms"
+            
+            # Add jitter if set
+            if [ "$netemjitterms" -ne 0 ]; then
+                NETEM_CMD="$NETEM_CMD ${netemjitterms}ms"
+                NETEM_CMD="$NETEM_CMD distribution $netemdist"
+            fi
+        fi
+        
+        # Add packet loss if set
+        if [ "$pktlossp" != "none" ] && [ -n "$pktlossp" ]; then
+            NETEM_CMD="$NETEM_CMD loss $pktlossp"
+        fi
+        
+        eval "$NETEM_CMD"
+    ;;
 
 
 esac
