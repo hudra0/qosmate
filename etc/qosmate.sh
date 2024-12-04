@@ -1,6 +1,6 @@
 #!/bin/sh
 
-VERSION="0.5.38"
+VERSION="0.5.39"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -51,6 +51,7 @@ load_config() {
     netemdelayms=$(uci -q get qosmate.hfsc.netemdelayms || echo "30")
     netemjitterms=$(uci -q get qosmate.hfsc.netemjitterms || echo "7")
     netemdist=$(uci -q get qosmate.hfsc.netemdist || echo "normal")
+    netem_direction=$(uci -q get qosmate.hfsc.netem_direction || echo "both")
     pktlossp=$(uci -q get qosmate.hfsc.pktlossp || echo "none")
 
     # CAKE specific settings
@@ -733,30 +734,39 @@ case $useqdisc in
 	tc qdisc add dev "$DEV" parent "1:11" fq_codel memory_limit $((RATE*200/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
 	;;
     "netem")
-        NETEM_CMD="tc qdisc add dev \"$DEV\" parent 1:11 handle 10: netem limit $((4+9*RATE/8/500))"
-        
-        # If jitter is set but delay is 0, force minimum delay of 1ms
-        if [ "$netemjitterms" -ne 0 ] && [ "$netemdelayms" -eq 0 ]; then
-            netemdelayms=1
-        fi
-
-        # Add delay parameter if set (either original or forced minimum)
-        if [ "$netemdelayms" -ne 0 ]; then
-            NETEM_CMD="$NETEM_CMD delay ${netemdelayms}ms"
+        # Only apply NETEM if this direction is enabled
+        if [ "$NETEM_DIRECTION" = "both" ] || \
+           ([ "$NETEM_DIRECTION" = "egress" ] && [ "$DIR" = "wan" ]) || \
+           ([ "$NETEM_DIRECTION" = "ingress" ] && [ "$DIR" = "lan" ]); then
             
-            # Add jitter if set
-            if [ "$netemjitterms" -ne 0 ]; then
-                NETEM_CMD="$NETEM_CMD ${netemjitterms}ms"
-                NETEM_CMD="$NETEM_CMD distribution $netemdist"
+            NETEM_CMD="tc qdisc add dev \"$DEV\" parent 1:11 handle 10: netem limit $((4+9*RATE/8/500))"
+            
+            # If jitter is set but delay is 0, force minimum delay of 1ms
+            if [ "$netemjitterms" -ne 0 ] && [ "$netemdelayms" -eq 0 ]; then
+                netemdelayms=1
             fi
+
+            # Add delay parameter if set (either original or forced minimum)
+            if [ "$netemdelayms" -ne 0 ]; then
+                NETEM_CMD="$NETEM_CMD delay ${netemdelayms}ms"
+                
+                # Add jitter if set
+                if [ "$netemjitterms" -ne 0 ]; then
+                    NETEM_CMD="$NETEM_CMD ${netemjitterms}ms"
+                    NETEM_CMD="$NETEM_CMD distribution $netemdist"
+                fi
+            fi
+            
+            # Add packet loss if set
+            if [ "$pktlossp" != "none" ] && [ -n "$pktlossp" ]; then
+                NETEM_CMD="$NETEM_CMD loss $pktlossp"
+            fi
+            
+            eval "$NETEM_CMD"
+        else
+            # Use pfifo as fallback when NETEM is not applied in this direction
+            tc qdisc add dev "$DEV" parent 1:11 handle 10: pfifo limit $((PFIFOMIN+MAXDEL*RATE/8/PACKETSIZE))
         fi
-        
-        # Add packet loss if set
-        if [ "$pktlossp" != "none" ] && [ -n "$pktlossp" ]; then
-            NETEM_CMD="$NETEM_CMD loss $pktlossp"
-        fi
-        
-        eval "$NETEM_CMD"
     ;;
 
 
