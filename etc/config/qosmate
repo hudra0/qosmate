@@ -41,6 +41,7 @@ config hfsc 'hfsc'
     option netemjitterms '7'
     option netemdist 'normal'
     option pktlossp 'none'
+	option netem_direction 'both'
 
 config cake 'cake'
     option COMMON_LINK_PRESETS 'ethernet'
