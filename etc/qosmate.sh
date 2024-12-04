@@ -51,7 +51,7 @@ load_config() {
     netemdelayms=$(uci -q get qosmate.hfsc.netemdelayms || echo "30")
     netemjitterms=$(uci -q get qosmate.hfsc.netemjitterms || echo "7")
     netemdist=$(uci -q get qosmate.hfsc.netemdist || echo "normal")
-    netem_direction=$(uci -q get qosmate.hfsc.netem_direction || echo "both")
+    NETEM_DIRECTION=$(uci -q get qosmate.hfsc.netem_direction || echo "both")
     pktlossp=$(uci -q get qosmate.hfsc.pktlossp || echo "none")
 
     # CAKE specific settings
