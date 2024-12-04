@@ -1,4 +1,5 @@
 #!/bin/sh /etc/rc.common
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016
 
 START=99
 STOP=99
@@ -308,12 +309,12 @@ stop_service() {
     rm -f /usr/share/nftables.d/ruleset-post/dscptag.nft
 
     ## Delete the old qdiscs and IFB associated with the old WAN interface
-    tc qdisc del dev $OLD_WAN root > /dev/null 2>&1
-    tc qdisc del dev ifb-$OLD_WAN root > /dev/null 2>&1
-    tc qdisc del dev $OLD_WAN ingress > /dev/null 2>&1 
+    tc qdisc del dev "$OLD_WAN" root > /dev/null 2>&1
+    tc qdisc del dev ifb-"$OLD_WAN" root > /dev/null 2>&1
+    tc qdisc del dev "$OLD_WAN" ingress > /dev/null 2>&1 
 
     # Remove IFB interface
-    ip link del ifb-$OLD_WAN 2>/dev/null
+    ip link del ifb-"$OLD_WAN" 2>/dev/null
 
     nft delete table inet dscptag
 
@@ -334,16 +335,16 @@ status_service() {
 
     # Function to extract default values from the main script
     get_default_value() {
-        local var_name=$1
-        local default_value=$(grep "^$var_name=" /etc/qosmate.sh | cut -d'=' -f2- | tr -d '"')
+        local var_name="$1"
+        local default_value="$(grep "^$var_name=" /etc/qosmate.sh | cut -d'=' -f2- | tr -d '"')"
         echo "$default_value"
     }
 
     # Function to get current value or default
     get_current_or_default() {
-        local uci_path=$1
-        local default_value=$2
-        local value=$(uci -q get $uci_path)
+        local uci_path="$1"
+        local default_value="$2"
+        local value="$(uci -q get "$uci_path")"
         if [ -z "$value" ]; then
             echo "$default_value (Default value)"
         else
@@ -370,19 +371,19 @@ status_service() {
     WAN=$(uci -q get qosmate.settings.WAN || echo "$DEFAULT_WAN")
     IFB="ifb-$WAN"
     
-    if tc qdisc show dev $WAN 2>/dev/null | grep -q "qdisc cake"; then
+    if tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc cake"; then
         if /etc/init.d/qosmate enabled; then
             echo "Traffic shaping is active on the egress interface ($WAN)."
         else
             echo "Default CAKE qdisc is active on the egress interface ($WAN), but qosmate is not managing it."
         fi
-    elif tc qdisc show dev $WAN 2>/dev/null | grep -q "qdisc hfsc"; then
+    elif tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc hfsc"; then
         echo "Traffic shaping (HFSC) is active on the egress interface ($WAN)."
     else
         echo "No qosmate traffic shaping is active on the egress interface ($WAN)."
     fi
 
-    if tc qdisc show dev $IFB 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; then
+    if tc qdisc show dev "$IFB" 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; then
         echo "Traffic shaping is active on the ingress interface ($IFB)."
     else
         echo "Traffic shaping is not active on the ingress interface ($IFB)."
@@ -390,8 +391,9 @@ status_service() {
 
     echo "==== Overall Status ===="
     # Determine if the service is actually running
-    if /etc/init.d/qosmate enabled && { tc qdisc show dev $WAN 2>/dev/null | grep -q "qdisc hfsc" || tc qdisc show dev $IFB 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; }; then
-        echo "qosmate is currently active and managing traffic shaping."
+    if /etc/init.d/qosmate enabled && { tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc hfsc" ||
+		tc qdisc show dev "$IFB" 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; }; then
+        	echo "qosmate is currently active and managing traffic shaping."
     else
         echo "qosmate is not currently active or managing traffic shaping."
     fi
@@ -455,11 +457,11 @@ reload_service() {
 }
 
 check_version() {
-    local current_backend_version=$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)
-    local latest_backend_version=$(wget -qO- https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh | grep '^VERSION=' | cut -d'"' -f2)
+    local current_backend_version="$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)"
+    local latest_backend_version="$(wget -qO- https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh | grep '^VERSION=' | cut -d'"' -f2)"
     
-    local current_frontend_version=$(grep '^const UI_VERSION' /www/luci-static/resources/view/qosmate/settings.js | cut -d"'" -f2)
-    local latest_frontend_version=$(wget -qO- https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/settings.js | grep '^const UI_VERSION' | cut -d"'" -f2)
+    local current_frontend_version="$(grep '^const UI_VERSION' /www/luci-static/resources/view/qosmate/settings.js | cut -d"'" -f2)"
+    local latest_frontend_version="$(wget -qO- https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/settings.js | grep '^const UI_VERSION' | cut -d"'" -f2)"
     
     if [ -z "$latest_backend_version" ] || [ -z "$latest_frontend_version" ]; then
         echo "Error: Could not retrieve the latest versions."
@@ -491,11 +493,11 @@ update() {
         force_update=1
     fi
 
-    local current_backend_version=$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)
-    local latest_backend_version=$(wget -qO- https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh | grep '^VERSION=' | cut -d'"' -f2)
+    local current_backend_version="$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)"
+    local latest_backend_version="$(wget -qO- https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh | grep '^VERSION=' | cut -d'"' -f2)"
     
-    local current_frontend_version=$(grep '^const UI_VERSION' /www/luci-static/resources/view/qosmate/settings.js | cut -d"'" -f2)
-    local latest_frontend_version=$(wget -qO- https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/settings.js | grep '^const UI_VERSION' | cut -d"'" -f2)
+    local current_frontend_version="$(grep '^const UI_VERSION' /www/luci-static/resources/view/qosmate/settings.js | cut -d"'" -f2)"
+    local latest_frontend_version="$(wget -qO- https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main/htdocs/luci-static/resources/view/settings.js | grep '^const UI_VERSION' | cut -d"'" -f2)"
     
     if [ -z "$latest_backend_version" ] || [ -z "$latest_frontend_version" ]; then
         echo "Error: Could not retrieve the latest versions."
