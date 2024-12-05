@@ -313,7 +313,7 @@ stop_service() {
     ## Delete the old qdiscs and IFB associated with the old WAN interface
     tc qdisc del dev "$OLD_WAN" root > /dev/null 2>&1
     tc qdisc del dev ifb-"$OLD_WAN" root > /dev/null 2>&1
-    tc qdisc del dev "$OLD_WAN" ingress > /dev/null 2>&1 
+    tc qdisc del dev "$OLD_WAN" ingress > /dev/null 2>&1
 
     # Remove IFB interface
     ip link del ifb-"$OLD_WAN" 2>/dev/null
