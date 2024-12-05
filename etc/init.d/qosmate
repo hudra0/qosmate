@@ -281,7 +281,7 @@ start_service() {
 
     /etc/qosmate.sh    
     /etc/init.d/firewall reload
-    echo "Service started" | logger -t qosmate    
+    logger -t qosmate "Service started"
     /etc/init.d/qosmate enable     
 }
 
