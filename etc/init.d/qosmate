@@ -57,6 +57,19 @@ detect_package_manager() {
     fi
 }
 
+# Check for valid package manager
+check_pkg_manager() {
+    case "$1" in
+        apk|opkg)
+            ;;
+        *)
+            logger -s -t qosmate -p user.err "Error: Unexpected package manager '$1'."
+            return 1
+            ;;
+    esac
+    :
+}
+
 # Check if a package is installed
 check_package() {
     local pkg="$1"
@@ -79,7 +92,9 @@ check_package() {
 install_packages() {
     # Flag to indicate if opkg update is needed    
     local need_update=0
-    
+
+    check_pkg_manager "$pkg_manager" || return 1
+
     # Check if any packages are missing
     for pkg in $REQUIRED_PACKAGES; do
         if ! check_package "$pkg"; then
@@ -412,7 +427,8 @@ status_service() {
     fi
 
     echo "==== Package Status ===="
-    if check_package_status; then
+
+    if check_pkg_manager "$pkg_manager" && check_package_status; then
         echo "All required packages are installed."
     else
         echo "Some required packages are missing. QoSmate may not function correctly."
@@ -619,6 +635,7 @@ auto_setup() {
                 SPEEDTEST_CMD="speedtest --simple"
             else
                 echo "Neither speedtest-go nor python3-speedtest-cli is installed. Attempting to install speedtest-go..."
+                check_pkg_manager "$pkg_manager" || return 1
                 
                 # Check for sufficient space (adjust the required space as needed)
                 FREE_SPACE=$(df /overlay | awk 'NR==2 {print $4}')
@@ -786,7 +803,8 @@ auto_setup_noninteractive() {
             SPEEDTEST_CMD="speedtest --simple"
         else
             echo "Neither speedtest-go nor python3-speedtest-cli is installed. Attempting to install speedtest-go..."
-            
+            check_pkg_manager "$pkg_manager" || return 1
+
             # Check for sufficient space (adjust the required space as needed)
             FREE_SPACE=$(df /overlay | awk 'NR==2 {print $4}')
             if [ "$FREE_SPACE" -lt 15360 ]; then  # Assuming 15MB for speedtest-go
