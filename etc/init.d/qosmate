@@ -332,7 +332,6 @@ stop_service() {
 
 status_service() {
     # Load configuration
-    . /lib/functions.sh
     config_load 'qosmate'
 
     # Function to extract default values from the main script
