@@ -348,7 +348,10 @@ status_service() {
     : "${UPRATE:="$(get_default_value DEFAULT_UPRATE)"}"
     config_get DOWNRATE settings DOWNRATE
     : "${DOWNRATE:="$(get_default_value DEFAULT_DOWNRATE)"}"
+
     config_get ROOT_QDISC settings ROOT_QDISC "hfsc"
+    config_get gameqdisc hfsc gameqdisc
+    : "${gameqdisc:="$(get_default_value DEFAULT_GAMEQDISC)"}"
 
     # For default GAMEUP and GAMEDOWN, we need to evaluate the expressions
     config_get GAMEUP hfsc GAMEUP
@@ -405,7 +408,6 @@ status_service() {
     if [ "$ROOT_QDISC" = "cake" ]; then
         echo "Queue discipline: CAKE (Root qdisc)"
     else
-        config_get gameqdisc hfsc gameqdisc "$DEFAULT_GAMEQDISC"
         echo "Queue discipline: $gameqdisc (for game traffic in HFSC)"
     fi
 
