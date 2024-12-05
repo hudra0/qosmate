@@ -336,23 +336,20 @@ status_service() {
         grep "^$var_name=" /etc/qosmate.sh | cut -d'=' -f2- | tr -d '"'
     }
 
-    # Function to get current value or default
-    get_current_or_default() {
-        local uci_path="$1"
-        local default_value="$2"
-        local value="$(uci -q get "$uci_path")"
-        if [ -z "$value" ]; then
-            echo "$default_value (Default value)"
-        else
-            echo "$value"
-        fi
-    }
+    # Get current values, replace with defaults if not set
+    config_get WAN settings WAN
+    : "${WAN:="$(get_default_value DEFAULT_WAN)"}"
+    config_get UPRATE settings UPRATE
+    : "${UPRATE:="$(get_default_value DEFAULT_UPRATE)"}"
+    config_get DOWNRATE settings DOWNRATE
+    : "${DOWNRATE:="$(get_default_value DEFAULT_DOWNRATE)"}"
+    config_get ROOT_QDISC settings ROOT_QDISC "hfsc"
 
-    # Extract default values
-    DEFAULT_WAN=$(get_default_value "DEFAULT_WAN")
-    DEFAULT_DOWNRATE=$(get_default_value "DEFAULT_DOWNRATE")
-    DEFAULT_UPRATE=$(get_default_value "DEFAULT_UPRATE")
-    DEFAULT_GAMEQDISC=$(get_default_value "gameqdisc")
+    # For default GAMEUP and GAMEDOWN, we need to evaluate the expressions
+    config_get GAMEUP hfsc GAMEUP
+    : "${GAMEUP:=$((UPRATE*15/100+400))}"
+    config_get GAMEDOWN hfsc GAMEDOWN
+    : "${GAMEDOWN:=$((DOWNRATE*15/100+400))}"
 
     echo "==== qosmate Status ===="
     
@@ -364,7 +361,6 @@ status_service() {
     fi
 
     # Check if traffic shaping is active
-    WAN=$(uci -q get qosmate.settings.WAN || echo "$DEFAULT_WAN")
     IFB="ifb-$WAN"
     
     if tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc cake"; then
@@ -396,21 +392,16 @@ status_service() {
 
     echo "==== Current Settings ===="
     # Show summary of current settings
-    echo "Upload rate: $(get_current_or_default qosmate.settings.UPRATE "$DEFAULT_UPRATE") kbps"
-    echo "Download rate: $(get_current_or_default qosmate.settings.DOWNRATE "$DEFAULT_DOWNRATE") kbps"
+    echo "Upload rate: $UPRATE kbps"
+    echo "Download rate: $DOWNRATE kbps"
     
-    # For GAMEUP and GAMEDOWN, we need to evaluate the expressions
-    UPRATE=$(uci -q get qosmate.settings.UPRATE || echo "$DEFAULT_UPRATE")
-    DOWNRATE=$(uci -q get qosmate.settings.DOWNRATE || echo "$DEFAULT_DOWNRATE")
-    DEFAULT_GAMEUP=$((UPRATE*15/100+400))
-    DEFAULT_GAMEDOWN=$((DOWNRATE*15/100+400))
-    
-    echo "Game traffic upload: $(get_current_or_default qosmate.hfsc.GAMEUP "$DEFAULT_GAMEUP") kbps"
-    echo "Game traffic download: $(get_current_or_default qosmate.hfsc.GAMEDOWN "$DEFAULT_GAMEDOWN") kbps"
-    if [ "$(get_current_or_default qosmate.settings.ROOT_QDISC "hfsc")" = "cake" ]; then
+    echo "Game traffic upload: $GAMEUP kbps"
+    echo "Game traffic download: $GAMEDOWN kbps"
+    if [ "$ROOT_QDISC" = "cake" ]; then
         echo "Queue discipline: CAKE (Root qdisc)"
     else
-        echo "Queue discipline: $(get_current_or_default qosmate.hfsc.gameqdisc "$DEFAULT_GAMEQDISC") (for game traffic in HFSC)"
+        config_get gameqdisc hfsc gameqdisc "$DEFAULT_GAMEQDISC"
+        echo "Queue discipline: $gameqdisc (for game traffic in HFSC)"
     fi
 
     echo "==== Package Status ===="
