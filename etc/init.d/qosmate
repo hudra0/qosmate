@@ -326,7 +326,7 @@ stop_service() {
     echo "Reloading network service..."
     /etc/init.d/network reload
     /etc/init.d/firewall reload
-    echo "Service stopped" | logger -t qosmate     
+    logger -t qosmate "Service stopped"
     exit 0
 }
 
