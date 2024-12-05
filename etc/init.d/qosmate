@@ -342,6 +342,7 @@ status_service() {
     }
 
     # Get current values, replace with defaults if not set
+    local WAN UPRATE DOWNRATE GAMEUP GAMEDOWN gameqdisc
     config_get WAN settings WAN
     : "${WAN:="$(get_default_value DEFAULT_WAN)"}"
     config_get UPRATE settings UPRATE
