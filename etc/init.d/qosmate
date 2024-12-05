@@ -263,13 +263,13 @@ manage_custom_rules_file() {
 start_service() {
     install_packages
     download_scripts
-    create_hotplug_script  # Create the hotplug script instead of downloading it    
-    check_and_download_config || return 1    
-    migrate_config 
+    create_hotplug_script  # Create the hotplug script instead of downloading it
+    check_and_download_config || return 1
+    migrate_config
 
     # Enable the global option
     uci set qosmate.global.enabled='1'
-    uci commit qosmate    
+    uci commit qosmate
 
     # Save the current WAN interface to a temporary file
     load_config
@@ -277,12 +277,12 @@ start_service() {
 
     # Create custom rules file if it doesn't exist
     manage_custom_rules_file create
-    nft -f /etc/qosmate.d/custom_rules.nft    
+    nft -f /etc/qosmate.d/custom_rules.nft
 
-    /etc/qosmate.sh    
+    /etc/qosmate.sh
     /etc/init.d/firewall reload
     logger -t qosmate "Service started"
-    /etc/init.d/qosmate enable     
+    /etc/init.d/qosmate enable
 }
 
 stop_service() {
