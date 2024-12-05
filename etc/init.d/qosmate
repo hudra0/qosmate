@@ -170,16 +170,21 @@ create_hotplug_script() {
 #!/bin/sh
 
 [ -n "$DEVICE" ] || exit 0
-[ "$ACTION" = ifup ] && {
-    enabled=$(uci get qosmate.global.enabled 2>/dev/null)
-    if [ "$enabled" = "1" ]; then
+if [ "$ACTION" = ifup ]; then
+    . /lib/functions.sh
+    config_load qosmate || {
+        logger -t qosmate -p user.err "Failed to load config."
+        exit 1
+    }
+    config_get qosmate_enabled global enabled
+    if [ "$qosmate_enabled" = "1" ]; then
+        logger -t qosmate "Reloading qosmate.sh due to $ACTION of $INTERFACE ($DEVICE)"
         /etc/init.d/qosmate enable
         /etc/init.d/qosmate restart
-        logger -t qosmate "Reloading qosmate.sh due to $ACTION of $INTERFACE ($DEVICE)"
     else
         logger -t qosmate "qosmate is disabled in the configuration. Not executing the script."
     fi
-}
+fi
 EOF
 }
 
