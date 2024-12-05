@@ -60,7 +60,6 @@ detect_package_manager() {
 # Check if a package is installed
 check_package() {
     local pkg="$1"
-    local pkg_manager=$(detect_package_manager)
     
     case "$pkg_manager" in
         "apk")
@@ -78,7 +77,6 @@ check_package() {
 }
 
 install_packages() {
-    local pkg_manager=$(detect_package_manager)
     # Flag to indicate if opkg update is needed    
     local need_update=0
     
@@ -130,7 +128,6 @@ install_packages() {
 }
 
 check_package_status() {
-    local pkg_manager=$(detect_package_manager)
     local missing_packages=""
     
     for pkg in $REQUIRED_PACKAGES; do
@@ -631,7 +628,7 @@ auto_setup() {
                 if [ "$FREE_SPACE" -lt 15360 ]; then  # Assuming 15MB for speedtest-go
                     echo "Not enough space for speedtest-go. Attempting to install python3-speedtest-cli instead..."
                 else
-                    case "$(detect_package_manager)" in
+                    case "$pkg_manager" in
                         "apk")
                             apk update && apk add speedtest-go
                             ;;
@@ -653,7 +650,7 @@ auto_setup() {
                         echo "Auto-setup cannot continue. Please free up some space and try again."
                         return 1
                     fi
-                    case "$(detect_package_manager)" in
+                    case "$pkg_manager" in
                         "apk")
                             apk update && apk add python3-speedtest-cli
                             ;;
@@ -798,7 +795,7 @@ auto_setup_noninteractive() {
             if [ "$FREE_SPACE" -lt 15360 ]; then  # Assuming 15MB for speedtest-go
                 echo "Not enough space for speedtest-go. Attempting to install python3-speedtest-cli instead..."
             else
-                case "$(detect_package_manager)" in
+                case "$pkg_manager" in
                     "apk")
                         apk update && apk add speedtest-go
                         ;;
@@ -820,7 +817,7 @@ auto_setup_noninteractive() {
                     echo "Auto-setup cannot continue. Please free up some space and try again."
                     return 1
                 fi
-                case "$(detect_package_manager)" in
+                case "$pkg_manager" in
                     "apk")
                         apk update && apk add python3-speedtest-cli
                         ;;
@@ -977,3 +974,5 @@ expand_config() {
 
     echo "Configuration expanded successfully. You can now edit all available options in $config_file"
 }
+
+pkg_manager="$(detect_package_manager)" # global variable
