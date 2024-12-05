@@ -369,7 +369,7 @@ status_service() {
     fi
 
     # Check if traffic shaping is active
-    IFB="ifb-$WAN"
+    local IFB="ifb-$WAN"
     
     if tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc cake"; then
         if /etc/init.d/qosmate enabled; then
