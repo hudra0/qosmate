@@ -333,8 +333,7 @@ status_service() {
     # Function to extract default values from the main script
     get_default_value() {
         local var_name="$1"
-        local default_value="$(grep "^$var_name=" /etc/qosmate.sh | cut -d'=' -f2- | tr -d '"')"
-        echo "$default_value"
+        grep "^$var_name=" /etc/qosmate.sh | cut -d'=' -f2- | tr -d '"'
     }
 
     # Function to get current value or default
