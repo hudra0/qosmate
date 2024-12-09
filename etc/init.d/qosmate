@@ -677,7 +677,7 @@ auto_setup() {
                 done
                 case "$direction" in
                     download) DOWNLOAD_SPEED="$response" ;;
-                    upload) DOWNLOAD_SPEED="$response" ;;
+                    upload) UPLOAD_SPEED="$response" ;;
                 esac
             done
             speedtest_req=
