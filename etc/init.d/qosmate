@@ -644,13 +644,23 @@ auto_setup() {
         return 1
     fi
 
-    echo "Do you want to run a speed test or enter speeds manually? [test/manual]"
-    read -r speed_choice
-
     if [ -n "$noninteractive" ]; then
         speedtest_req=1
     else
-        if [[ "$speed_choice" =~ ^[Mm]anual$ ]]; then
+        while :; do
+            echo "Do you want to run a speed test or enter speeds manually? [test/manual]"
+            read -r speed_choice
+            case "$speed_choice" in
+                *[A-Z]*) speed_choice="$(printf %s "$speed_choice" | tr 'A-Z' 'a-z')"
+            esac
+
+            case "$speed_choice" in
+                test|manual) break
+            esac
+            echo "Invalid input '$speed_choice'. Please enter 'test' or 'manual'."
+        done
+
+        if [[ "$speed_choice" = manual ]]; then
             for direction in download upload; do
                 while :; do
                     echo "Please enter your $direction speed in Mbit/s:"
