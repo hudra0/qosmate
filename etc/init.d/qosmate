@@ -581,6 +581,31 @@ update() {
     /etc/init.d/qosmate restart
 }
 
+# 1 - speedtest command
+# 2 - Upload|Download
+# I/O via STDIN/STDOUT
+parse_speedtest_output() {
+	local speedtest_cmd="$1" direction="$2"
+    case "$speedtest_cmd" in
+        speedtest-go*)
+			grep "${direction}:" | grep -m1 -oE '[0-9]+\.[0-9]+'
+			;;
+        "speedtest --simple"*)
+			# match to (Upload:|Download:).*, print field 2. if no match, return 1
+			awk "BEGIN{rv=1} \$0~/$direction:/ {print \$2; rv=0; exit} END{exit rv}"
+			;;
+		*)
+			echo "Unexpected speedtest command '$speedtest_cmd'." >&2
+			false
+			;;
+    esac || {
+        echo "Failed to get the $direction speed." >&2
+        echo "0"
+        return 1
+    }
+    :
+}
+
 auto_setup() {
     echo "Starting qosmate auto-setup..."
 
@@ -687,13 +712,8 @@ auto_setup() {
         echo "Running speed test... This may take a few minutes."
         SPEED_RESULT=$($SPEEDTEST_CMD)
         
-        if [ "$SPEEDTEST_CMD" = "speedtest-go" ]; then
-            DOWNLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Download:" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
-            UPLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Upload:" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
-        else
-            DOWNLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Download:" | awk '{print $2}')
-            UPLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Upload:" | awk '{print $2}')
-        fi
+        DOWNLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Download)
+        UPLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Upload)
     fi
 
     echo "Speed test results:"
@@ -854,14 +874,9 @@ auto_setup_noninteractive() {
 
     echo "Running speed test... This may take a few minutes."
     SPEED_RESULT=$($SPEEDTEST_CMD)
-    
-    if [ "$SPEEDTEST_CMD" = "speedtest-go" ]; then
-        DOWNLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Download:" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
-        UPLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Upload:" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
-    else
-        DOWNLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Download:" | awk '{print $2}')
-        UPLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Upload:" | awk '{print $2}')
-    fi
+
+    DOWNLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Download)
+    UPLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Upload)
 
     echo "Speed test results:"
     echo "Download speed: $DOWNLOAD_SPEED Mbit/s"
