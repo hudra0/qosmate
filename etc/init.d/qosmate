@@ -637,11 +637,6 @@ auto_setup() {
     FINAL_INTERFACE=${L3_DEVICE:-$WAN_INTERFACE}
     echo "Detected WAN interface: $FINAL_INTERFACE"
 
-    if [ $? -ne 0 ]; then
-        echo "Error: Failed to update WAN interface in configuration. Please check the file /etc/config/qosmate"
-        return 1
-    fi
-
     if [ -n "$noninteractive" ]; then
         speedtest_req=1
     else
@@ -757,7 +752,7 @@ auto_setup() {
 
         echo "Running speed test... This may take a few minutes."
         SPEED_RESULT=$($SPEEDTEST_CMD)
-        
+
         DOWNLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Download) &&
         UPLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Upload) ||
             return 1
@@ -774,13 +769,6 @@ auto_setup() {
     echo "QoS configuration:"
     echo "DOWNRATE: $DOWNRATE kbps (90% of measured download speed)"
     echo "UPRATE: $UPRATE kbps (90% of measured upload speed)"
-
-    sed -i "/option WAN/c\    option WAN '$FINAL_INTERFACE'" /etc/config/qosmate
-    sed -i "/option DOWNRATE/c\    option DOWNRATE '$DOWNRATE'" /etc/config/qosmate
-    sed -i "/option UPRATE/c\    option UPRATE '$UPRATE'" /etc/config/qosmate
-
-    echo "Configuration updated. New settings:"
-    grep -E "option (WAN|DOWNRATE|UPRATE)" /etc/config/qosmate
 
     # Section for gaming device IP
     if [ -z "$noninteractive" ]; then
@@ -806,9 +794,20 @@ auto_setup() {
         fi
     fi
 
-    if [ -n "$gaming_ip" ]; then
-        # Add the rules to the configuration file
-        cat << EOF >> /etc/config/qosmate
+    local temp_config_file="/tmp/qosmate_config.tmp"
+    if [ -f /etc/config/qosmate ]; then
+        cp /etc/config/qosmate "$temp_config_file"
+    else
+        echo "Error: config file '/etc/config/qosmate' not found."
+        return 1
+    fi
+
+    # TODO: all of this should be rewritten with UCI commands
+    sed -i "/option WAN/c\    option WAN '$FINAL_INTERFACE';
+        /option DOWNRATE/c\    option DOWNRATE '$DOWNRATE';
+        /option UPRATE/c\    option UPRATE '$UPRATE'" \
+            "$temp_config_file" &&
+    if [ -n "$gaming_ip" ] && cat << EOF >> "$temp_config_file"
 config rule
     option name 'Game_Console_Outbound'
     option proto 'udp'
@@ -827,10 +826,22 @@ config rule
     option class 'cs5'
     option counter '1'
 EOF
+    then
         echo "Gaming device rules added for IP: $gaming_ip"
+        :
     else
         echo "No gaming device IP added."
-    fi
+        :
+    fi &&
+    mv "$temp_config_file" /etc/config/qosmate ||
+    {
+        echo "Failed to modify the config. Please check the file /etc/config/qosmate" >&2
+        return 1
+    }
+
+    echo "Configuration updated. New settings:"
+    grep -E "option (WAN|DOWNRATE|UPRATE)" /etc/config/qosmate
+
 
     echo "Auto-setup complete. qosmate has been configured with detected settings."
     echo "To apply these changes, please restart qosmate by running: /etc/init.d/qosmate restart"
