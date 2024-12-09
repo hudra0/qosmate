@@ -848,12 +848,14 @@ EOF
 }
 
 auto_setup_noninteractive() {
-    local output_file="/tmp/qosmate_auto_setup_output.txt"
+    local output_file="/tmp/qosmate_auto_setup_output.txt" auto_setup_rv
     {
         echo "Starting qosmate non-interactive auto-setup..."
-        auto_setup -n "$1"
-    } > "$output_file" 2>&1
-    echo "$output_file"        
+        auto_setup -n "$1" 2>&1
+    } > "$output_file"
+    auto_setup_rv=$?
+    echo "$output_file"
+    return $auto_setup_rv
 }
 
 expand_config() {
