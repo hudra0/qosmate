@@ -714,11 +714,11 @@ auto_setup() {
         
         DOWNLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Download)
         UPLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Upload)
-    fi
 
-    echo "Speed test results:"
-    echo "Download speed: $DOWNLOAD_SPEED Mbit/s"
-    echo "Upload speed: $UPLOAD_SPEED Mbit/s"
+		echo "Speed test results:"
+		echo "Download speed: $DOWNLOAD_SPEED Mbit/s"
+		echo "Upload speed: $UPLOAD_SPEED Mbit/s"
+    fi
 
     # Convert speeds to kbps and apply 90% rule
     DOWNRATE=$(awk -v speed="$DOWNLOAD_SPEED" 'BEGIN {print int(speed * 1000 * 0.9)}')
