@@ -606,6 +606,7 @@ parse_speedtest_output() {
     :
 }
 
+# for non-interactive setup, call with '-n [gaming_ip_address]'
 auto_setup() {
     local L3_DEVICE WAN_INTERFACE FINAL_INTERFACE SPEEDTEST_CMD FREE_SPACE SPEED_RESULT DOWNLOAD_SPEED UPLOAD_SPEED
     local gaming_ip='' noninteractive='' speed_choice response speedtest_req direction
