@@ -637,8 +637,6 @@ auto_setup() {
     FINAL_INTERFACE=${L3_DEVICE:-$WAN_INTERFACE}
     echo "Detected WAN interface: $FINAL_INTERFACE"
 
-    sed -i "/option WAN/c\    option WAN '$FINAL_INTERFACE'" /etc/config/qosmate
-
     if [ $? -ne 0 ]; then
         echo "Error: Failed to update WAN interface in configuration. Please check the file /etc/config/qosmate"
         return 1
