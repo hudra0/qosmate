@@ -608,6 +608,7 @@ parse_speedtest_output() {
 
 auto_setup() {
     echo "Starting qosmate auto-setup..."
+	local L3_DEVICE WAN_INTERFACE FINAL_INTERFACE SPEEDTEST_CMD FREE_SPACE SPEED_RESULT DOWNLOAD_SPEED UPLOAD_SPEED
 
     # Stop qosmate if it's running
     if /etc/init.d/qosmate status > /dev/null; then
@@ -635,6 +636,7 @@ auto_setup() {
         return 1
     fi
 
+	local speed_choice response
     echo "Do you want to run a speed test or enter speeds manually? [test/manual]"
     read -r speed_choice
 
@@ -738,6 +740,7 @@ auto_setup() {
 
     # Section for gaming device IP
     echo "Would you like to add a gaming device IP for prioritization? [y/N]"
+	local response gaming_ip
     read -r response
     if [[ "$response" =~ ^[Yy]$ ]]; then
         echo "Please enter the IP address of your gaming device:"
@@ -786,6 +789,7 @@ EOF
 auto_setup_noninteractive() {
     local gaming_ip="$1"
     local output_file="/tmp/qosmate_auto_setup_output.txt"
+	local L3_DEVICE WAN_INTERFACE FINAL_INTERFACE SPEEDTEST_CMD FREE_SPACE SPEED_RESULT DOWNLOAD_SPEED UPLOAD_SPEED
     {
     echo "Starting qosmate non-interactive auto-setup..."
 
