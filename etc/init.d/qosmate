@@ -712,8 +712,9 @@ auto_setup() {
         echo "Running speed test... This may take a few minutes."
         SPEED_RESULT=$($SPEEDTEST_CMD)
         
-        DOWNLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Download)
-        UPLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Upload)
+        DOWNLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Download) &&
+        UPLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Upload) ||
+			return 1
 
 		echo "Speed test results:"
 		echo "Download speed: $DOWNLOAD_SPEED Mbit/s"
@@ -875,8 +876,9 @@ auto_setup_noninteractive() {
     echo "Running speed test... This may take a few minutes."
     SPEED_RESULT=$($SPEEDTEST_CMD)
 
-    DOWNLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Download)
-    UPLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Upload)
+    DOWNLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Download) &&
+    UPLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Upload) ||
+		return 1
 
     echo "Speed test results:"
     echo "Download speed: $DOWNLOAD_SPEED Mbit/s"
