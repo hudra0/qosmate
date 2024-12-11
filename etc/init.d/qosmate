@@ -613,7 +613,7 @@ auto_setup() {
 
     if [ "$1" = "-n" ]; then
         gaming_ip="$2"
-        noniteractive=1
+        noninteractive=1
     else
         noninteractive=
     fi
@@ -804,8 +804,8 @@ auto_setup() {
     fi
 
     # TODO: all of this should be rewritten with UCI commands
-    sed -i "/option WAN/c\    option WAN '$FINAL_INTERFACE';
-        /option DOWNRATE/c\    option DOWNRATE '$DOWNRATE';
+    sed -i "/option WAN/c\    option WAN '$FINAL_INTERFACE'
+        /option DOWNRATE/c\    option DOWNRATE '$DOWNRATE'
         /option UPRATE/c\    option UPRATE '$UPRATE'" \
             "$temp_config_file" &&
     if [ -n "$gaming_ip" ] && cat << EOF >> "$temp_config_file"
