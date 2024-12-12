@@ -1,0 +1,16 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016
+
+
+speedtest_run() {
+    echo "Running speed test... This may take a few minutes."
+    SPEED_RESULT=$($SPEEDTEST_CMD)
+    
+    if [ "$SPEEDTEST_CMD" = "speedtest-go" ]; then
+        DOWNLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Download:" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
+        UPLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Upload:" | grep -oE '[0-9]+\.[0-9]+' | head -n1)
+    else
+        DOWNLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Download:" | awk '{print $2}')
+        UPLOAD_SPEED=$(echo "$SPEED_RESULT" | grep "Upload:" | awk '{print $2}')
+    fi
+}

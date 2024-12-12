@@ -1,0 +1,65 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016
+
+source /etc/init.d/functions-qosmate/speedtest_check_space
+source /etc/init.d/functions-qosmate/gaming_device_ip
+source /etc/init.d/functions-qosmate/speedtest_run
+
+auto_setup_noninteractive() {
+    local gaming_ip="$1"
+    local output_file="/tmp/qosmate_auto_setup_output.txt"
+    {
+    echo "Starting qosmate non-interactive auto-setup..."
+
+    # Stop qosmate if it's running
+    if /etc/init.d/qosmate status > /dev/null; then
+        echo "Stopping qosmate for accurate speed test results..."
+        /etc/init.d/qosmate stop
+        sleep 5  # Give some time for the network to stabilize
+    fi
+
+    # Detect WAN interface
+    WAN_INTERFACE=$(ifstatus wan | grep -e '"device"' | cut -d'"' -f4)
+    L3_DEVICE=$(ifstatus wan | grep -e '"l3_device"' | cut -d'"' -f4)
+    
+    if [ -z "$WAN_INTERFACE" ] && [ -z "$L3_DEVICE" ]; then
+        echo "Error: Unable to detect WAN interface. Please set it manually in the configuration."
+        return 1
+    fi
+
+    FINAL_INTERFACE=${L3_DEVICE:-$WAN_INTERFACE}
+    echo "Detected WAN interface: $FINAL_INTERFACE"
+
+    sed -i "/option WAN/c\    option WAN '$FINAL_INTERFACE'" /etc/config/qosmate
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to update WAN interface in configuration. Please check the file /etc/config/qosmate"
+        return 1
+    fi
+
+    # Check for speedtest-go first
+    if command -v speedtest-go &> /dev/null; then
+        echo "speedtest-go is already installed. Using it for the speed test."
+        SPEEDTEST_CMD="speedtest-go"
+    else
+        echo "speedtest-go is not found. Checking for python3-speedtest-cli..."
+        if command -v speedtest &> /dev/null; then
+            echo "python3-speedtest-cli is already installed. Using it for the speed test."
+            SPEEDTEST_CMD="speedtest --simple"
+        else
+            speedtest_check_space
+        fi
+    fi
+
+    speedtest_run
+
+    echo "Speed test results:"
+    echo "Download speed: $DOWNLOAD_SPEED Mbit/s"
+    echo "Upload speed: $UPLOAD_SPEED Mbit/s"
+
+    # Convert speeds to kbps and apply 90% rule
+    speed_convert
+    gaming_device_ip
+    } > "$output_file" 2>&1
+    echo "$output_file"        
+}

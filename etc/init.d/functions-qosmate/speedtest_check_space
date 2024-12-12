@@ -1,0 +1,37 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016
+
+
+speedtest_check_space() {
+    echo "Neither speedtest-go nor python3-speedtest-cli is installed. Attempting to install speedtest-go..."
+    check_pkg_manager "$pkg_manager" || return 1
+
+    # Check for sufficient space (adjust the required space as needed)
+    FREE_SPACE=$(df /overlay | awk 'NR==2 {print $4}')
+    if [ "$FREE_SPACE" -lt 15360 ]; then  # Assuming 15MB for speedtest-go
+        echo "Not enough space for speedtest-go. Attempting to install python3-speedtest-cli instead..."
+    else
+        opkg update && opkg install speedtest-go || apk update && apk add speedtest-
+        if [ $? -eq 0 ]; then
+            SPEEDTEST_CMD="speedtest-go"
+        else
+            echo "Failed to install speedtest-go. Attempting to install python3-speedtest-cli instead..."
+        fi
+
+        # If speedtest-go installation failed or there wasn't enough space, try python3-speedtest-cli
+        if [ -z "$SPEEDTEST_CMD" ]; then
+            if [ "$FREE_SPACE" -lt 1024 ]; then  # 1MB for python3-speedtest-cli
+                echo "Error: Not enough free space to install any speedtest tool."
+                echo "Auto-setup cannot continue. Please free up some space and try again."
+                return 1
+            fi
+            opkg update && opkg install python3-speedtest-cli python3-speedtest-cli-src || apk update && apk add python3-speedtest-c
+            if [ $? -eq 0 ]; then
+                SPEEDTEST_CMD="speedtest --simple"
+            else
+                echo "Failed to install python3-speedtest-cli. Auto-setup cannot continue."
+                return 1
+            fi
+        fi
+    fi
+}   

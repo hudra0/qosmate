@@ -1,0 +1,29 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016
+
+# Detect package manager (opkg or apk)
+
+detect_package_manager() {
+    if command -v apk >/dev/null 2>&1; then
+        echo "apk"
+        PACKAGE_MANAGER=$(command -v apk)
+    elif command -v opkg >/dev/null 2>&1; then
+        echo "opkg"
+        PACKAGE_MANAGER=$(command -v opkg)
+    else
+        echo "unknown"
+    fi
+}
+
+# Check for valid package manager
+check_pkg_manager() {
+    case "$1" in
+        apk|opkg)
+            ;;
+        *)
+            logger -s -t qosmate -p user.err "Error: Unexpected package manager '$1'."
+            return 1
+            ;;
+    esac
+    :
+}

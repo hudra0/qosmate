@@ -1,0 +1,41 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016
+
+migrate_config() {
+    CONFIG_FILE="/etc/config/qosmate"
+
+    # Function to add the global enabled option if it does not exist
+    if ! grep -q "config global 'global'" $CONFIG_FILE; then
+        echo "Adding global configuration section..."
+        sed -i '1i\
+config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
+        echo "Global configuration section added."
+    else
+        echo "Global configuration section already exists."
+    fi
+
+    # Ensure the enabled option is present in the global section
+    if ! grep -q "option enabled" $CONFIG_FILE; then
+        echo "Adding enabled option to global section..."
+        sed -i "/config global 'global'/a\\
+    option enabled '1'
+" $CONFIG_FILE
+        echo "Enabled option added."
+    else
+        echo "Enabled option already exists."
+    fi
+
+    # Check for and correct the custom_rules section
+    if grep -q "config qosmate 'custom_rules'" $CONFIG_FILE; then
+        echo "Incorrect custom_rules section found. Correcting..."
+        sed -i "s/config qosmate 'custom_rules'/config custom_rules 'custom_rules'/" $CONFIG_FILE
+        echo "custom_rules section corrected."
+    fi
+
+    # Remove duplicate custom_rules sections if both incorrect and correct versions exist
+    if grep -q "config qosmate 'custom_rules'" $CONFIG_FILE && grep -q "config custom_rules 'custom_rules'" $CONFIG_FILE; then
+        echo "Both incorrect and correct custom_rules sections found. Removing the incorrect one..."
+        sed -i "/config qosmate 'custom_rules'/d" $CONFIG_FILE
+        echo "Incorrect custom_rules section removed."
+    fi
+}

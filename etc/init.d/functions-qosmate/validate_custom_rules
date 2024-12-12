@@ -1,0 +1,25 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016
+
+validate_custom_rules() {
+    local tmp_file="/tmp/qosmate_custom_rules_validation.txt"
+    local rules_file="/etc/qosmate.d/custom_rules.nft"
+
+    if [ ! -f "$rules_file" ]; then
+        echo "Custom rules file not found." | tee "$tmp_file"
+        return 1
+    fi
+
+    nft_output=$(nft --check --file "$rules_file" 2>&1)
+    nft_exit_code=$?
+
+    echo "$nft_output" | tee "$tmp_file"
+
+    if [ $nft_exit_code -eq 0 ]; then
+        echo "Custom rules validation successful." | tee -a "$tmp_file"
+        return 0
+    else
+        echo "Custom rules validation failed." | tee -a "$tmp_file"
+        return 1
+    fi
+}

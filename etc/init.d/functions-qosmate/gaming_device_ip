@@ -1,0 +1,29 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016
+
+
+gaming_device_ip() {
+    # Section for gaming device IP
+    echo "Would you like to add a gaming device IP for prioritization? [y/N]"
+    read -r response
+    if [[ "$response" =~ ^[Yy]$ ]]; then
+        echo "Please enter the IP address of your gaming device:"
+        read -r gaming_ip
+
+        # Validate IP address format
+        if [[ $gaming_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+            # Check if rules for this IP already exist
+            if grep -q "option src_ip '$gaming_ip'" /etc/config/qosmate || grep -q "option dest_ip '$gaming_ip'" /etc/config/qosmate; then
+                echo "Rules for IP $gaming_ip already exist. Skipping addition of new rules."
+            else
+                # Add the rules to the configuration file
+                mv /etc/init.d/file-qosmate/qosmate /etc/config/qosmate
+                echo "Gaming device rules added for IP: $gaming_ip"
+            fi
+        else
+            echo "Invalid IP address format. No gaming device rules added."
+        fi
+    else
+        echo "No gaming device IP added."
+    fi
+}

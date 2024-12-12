@@ -1,0 +1,37 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016
+
+download_scripts() {
+    [ ! -f /etc/qosmate.sh ] && wget -O /etc/qosmate.sh "$QOSMATE_BASE_URL/etc/qosmate.sh" && chmod a+x /etc/qosmate.sh
+    
+    # Create the directory for tc-Netem distributions if it does not exist
+    mkdir -p /usr/lib/tc
+
+    # Base URL for the repository
+    DIST_URL="$QOSMATE_BASE_URL/usr/lib/tc"
+
+    # List of files
+    DIST_FILES="experimental.dist normal.dist normmix20-64.dist pareto.dist paretonormal.dist"
+
+    # Iterate through the list and download each file
+    for FILE in $DIST_FILES; do
+        if [ ! -f "/usr/lib/tc/$FILE" ]; then
+            echo "Downloading $FILE..."
+            wget -O "/usr/lib/tc/$FILE" "$DIST_URL/$FILE" || echo "Error downloading $FILE"
+        fi
+    done
+}
+
+check_and_download_config() {
+    local config_path="/etc/config/qosmate"
+    if [ ! -f "$config_path" ]; then
+        echo "Configuration file not found, downloading the latest version..."
+        wget -O $config_path "$QOSMATE_BASE_URL/etc/config/qosmate" || {
+            echo "Error downloading configuration. Please check your internet connection and try again."
+            return 1
+        }
+        echo "Configuration file downloaded successfully."
+    else
+        echo "Configuration file already exists."
+    fi
+}

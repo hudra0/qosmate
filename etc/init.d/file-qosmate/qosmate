@@ -1,0 +1,18 @@
+config rule
+    option name 'Game_Console_Outbound'
+    option proto 'udp'
+    option src_ip '$gaming_ip'
+    list dest_port '!=80'
+    list dest_port '!=443'
+    option class 'cs5'
+    option counter '1'
+
+config rule
+    option name 'Game_Console_Inbound'
+    option proto 'udp'
+    option dest_ip '$gaming_ip'
+    list src_port '!=80'
+    list src_port '!=443'
+    option class 'cs5'
+    option counter '1'
+    

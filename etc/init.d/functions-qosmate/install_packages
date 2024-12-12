@@ -1,0 +1,93 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016
+
+REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake kmod-sched-red luci-lib-jsonc lua"
+
+# Check if a package is installed
+check_package() {
+    local pkg="$1"
+    
+    case "$pkg_manager" in
+        "apk")
+            $PACKAGE_MANAGER list -I "$pkg" 2>/dev/null | grep -q "^$pkg-[0-9]"
+            return $?
+            ;;
+        "opkg")
+            $PACKAGE_MANAGER list-installed | grep -q "^$pkg "
+            return $?
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+install_packages() {
+    # Flag to indicate if opkg update is needed    
+    local need_update=0
+
+    check_pkg_manager "$pkg_manager" || return 1
+
+    # Check if any packages are missing
+    for pkg in $REQUIRED_PACKAGES; do
+        if ! check_package "$pkg"; then
+            echo "$pkg is not installed."
+            need_update=1
+            break
+        fi
+    done
+
+    # Run update if at least one package is missing
+    if [ "$need_update" -eq 1 ]; then
+        echo "Updating package list..."
+        case "$pkg_manager" in
+            "apk")
+                apk update
+                ;;
+            "opkg")
+                opkg update
+                ;;
+        esac
+
+        # Install missing packages
+        for pkg in $REQUIRED_PACKAGES; do
+            if ! check_package "$pkg"; then
+                echo "Installing $pkg..."
+                logger -t qosmate "Installing $pkg..."
+                case "$pkg_manager" in
+                    "apk")
+                        apk add "$pkg" || {
+                            echo "Failed to install $pkg."
+                            logger -t qosmate "Failed to install $pkg."
+                            return 1  # Abort if the installation fails
+                        }
+                        ;;
+                    "opkg")
+                        opkg install "$pkg" || {
+                            echo "Failed to install $pkg."
+                            logger -t qosmate "Failed to install $pkg."
+                            return 1  # Abort if the installation fails
+                        }
+                        ;;
+                esac
+            fi
+        done
+    fi
+}
+
+check_package_status() {
+    local missing_packages=""
+    
+    for pkg in $REQUIRED_PACKAGES; do
+        if ! check_package "$pkg"; then
+            missing_packages="$missing_packages $pkg"
+        fi
+    done
+    
+    if [ -n "$missing_packages" ]; then
+        echo "Missing packages:$missing_packages"
+        logger -t qosmate "Missing packages:$missing_packages"
+        return 1
+    fi
+    return 0
+}

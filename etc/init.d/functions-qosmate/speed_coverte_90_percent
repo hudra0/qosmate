@@ -1,0 +1,23 @@
+#!/bin/sh /etc/rc.common
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016
+
+speed_convert() {
+    # Convert speeds to kbps and apply 90% rule
+    DOWNRATE=$(awk -v speed="$DOWNLOAD_SPEED" 'BEGIN {print int(speed * 1000 * 0.9)}')
+    UPRATE=$(awk -v speed="$UPLOAD_SPEED" 'BEGIN {print int(speed * 1000 * 0.9)}')
+
+    echo "QoS configuration:"
+    echo "DOWNRATE: $DOWNRATE kbps (90% of measured download speed)"
+    echo "UPRATE: $UPRATE kbps (90% of measured upload speed)"
+    
+    sed -i "/option WAN/c\    option WAN '$FINAL_INTERFACE'" /etc/config/qosmate
+    sed -i "/option DOWNRATE/c\    option DOWNRATE '$DOWNRATE'" /etc/config/qosmate
+    sed -i "/option UPRATE/c\    option UPRATE '$UPRATE'" /etc/config/qosmate
+
+    echo "Configuration updated. New settings:"
+    grep -E "option (WAN|DOWNRATE|UPRATE)" /etc/config/qosmate
+
+    echo "Auto-setup complete. qosmate has been configured with detected settings."
+    echo "To apply these changes, please restart qosmate by running: /etc/init.d/qosmate restart"
+    
+}
