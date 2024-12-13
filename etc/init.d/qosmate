@@ -19,6 +19,8 @@ REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ct
 # Base URL (raw) for repositories (can be overridden for different branches/commits)
 QOSMATE_BASE_URL="${QOSMATE_BASE_URL:-https://raw.githubusercontent.com/hudra0/qosmate/main}"
 QOSMATE_FRONTEND_BASE_URL="${QOSMATE_FRONTEND_BASE_URL:-https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main}"
+QOSMATE_FRONTEND_URL_JS="$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view"
+QOSMATE_FRONTEND_PATH_JS=/www/luci-static/resources/view/qosmate
 
 load_config() {
     config_load 'qosmate'
@@ -472,8 +474,8 @@ check_version() {
     local current_backend_version="$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)"
     local latest_backend_version="$(wget -qO- "$QOSMATE_BASE_URL/etc/qosmate.sh" | grep '^VERSION=' | cut -d'"' -f2)"
     
-    local current_frontend_version="$(grep '^const UI_VERSION' /www/luci-static/resources/view/qosmate/settings.js | cut -d"'" -f2)"
-    local latest_frontend_version="$(wget -qO- "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/settings.js" | grep '^const UI_VERSION' | cut -d"'" -f2)"
+    local current_frontend_version="$(grep '^const UI_VERSION' "$QOSMATE_FRONTEND_PATH_JS/settings.js" | cut -d"'" -f2)"
+    local latest_frontend_version="$(wget -qO- "$QOSMATE_FRONTEND_URL_JS/settings.js" | grep '^const UI_VERSION' | cut -d"'" -f2)"
     
     if [ -z "$latest_backend_version" ] || [ -z "$latest_frontend_version" ]; then
         echo "Error: Could not retrieve the latest versions."
@@ -507,20 +509,20 @@ update() {
 
     local current_backend_version="$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)"
     local latest_backend_version="$(wget -qO- "$QOSMATE_BASE_URL/etc/qosmate.sh" | grep '^VERSION=' | cut -d'"' -f2)"
-    
-    local current_frontend_version="$(grep '^const UI_VERSION' /www/luci-static/resources/view/qosmate/settings.js | cut -d"'" -f2)"
-    local latest_frontend_version="$(wget -qO- "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/settings.js" | grep '^const UI_VERSION' | cut -d"'" -f2)"
-    
+
+    local current_frontend_version="$(grep '^const UI_VERSION' "$QOSMATE_FRONTEND_PATH_JS/settings.js" | cut -d"'" -f2)"
+    local latest_frontend_version="$(wget -qO- "$QOSMATE_FRONTEND_URL_JS/settings.js" | grep '^const UI_VERSION' | cut -d"'" -f2)"
+
     if [ -z "$latest_backend_version" ] || [ -z "$latest_frontend_version" ]; then
         echo "Error: Could not retrieve the latest versions."
         return 1
     fi
-    
+
     echo "Current backend version: $current_backend_version"
     echo "Latest backend version: $latest_backend_version"
     echo "Current frontend version: $current_frontend_version"
     echo "Latest frontend version: $latest_frontend_version"
-    
+
     if [ "$force_update" -eq 0 ]; then
         if [ "$current_backend_version" = "$latest_backend_version" ] && [ "$current_frontend_version" = "$latest_frontend_version" ]; then
             echo "Both backend and frontend are up to date."
@@ -529,16 +531,16 @@ update() {
     else
         echo "Force update enabled. Proceeding with update even if versions are identical."
     fi
-    
+
     echo "Updates available. Do you want to update? [y/N] "
     read answer
     if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
         echo "Update cancelled."
         return 0
     fi
-    
+
     echo "Updating QoSmate..."
-    
+
     # Update backend
     if [ "$force_update" -eq 1 ] || [ "$current_backend_version" != "$latest_backend_version" ]; then
         echo "Updating backend..."
@@ -552,17 +554,17 @@ update() {
             return 1
         fi
     fi
-    
+
     # Update frontend
     if [ "$force_update" -eq 1 ] || [ "$current_frontend_version" != "$latest_frontend_version" ]; then
         echo "Updating frontend..."
-        if  wget -O /www/luci-static/resources/view/qosmate/settings.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/settings.js" && \
-            wget -O /www/luci-static/resources/view/qosmate/hfsc.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/hfsc.js" && \
-            wget -O /www/luci-static/resources/view/qosmate/cake.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/cake.js" && \
-            wget -O /www/luci-static/resources/view/qosmate/advanced.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/advanced.js" && \
-            wget -O /www/luci-static/resources/view/qosmate/rules.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/rules.js" && \
-            wget -O /www/luci-static/resources/view/qosmate/connections.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/connections.js" && \
-            wget -O /www/luci-static/resources/view/qosmate/custom_rules.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/custom_rules.js" && \
+        if  wget -O "$QOSMATE_FRONTEND_PATH_JS/settings.js" "$QOSMATE_FRONTEND_URL_JS/settings.js" && \
+            wget -O "$QOSMATE_FRONTEND_PATH_JS/hfsc.js" "$QOSMATE_FRONTEND_URL_JS/hfsc.js" && \
+            wget -O "$QOSMATE_FRONTEND_PATH_JS/cake.js" "$QOSMATE_FRONTEND_URL_JS/cake.js" && \
+            wget -O "$QOSMATE_FRONTEND_PATH_JS/advanced.js" "$QOSMATE_FRONTEND_URL_JS/advanced.js" && \
+            wget -O "$QOSMATE_FRONTEND_PATH_JS/rules.js" "$QOSMATE_FRONTEND_URL_JS/rules.js" && \
+            wget -O "$QOSMATE_FRONTEND_PATH_JS/connections.js" "$QOSMATE_FRONTEND_URL_JS/connections.js" && \
+            wget -O "$QOSMATE_FRONTEND_PATH_JS/custom_rules.js" "$QOSMATE_FRONTEND_URL_JS/custom_rules.js" && \
             wget -O /usr/share/luci/menu.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/luci/menu.d/luci-app-qosmate.json" && \
             wget -O /usr/share/rpcd/acl.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/rpcd/acl.d/luci-app-qosmate.json" && \
             wget -O /usr/libexec/rpcd/luci.qosmate "$QOSMATE_FRONTEND_BASE_URL/root/usr/libexec/rpcd/luci.qosmate"; then
@@ -576,7 +578,7 @@ update() {
         fi
     fi
     expand_config
-    
+
     echo "Update complete. Please restart QoSmate."
     /etc/init.d/qosmate restart
 }
