@@ -501,31 +501,87 @@ check_version() {
 }
 
 update() {
+
+    # assumes version format including only digits and '.'
+    validate_version() {
+        case "$1" in
+            ''|*[!0-9.]*|.*|*.)
+                # do not allow empty string or irrelevant characters or string starting or ending with '.'
+                echo "Error: invalid version '$1'." >&2
+                return 1
+                ;;
+            *[0-9]*)
+                return 0
+                ;;
+            *)
+                # do not allow strings without digits
+                echo "Error: invalid version '$1'." >&2
+                return 1
+        esac
+    }
+
+    # 1 - pattern for line with version string
+    # 2 - FS: field separator
+    # assumes version string enclosed in FS and no prior FS present in the version line
+    # I/O via STDIN/STDOUT
+    awk_get_version() {
+        local pattern="$1" FS="$2" rv=
+        awk -F "$FS" "BEGIN{rv=1} \$0~/$pattern/ {print \$2; rv=0; exit} END{exit rv}"
+        rv=$?
+        cat > /dev/null # this is needed to sink extra lines, otherwise this will be extremely slow
+        return $rv
+    }
+
     local force_update=0
-    local file_path
+    local file_path origin notify_origin fetch_cmd backend_path_prefix frontend_path_prefix version ver_fs component
+    local local_backend_version local_frontend_version remote_backend_version remote_frontend_version
 
     if [ "$QOSMATE_FORCE" = "1" ]; then
         force_update=1
     fi
 
-    local current_backend_version="$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)"
-    local latest_backend_version="$(wget -qO- "$QOSMATE_BASE_URL/etc/qosmate.sh" | grep '^VERSION=' | cut -d'"' -f2)"
+    for component in backend frontend; do
+       for origin in local remote; do
+            case $origin in
+                local)
+                    fetch_cmd="cat"
+                    backend_path_prefix=
+                    frontend_path_prefix="$QOSMATE_FRONTEND_PATH_JS"
+                    notify_origin=Current
+                    ;;
+                remote)
+                    fetch_cmd="wget -qO-"
+                    backend_path_prefix="$QOSMATE_BASE_URL"
+                    frontend_path_prefix="$QOSMATE_FRONTEND_URL_JS"
+                    notify_origin=Latest
+            esac
 
-    local current_frontend_version="$(grep '^const UI_VERSION' "$QOSMATE_FRONTEND_PATH_JS/settings.js" | cut -d"'" -f2)"
-    local latest_frontend_version="$(wget -qO- "$QOSMATE_FRONTEND_URL_JS/settings.js" | grep '^const UI_VERSION' | cut -d"'" -f2)"
+            case "$component" in
+                backend)
+                    fetch_path="${backend_path_prefix}/etc/qosmate.sh"
+                    ver_pattern="^VERSION="
+                    ver_fs='"'
+                    ;;
+                frontend)
+                    fetch_path="${frontend_path_prefix}/settings.js"
+                    ver_pattern="^const UI_VERSION"
+                    ver_fs="'"
+            esac
 
-    if [ -z "$latest_backend_version" ] || [ -z "$latest_frontend_version" ]; then
-        echo "Error: Could not retrieve the latest versions."
-        return 1
-    fi
+            version="$(eval "$fetch_cmd" "$fetch_path" | awk_get_version "$ver_pattern" "$ver_fs")" &&
+            validate_version "$version" ||
+            {
+                echo "Failed to get $origin version for $component file at path '$fetch_path'."
+                return 1
+            }
 
-    echo "Current backend version: $current_backend_version"
-    echo "Latest backend version: $latest_backend_version"
-    echo "Current frontend version: $current_frontend_version"
-    echo "Latest frontend version: $latest_frontend_version"
+            eval "${origin}_${component}_version=\"$version\""
+            echo "$notify_origin $component version: $version"
+        done
+    done
 
     if [ "$force_update" -eq 0 ]; then
-        if [ "$current_backend_version" = "$latest_backend_version" ] && [ "$current_frontend_version" = "$latest_frontend_version" ]; then
+        if [ "$local_backend_version" = "$remote_backend_version" ] && [ "$local_frontend_version" = "$remote_frontend_version" ]; then
             echo "Both backend and frontend are up to date."
             return 0
         fi
@@ -543,7 +599,7 @@ update() {
     echo "Updating QoSmate..."
 
     # Update backend
-    if [ "$force_update" -eq 1 ] || [ "$current_backend_version" != "$latest_backend_version" ]; then
+    if [ "$force_update" -eq 1 ] || [ "$local_backend_version" != "$remote_backend_version" ]; then
         echo "Updating backend..."
 
         # !! This relies on remote file path suffix matching local file path
@@ -568,7 +624,7 @@ update() {
     fi
 
     # Update frontend
-    if [ "$force_update" -eq 1 ] || [ "$current_frontend_version" != "$latest_frontend_version" ]; then
+    if [ "$force_update" -eq 1 ] || [ "$local_frontend_version" != "$remote_frontend_version" ]; then
         echo "Updating frontend..."
 
         local js_file
