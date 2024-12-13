@@ -591,10 +591,12 @@ update() {
 
     echo "Updates available. Do you want to update? [y/N] "
     read -r answer
-    if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
-        echo "Update cancelled."
-        return 0
-    fi
+    case "$answer" in
+        y|Y) ;;
+        *)
+            echo "Update cancelled."
+            return 0
+    esac
 
     echo "Updating QoSmate..."
 
