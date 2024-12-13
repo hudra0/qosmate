@@ -534,7 +534,7 @@ update() {
     fi
 
     echo "Updates available. Do you want to update? [y/N] "
-    read answer
+    read -r answer
     if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
         echo "Update cancelled."
         return 0
