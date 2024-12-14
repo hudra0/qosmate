@@ -512,47 +512,29 @@ get_version() {
     return $?
 }
 
+# Check and print versions for local and remote backend and frontend
+# sets global variables: $backend_upd_avail, $frontend_upd_avail
+# 1 - (optional) '-n' to not print update tip
+# Return codes:
+# 0 - no update
+# 1 - error
+# 254 - update available
 check_version() {
-    local current_backend_version="$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)"
-    local latest_backend_version="$(wget -qO- "$QOSMATE_BASE_URL/etc/qosmate.sh" | grep '^VERSION=' | cut -d'"' -f2)"
-    
-    local current_frontend_version="$(grep '^const UI_VERSION' "$QOSMATE_FRONTEND_PATH_JS/settings.js" | cut -d"'" -f2)"
-    local latest_frontend_version="$(wget -qO- "$QOSMATE_FRONTEND_URL_JS/settings.js" | grep '^const UI_VERSION' | cut -d"'" -f2)"
-    
-    if [ -z "$latest_backend_version" ] || [ -z "$latest_frontend_version" ]; then
-        echo "Error: Could not retrieve the latest versions."
-        return 1
-    fi
-    
-    echo "Backend versions:"
-    echo "  Current version: $current_backend_version"
-    echo "  Latest version:  $latest_backend_version"
-    echo
-    echo "Frontend versions:"
-    echo "  Current version: $current_frontend_version"
-    echo "  Latest version:  $latest_frontend_version"
-    
-    if [ "$current_backend_version" != "$latest_backend_version" ] || [ "$current_frontend_version" != "$latest_frontend_version" ]; then
-        echo
-        echo "A new version of QoSmate is available."
-        echo "To update, run: /etc/init.d/qosmate update"
-    else
-        echo
-        echo "QoSmate is up to date."
-    fi
-}
-
-update() {
-    local force_update=0
-    local component origin notify_origin version
-    local local_backend_version local_frontend_version remote_backend_version remote_frontend_version
-
-    if [ "$QOSMATE_FORCE" = "1" ]; then
-        force_update=1
-    fi
+    local origin notify_origin component notify_component version local_version upd_avail=''
+    local no_print_tip="$1"
 
     for component in backend frontend; do
-       for origin in local remote; do
+        case "$component" in
+            backend)
+                notify_component=Backend
+                ;;
+            frontend)
+                notify_component=Frontend
+        esac
+
+        echo "$notify_component versions:"
+
+        for origin in local remote; do
             case "$origin" in
                 local)
                     notify_origin=Current
@@ -570,18 +552,51 @@ update() {
                 return 1
             }
 
-            eval "${origin}_${component}_version=\"$version\""
-            echo "$notify_origin $component version: $version"
+            case "$origin" in
+                local)
+                    local_version="$version"
+                    ;;
+                remote)
+                    if [ "$version" = "$local_version" ]; then
+                        unset "${component}_upd_avail"
+                    else
+                        upd_avail=1
+                        eval "${component}_upd_avail=1"
+                    fi
+            esac
+            printf '%s\n' "  $notify_origin version: $version"
         done
     done
 
-    if [ "$force_update" -eq 0 ]; then
-        if [ "$local_backend_version" = "$remote_backend_version" ] && [ "$local_frontend_version" = "$remote_frontend_version" ]; then
-            echo "Both backend and frontend are up to date."
-            return 0
-        fi
+    if [ -n "$upd_avail" ]; then
+        [ "$no_print_tip" != '-n' ] && printf '\n%s\n%s\n' "A new version of QoSmate is available." \
+            "To update, run: /etc/init.d/qosmate update"
+        return 254
     else
+        printf '\n%s\n' "QoSmate is up to date."
+    fi
+    :
+}
+
+# Ignores versions when global var $QOSMATE_FORCE is set to 1
+update() {
+    local component upd_avail=''
+
+    check_version -n
+    case $? in
+        0) ;;
+        254)
+            upd_avail=1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    if [ "$QOSMATE_FORCE" = 1 ]; then
         echo "Force update enabled. Proceeding with update even if versions are identical."
+    elif [ -z "$upd_avail" ]; then
+        return 0
     fi
 
     echo "Updates available. Do you want to update? [y/N] "
@@ -596,10 +611,7 @@ update() {
     echo "Updating QoSmate..."
 
     for component in backend frontend; do
-        local local_version remote_version js_file js_files gen_file gen_files exec_files exec_file fetch_base_url notify_component
-
-        eval "local_version=\"\${local_${component}_version}\""
-        eval "remote_version=\"\${remote_${component}_version}\""
+        local component_upd_avail js_file js_files gen_file gen_files exec_files exec_file fetch_base_url notify_component
 
         case "$component" in
             backend)
@@ -625,7 +637,8 @@ update() {
                 exec_files="/usr/libexec/rpcd/luci.qosmate"
         esac
 
-        if [ "$force_update" -eq 1 ] || [ "$local_version" != "$remote_version" ]; then
+        eval component_upd_avail="\"\${${component}_upd_avail}\""
+        if [ "$QOSMATE_FORCE" = 1 ] || [ -n "$component_upd_avail" ]; then
             printf '\n%s\n' "Updating $component..."
 
             # !! This relies on remote file path suffix matching local file path
