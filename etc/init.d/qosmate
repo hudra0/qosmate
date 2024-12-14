@@ -470,6 +470,48 @@ reload_service() {
     restart
 }
 
+# Extract version from local or remote file
+# 1 - component (backend|frontend)
+# 2 - origin (local|remote)
+# Error codes: 1 - failed to get version, 2 - got invalid version
+get_version() {
+    local component="$1" origin="$2"
+    local fetch_cmd fetch_path pattern FS rv backend_path_prefix frontend_path_prefix
+
+    case "$origin" in
+        local)
+            fetch_cmd="cat"
+            backend_path_prefix=
+            frontend_path_prefix="$QOSMATE_FRONTEND_PATH_JS"
+            ;;
+        remote)
+            fetch_cmd="wget -qO-"
+            backend_path_prefix="$QOSMATE_BASE_URL"
+            frontend_path_prefix="$QOSMATE_FRONTEND_URL_JS"
+    esac
+
+    case "$component" in
+        backend)
+            fetch_path="${backend_path_prefix}/etc/qosmate.sh"
+            pattern="^VERSION="
+            FS='"'
+            ;;
+        frontend)
+            fetch_path="${frontend_path_prefix}/settings.js"
+            pattern="^const UI_VERSION"
+            FS="'"
+    esac
+
+    eval "$fetch_cmd" "$fetch_path" | {
+        # assumes version string enclosed in FS and no prior FS present in the version line
+        awk -F "$FS" "BEGIN{rv=1} \$0~/$pattern/ {rv=2; print \$2; if (\$2~/^[0-9]+([.][0-9]+)*$/) {rv=0}; exit} END{exit rv}"
+        rv=$?
+        cat > /dev/null # sink extra lines, otherwise this will be extremely slow
+        exit $rv # sets the exit code of the pipe
+    }
+    return $?
+}
+
 check_version() {
     local current_backend_version="$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)"
     local latest_backend_version="$(wget -qO- "$QOSMATE_BASE_URL/etc/qosmate.sh" | grep '^VERSION=' | cut -d'"' -f2)"
@@ -501,39 +543,8 @@ check_version() {
 }
 
 update() {
-
-    # assumes version format including only digits and '.'
-    validate_version() {
-        case "$1" in
-            ''|*[!0-9.]*|.*|*.)
-                # do not allow empty string or irrelevant characters or string starting or ending with '.'
-                echo "Error: invalid version '$1'." >&2
-                return 1
-                ;;
-            *[0-9]*)
-                return 0
-                ;;
-            *)
-                # do not allow strings without digits
-                echo "Error: invalid version '$1'." >&2
-                return 1
-        esac
-    }
-
-    # 1 - pattern for line with version string
-    # 2 - FS: field separator
-    # assumes version string enclosed in FS and no prior FS present in the version line
-    # I/O via STDIN/STDOUT
-    awk_get_version() {
-        local pattern="$1" FS="$2" rv=
-        awk -F "$FS" "BEGIN{rv=1} \$0~/$pattern/ {print \$2; rv=0; exit} END{exit rv}"
-        rv=$?
-        cat > /dev/null # this is needed to sink extra lines, otherwise this will be extremely slow
-        return $rv
-    }
-
     local force_update=0
-    local origin notify_origin fetch_cmd backend_path_prefix frontend_path_prefix version ver_fs component
+    local component origin notify_origin version
     local local_backend_version local_frontend_version remote_backend_version remote_frontend_version
 
     if [ "$QOSMATE_FORCE" = "1" ]; then
@@ -542,36 +553,20 @@ update() {
 
     for component in backend frontend; do
        for origin in local remote; do
-            case $origin in
+            case "$origin" in
                 local)
-                    fetch_cmd="cat"
-                    backend_path_prefix=
-                    frontend_path_prefix="$QOSMATE_FRONTEND_PATH_JS"
                     notify_origin=Current
                     ;;
                 remote)
-                    fetch_cmd="wget -qO-"
-                    backend_path_prefix="$QOSMATE_BASE_URL"
-                    frontend_path_prefix="$QOSMATE_FRONTEND_URL_JS"
                     notify_origin=Latest
             esac
 
-            case "$component" in
-                backend)
-                    fetch_path="${backend_path_prefix}/etc/qosmate.sh"
-                    ver_pattern="^VERSION="
-                    ver_fs='"'
-                    ;;
-                frontend)
-                    fetch_path="${frontend_path_prefix}/settings.js"
-                    ver_pattern="^const UI_VERSION"
-                    ver_fs="'"
-            esac
-
-            version="$(eval "$fetch_cmd" "$fetch_path" | awk_get_version "$ver_pattern" "$ver_fs")" &&
-            validate_version "$version" ||
-            {
-                echo "Failed to get $origin version for $component file at path '$fetch_path'." >&2
+            version="$(get_version "$component" "$origin")" || {
+                if [ "$?" = 2 ] && [ -n "$version" ]; then
+                    printf '%s\n' "Error: Got invalid $origin $component version '$version'." >&2
+                else
+                    printf '%s\n' "Error: Failed to get $origin $component version." >&2
+                fi
                 return 1
             }
 
