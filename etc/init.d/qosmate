@@ -19,6 +19,8 @@ REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ct
 # Base URL (raw) for repositories (can be overridden for different branches/commits)
 QOSMATE_BASE_URL="${QOSMATE_BASE_URL:-https://raw.githubusercontent.com/hudra0/qosmate/main}"
 QOSMATE_FRONTEND_BASE_URL="${QOSMATE_FRONTEND_BASE_URL:-https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main}"
+QOSMATE_FRONTEND_URL_JS="$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view"
+QOSMATE_FRONTEND_PATH_JS=/www/luci-static/resources/view/qosmate
 
 load_config() {
     config_load 'qosmate'
@@ -468,115 +470,212 @@ reload_service() {
     restart
 }
 
-check_version() {
-    local current_backend_version="$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)"
-    local latest_backend_version="$(wget -qO- "$QOSMATE_BASE_URL/etc/qosmate.sh" | grep '^VERSION=' | cut -d'"' -f2)"
-    
-    local current_frontend_version="$(grep '^const UI_VERSION' /www/luci-static/resources/view/qosmate/settings.js | cut -d"'" -f2)"
-    local latest_frontend_version="$(wget -qO- "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/settings.js" | grep '^const UI_VERSION' | cut -d"'" -f2)"
-    
-    if [ -z "$latest_backend_version" ] || [ -z "$latest_frontend_version" ]; then
-        echo "Error: Could not retrieve the latest versions."
-        return 1
-    fi
-    
-    echo "Backend versions:"
-    echo "  Current version: $current_backend_version"
-    echo "  Latest version:  $latest_backend_version"
-    echo
-    echo "Frontend versions:"
-    echo "  Current version: $current_frontend_version"
-    echo "  Latest version:  $latest_frontend_version"
-    
-    if [ "$current_backend_version" != "$latest_backend_version" ] || [ "$current_frontend_version" != "$latest_frontend_version" ]; then
-        echo
-        echo "A new version of QoSmate is available."
-        echo "To update, run: /etc/init.d/qosmate update"
-    else
-        echo
-        echo "QoSmate is up to date."
-    fi
+# Extract version from local or remote file
+# 1 - component (backend|frontend)
+# 2 - origin (local|remote)
+# Error codes: 1 - failed to get version, 2 - got invalid version
+get_version() {
+    local component="$1" origin="$2"
+    local fetch_cmd fetch_path pattern FS rv backend_path_prefix frontend_path_prefix
+
+    case "$origin" in
+        local)
+            fetch_cmd="cat"
+            backend_path_prefix=
+            frontend_path_prefix="$QOSMATE_FRONTEND_PATH_JS"
+            ;;
+        remote)
+            fetch_cmd="wget -qO-"
+            backend_path_prefix="$QOSMATE_BASE_URL"
+            frontend_path_prefix="$QOSMATE_FRONTEND_URL_JS"
+    esac
+
+    case "$component" in
+        backend)
+            fetch_path="${backend_path_prefix}/etc/qosmate.sh"
+            pattern="^VERSION="
+            FS='"'
+            ;;
+        frontend)
+            fetch_path="${frontend_path_prefix}/settings.js"
+            pattern="^const UI_VERSION"
+            FS="'"
+    esac
+
+    eval "$fetch_cmd" "$fetch_path" | {
+        # assumes version string enclosed in FS and no prior FS present in the version line
+        awk -F "$FS" "BEGIN{rv=1} \$0~/$pattern/ {rv=2; print \$2; if (\$2~/^[0-9]+([.][0-9]+)*$/) {rv=0}; exit} END{exit rv}"
+        rv=$?
+        cat > /dev/null # sink extra lines, otherwise this will be extremely slow
+        exit $rv # sets the exit code of the pipe
+    }
+    return $?
 }
 
-update() {
-    local force_update=0
+# Check and print versions for local and remote backend and frontend
+# sets global variables: $backend_upd_avail, $frontend_upd_avail
+# 1 - (optional) '-n' to not print update tip
+# Return codes:
+# 0 - no update
+# 1 - error
+# 254 - update available
+check_version() {
+    local origin notify_origin component notify_component version local_version upd_avail=''
+    local no_print_tip="$1"
 
-    if [ "$QOSMATE_FORCE" = "1" ]; then
-        force_update=1
-    fi
+    for component in backend frontend; do
+        case "$component" in
+            backend)
+                notify_component=Backend
+                ;;
+            frontend)
+                notify_component=Frontend
+        esac
 
-    local current_backend_version="$(grep '^VERSION=' /etc/qosmate.sh | cut -d'"' -f2)"
-    local latest_backend_version="$(wget -qO- "$QOSMATE_BASE_URL/etc/qosmate.sh" | grep '^VERSION=' | cut -d'"' -f2)"
-    
-    local current_frontend_version="$(grep '^const UI_VERSION' /www/luci-static/resources/view/qosmate/settings.js | cut -d"'" -f2)"
-    local latest_frontend_version="$(wget -qO- "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/settings.js" | grep '^const UI_VERSION' | cut -d"'" -f2)"
-    
-    if [ -z "$latest_backend_version" ] || [ -z "$latest_frontend_version" ]; then
-        echo "Error: Could not retrieve the latest versions."
-        return 1
-    fi
-    
-    echo "Current backend version: $current_backend_version"
-    echo "Latest backend version: $latest_backend_version"
-    echo "Current frontend version: $current_frontend_version"
-    echo "Latest frontend version: $latest_frontend_version"
-    
-    if [ "$force_update" -eq 0 ]; then
-        if [ "$current_backend_version" = "$latest_backend_version" ] && [ "$current_frontend_version" = "$latest_frontend_version" ]; then
-            echo "Both backend and frontend are up to date."
-            return 0
-        fi
+        echo "$notify_component versions:"
+
+        for origin in local remote; do
+            case "$origin" in
+                local)
+                    notify_origin=Current
+                    ;;
+                remote)
+                    notify_origin=Latest
+            esac
+
+            version="$(get_version "$component" "$origin")" || {
+                if [ "$?" = 2 ] && [ -n "$version" ]; then
+                    printf '%s\n' "Error: Got invalid $origin $component version '$version'." >&2
+                else
+                    printf '%s\n' "Error: Failed to get $origin $component version." >&2
+                fi
+                return 1
+            }
+
+            case "$origin" in
+                local)
+                    local_version="$version"
+                    ;;
+                remote)
+                    if [ "$version" = "$local_version" ]; then
+                        unset "${component}_upd_avail"
+                    else
+                        upd_avail=1
+                        eval "${component}_upd_avail=1"
+                    fi
+            esac
+            printf '%s\n' "  $notify_origin version: $version"
+        done
+    done
+
+    if [ -n "$upd_avail" ]; then
+        [ "$no_print_tip" != '-n' ] && printf '\n%s\n%s\n' "A new version of QoSmate is available." \
+            "To update, run: /etc/init.d/qosmate update"
+        return 254
     else
-        echo "Force update enabled. Proceeding with update even if versions are identical."
+        printf '\n%s\n' "QoSmate is up to date."
     fi
-    
-    echo "Updates available. Do you want to update? [y/N] "
-    read answer
-    if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
-        echo "Update cancelled."
+    :
+}
+
+# Ignores versions when global var $QOSMATE_FORCE is set to 1
+update() {
+    local component upd_avail=''
+
+    check_version -n
+    case $? in
+        0) ;;
+        254)
+            upd_avail=1
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    if [ "$QOSMATE_FORCE" = 1 ]; then
+        echo "Force update enabled. Proceeding with update even if versions are identical."
+    elif [ -z "$upd_avail" ]; then
         return 0
     fi
-    
+
+    echo "Updates available. Do you want to update? [y/N] "
+    read -r answer
+    case "$answer" in
+        y|Y) ;;
+        *)
+            echo "Update cancelled."
+            return 0
+    esac
+
     echo "Updating QoSmate..."
-    
-    # Update backend
-    if [ "$force_update" -eq 1 ] || [ "$current_backend_version" != "$latest_backend_version" ]; then
-        echo "Updating backend..."
-        if wget -O /etc/qosmate.sh "$QOSMATE_BASE_URL/etc/qosmate.sh" && \
-           wget -O /etc/init.d/qosmate "$QOSMATE_BASE_URL/etc/init.d/qosmate" && \
-           wget -O /etc/hotplug.d/iface/13-qosmateHotplug "$QOSMATE_BASE_URL/etc/hotplug.d/iface/13-qosmateHotplug"; then
-            chmod +x /etc/qosmate.sh /etc/init.d/qosmate
-            echo "Backend update complete."
-        else
-            echo "Backend update failed."
-            return 1
+
+    for component in backend frontend; do
+        local component_upd_avail js_file js_files gen_file gen_files exec_files exec_file fetch_base_url notify_component
+
+        case "$component" in
+            backend)
+                notify_component=Backend
+                fetch_base_url="${QOSMATE_BASE_URL}"
+                js_files=
+                gen_files=" \
+                    /etc/qosmate.sh \
+                    /etc/init.d/qosmate \
+                    /etc/hotplug.d/iface/13-qosmateHotplug"
+                exec_files=" \
+                    /etc/qosmate.sh \
+                    /etc/init.d/qosmate"
+                ;;
+            frontend)
+                notify_component=Frontend
+                fetch_base_url="${QOSMATE_FRONTEND_BASE_URL}/root"
+                js_files="settings hfsc cake advanced rules connections custom_rules"
+                gen_files=" \
+                    /usr/share/luci/menu.d/luci-app-qosmate.json \
+                    /usr/share/rpcd/acl.d/luci-app-qosmate.json \
+                    /usr/libexec/rpcd/luci.qosmate"
+                exec_files="/usr/libexec/rpcd/luci.qosmate"
+        esac
+
+        eval component_upd_avail="\"\${${component}_upd_avail}\""
+        if [ "$QOSMATE_FORCE" = 1 ] || [ -n "$component_upd_avail" ]; then
+            printf '\n%s\n' "Updating $component..."
+
+            # !! This relies on remote file path suffix matching local file path
+            for gen_file in $gen_files; do
+                wget -O "$gen_file" "${fetch_base_url}${gen_file}" || {
+                    echo "Command 'wget -O \"$gen_file\" \"${fetch_base_url}${gen_file}\"' exited with code $?." >&2
+                    echo "$notify_component update failed." >&2
+                    return 1
+                }
+            done
+
+            for exec_file in $exec_files; do
+                chmod +x "$exec_file" || {
+                    echo "Failed to make file '$exec_file' executable." >&2
+                    return 1
+                }
+            done
+
+            if [ "$component" = frontend ]; then
+                for js_file in $js_files; do
+                    wget -O "$QOSMATE_FRONTEND_PATH_JS/$js_file.js" "$QOSMATE_FRONTEND_URL_JS/$js_file.js" || {
+                        echo "Command 'wget -O \"$QOSMATE_FRONTEND_PATH_JS/$js_file.js\" \"$QOSMATE_FRONTEND_URL_JS/$js_file.js\"' exited with code $?." >&2
+                        echo "$notify_component update failed." >&2
+                        return 1
+                    }
+                done
+
+                /etc/init.d/rpcd restart
+                /etc/init.d/uhttpd restart
+            fi
+
+            echo "$notify_component update complete."
         fi
-    fi
-    
-    # Update frontend
-    if [ "$force_update" -eq 1 ] || [ "$current_frontend_version" != "$latest_frontend_version" ]; then
-        echo "Updating frontend..."
-        if  wget -O /www/luci-static/resources/view/qosmate/settings.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/settings.js" && \
-            wget -O /www/luci-static/resources/view/qosmate/hfsc.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/hfsc.js" && \
-            wget -O /www/luci-static/resources/view/qosmate/cake.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/cake.js" && \
-            wget -O /www/luci-static/resources/view/qosmate/advanced.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/advanced.js" && \
-            wget -O /www/luci-static/resources/view/qosmate/rules.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/rules.js" && \
-            wget -O /www/luci-static/resources/view/qosmate/connections.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/connections.js" && \
-            wget -O /www/luci-static/resources/view/qosmate/custom_rules.js "$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view/custom_rules.js" && \
-            wget -O /usr/share/luci/menu.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/luci/menu.d/luci-app-qosmate.json" && \
-            wget -O /usr/share/rpcd/acl.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/rpcd/acl.d/luci-app-qosmate.json" && \
-            wget -O /usr/libexec/rpcd/luci.qosmate "$QOSMATE_FRONTEND_BASE_URL/root/usr/libexec/rpcd/luci.qosmate"; then
-            chmod +x /usr/libexec/rpcd/luci.qosmate
-            echo "Frontend update complete."
-            /etc/init.d/rpcd restart
-            /etc/init.d/uhttpd restart
-        else
-            echo "Frontend update failed."
-            return 1
-        fi
-    fi
+    done
+
     expand_config
-    
+
     echo "Update complete. Please restart QoSmate."
     /etc/init.d/qosmate restart
 }
