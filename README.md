@@ -254,6 +254,39 @@ This is more or less equivalent to the `realtime4` and `realtime6` variables fro
 
 This rule is also applied when the auto-setup is used via CLI or UI and a Gaming Device IP (optional) is entered.
 
+## Connections Tab
+
+The Connections tab provides a real-time view of all active network connections, including their DSCP markings and traffic statistics. This feature helps you monitor and verify your QoS configuration.
+
+### Key Features:
+- Real-time connection monitoring
+- DSCP marking visualization
+- Traffic statistics (bytes, packets)
+- Traffic metrics:
+  • Packets per second (PPS) - Often reflects game-server tickrate in games
+    - ~20 PPS: Games like Warzone (20 tick)
+    - ~60 PPS: Call of Duty multiplayer (60 tick)
+    - ~128 PPS: Counter-Strike (128 tick)
+  • Bandwidth usage (Kbit/s)
+- Advanced filtering capabilities
+
+### Advanced Filtering
+The connections table includes a filtering system that allows you to combine multiple search criteria:
+
+- Multiple search terms can be combined using spaces
+- Each term is matched against all relevant fields (Protocol, IP, Port, DSCP)
+- Search terms work with AND logic (all terms must match)
+
+Example searches:
+```
+tcp 80           # Shows all TCP connections on port 80
+192.168 udp      # Shows all UDP connections involving IPs containing "192.168"
+ef 192.168 3074  # Shows connections matching IP "192.168" AND port "3074" AND DSCP class "EF"
+```
+
+### Adjustable View
+The table view can be customized using the zoom control, allowing you to adjust the display density based on your preferences and screen size.
+
 ## Command Line Interface
 QoSmate can be controlled and configured via the command line. The basic syntax is:
 ```
