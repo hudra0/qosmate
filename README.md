@@ -452,6 +452,62 @@ git clone https://github.com/hudra0/qosmate.git package/qosmate
 `mkdir -p package/luci-app-qosmate
 git clone https://github.com/hudra0/luci-app-qosmate.git package/luci-app-qosmate`
 
+## Technical Implementation
+
+### Traffic Shaping Implementation
+
+QoSmate uses a sophisticated approach to handle Quality of Service in both upload and download directions. The implementation leverages Connection Tracking Information (CTInfo) for efficient traffic management.
+
+#### How CTInfo Works
+
+QoSmate handles traffic in both directions (upload and download) using the following process:
+
+1. **Egress (Upload) Processing:**
+   - DSCP values (0-63) are read from outgoing packets
+   - Values are stored in connection tracking using: `ct mark = (DSCP OR 128)`
+   - The original DSCP value is preserved
+   - The additional bit (128) marks the connection as "valid"
+
+2. **Ingress (Download) Processing:**
+   - tc filters with the `ctinfo` action check the connection tracking mark
+   - If the conditional bit (128) is set, the original DSCP value is restored:
+     - DSCP is extracted as `mark & 63`
+     - This DSCP value is applied to incoming packets
+
+3. **IFB (Intermediate Functional Block):**
+   - Linux can only shape outgoing traffic
+   - Download traffic is redirected to a virtual IFB interface
+   - This effectively turns "download" traffic into "upload" traffic on the IFB interface
+   - QoS rules can then be applied to this redirected traffic
+
+#### Technical Background
+
+Traffic control in Linux presents unique challenges, particularly for ingress (download) traffic. This is because tc rules are applied before firewall rules in the packet processing pipeline. QoSmate's CTInfo method elegantly solves this by:
+
+1. Using connection tracking to maintain state across packet directions
+2. Leveraging the IFB interface for download shaping
+3. Preserving DSCP marks across the entire connection
+
+This approach offers several advantages:
+- Works reliably with complex network setups
+- Supports multiple LAN interfaces
+- Compatible with network isolation requirements
+- Minimal configuration complexity
+
+#### Implementation Command Example
+
+The core implementation uses commands like:
+```bash
+tc filter add dev $WAN parent ffff: protocol all matchall action ctinfo dscp 63 128 mirred egress redirect dev ifb-$WAN
+```
+Where:
+- `63`: Mask to extract the DSCP value
+- `128`: Conditional bit to verify marked connections
+
+### Hardware Compatibility
+
+While QoSmate works on most OpenWrt devices, some older devices or specific hardware or kernel configurations might have limitations in DSCP handling, particularly in how they interpret IP header bits for connection tracking.
+
 ## Contributing
 
 Contributions to QoSmate are welcome! Please submit issues and pull requests on the GitHub repository.
