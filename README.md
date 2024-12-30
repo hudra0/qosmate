@@ -81,6 +81,47 @@ For users preferring automatic configuration, QoSmate offers an Auto-setup funct
 3. Wait for the speed test and configuration to complete
 
 **Note**: Router-based speed tests may underestimate your actual connection speed. For more precise settings, run a speed test from a LAN device and manually input the results. The auto-setup provides a useful starting point, but manual fine-tuning may be necessary for optimal performance.
+
+### Fine-Tuning Process
+
+#### 1. Determining Your Baseline Bandwidth
+Before starting with QoSmate configuration:
+1. Stop all QoS services on your router (Qosmate, SQM, etc.)
+2. Perform multiple speed tests (preferably at different times of the day)
+3. Note the lowest consistent speed you can achieve
+4. Use 80-90% of this value for your QoSmate settings
+   - Example: If your lowest reliable download is 300 Mbps, start with 270 Mbps (270000 kbps)
+   - Example: If your lowest reliable upload is 20 Mbps, start with 18 Mbps (18000 kbps)
+
+#### 2. Basic Configuration
+1. Set your determined bandwidth values
+2. Enable WASH in both directions (WASHDSCPUP and WASHDSCPDOWN)
+3. Choose your Root Queueing Discipline:
+   - For older/less powerful routers, use HFSC as it requires fewer system resources
+4. Consider overhead settings:
+   - Default settings are conservative to cover most use cases
+   - It's better to overestimate overhead than to underestimate it
+   - For specific overhead values based on your connection type, refer to:
+     https://openwrt.org/docs/guide-user/network/traffic-shaping/sqm-details
+5. Optimization with HFSC:
+   - pfifo, bfifo, or fq_codel are good starting points for gameqdisc (personally, I use red with good results)
+   - For MAXDEL:
+     - Start with values between 8 and 16 ms
+     - Important: Don't set it too low, as this could cause packet drops
+     - Fine-tune based on your needs if necessary
+6. Optimization with CAKE:
+   - The default settings usually work well for most scenarios
+   - No additional gaming-specific configuration needed
+
+#### 3. Testing and Adjustment
+1. Run a Waveform Bufferbloat Test (https://www.waveform.com/tools/bufferbloat)
+2. Monitor your latency and jitter during the test
+3. If results aren't satisfactory:
+   - First, try reducing bandwidth settings in increments of 500-1000 kbps
+   - Test again after each adjustment
+
+Remember that these are starting points - optimal settings may depend on your specific hardware, connection etc.
+
 ## 2. QoSmate Configuration Settings
 
 ### Basic and Global Settings
