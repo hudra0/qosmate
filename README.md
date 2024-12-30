@@ -82,7 +82,7 @@ For users preferring automatic configuration, QoSmate offers an Auto-setup funct
 
 **Note**: Router-based speed tests may underestimate your actual connection speed. For more precise settings, run a speed test from a LAN device and manually input the results. The auto-setup provides a useful starting point, but manual fine-tuning may be necessary for optimal performance.
 
-### Fine-Tuning Process
+### d) Fine-Tuning Process (Optional)
 
 #### 1. Determining Your Baseline Bandwidth
 Before starting with QoSmate configuration:
