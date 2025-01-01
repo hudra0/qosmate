@@ -52,11 +52,18 @@ validate_custom_rules() {
 
 # Detect package manager (opkg or apk)
 detect_package_manager() {
-    if command -v apk >/dev/null 2>&1; then
+    local has_apk=0 has_opkg=0
+    
+    command -v apk >/dev/null 2>&1 && has_apk=1
+    command -v opkg >/dev/null 2>&1 && has_opkg=1
+    
+    if [ $has_apk -eq 1 ] && [ $has_opkg -eq 1 ]; then
+        echo "conflict"
+    elif [ $has_apk -eq 1 ]; then
         echo "apk"
-    elif command -v opkg >/dev/null 2>&1; then
+    elif [ $has_opkg -eq 1 ]; then
         echo "opkg"
-    else
+    else 
         echo "unknown"
     fi
 }
@@ -65,13 +72,17 @@ detect_package_manager() {
 check_pkg_manager() {
     case "$1" in
         apk|opkg)
+            return 0
+            ;;
+        conflict)
+            logger -s -t qosmate -p user.err "Multiple package managers detected (apk and opkg). Package management disabled."
+            return 1
             ;;
         *)
-            logger -s -t qosmate -p user.err "Error: Unexpected package manager '$1'."
+            logger -s -t qosmate -p user.err "Error: No supported package manager found."
             return 1
             ;;
     esac
-    :
 }
 
 # Check if a package is installed
