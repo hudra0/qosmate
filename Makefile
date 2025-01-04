@@ -13,7 +13,7 @@ define Package/qosmate
   SECTION:=net
   CATEGORY:=Base system
   TITLE:=QoSmate - Quality of Service management tool
-  DEPENDS:=+kmod-sched +ip-full +kmod-veth +tc-full +kmod-netem +kmod-sched-ctinfo +kmod-ifb +kmod-sched-cake
+  DEPENDS:=+kmod-sched +ip-full +kmod-veth +tc-full +kmod-netem +kmod-sched-ctinfo +kmod-ifb +kmod-sched-cake +kmod-sched-red
 endef
 
 define Package/qosmate/description
