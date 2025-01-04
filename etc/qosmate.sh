@@ -275,10 +275,10 @@ DYNAMIC_RULES=$(generate_dynamic_nft_rules)
 # Check if ACKRATE is greater than 0
 if [ "$ACKRATE" -gt 0 ]; then
     ack_rules="\
-meta length < 100 tcp flags ack add @xfst4ack {ct id . ct direction limit rate over ${XFSTACKRATE}/second} counter jump drop995
-        meta length < 100 tcp flags ack add @fast4ack {ct id . ct direction limit rate over ${FASTACKRATE}/second} counter jump drop95
-        meta length < 100 tcp flags ack add @med4ack {ct id . ct direction limit rate over ${MEDACKRATE}/second} counter jump drop50
-        meta length < 100 tcp flags ack add @slow4ack {ct id . ct direction limit rate over ${SLOWACKRATE}/second} counter jump drop50"
+meta length < 100 ip protocol tcp tcp flags & ack == ack add @xfst4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${XFSTACKRATE}/second} counter jump drop995
+        meta length < 100 ip protocol tcp tcp flags & ack == ack add @fast4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${FASTACKRATE}/second} counter jump drop95
+        meta length < 100 ip protocol tcp tcp flags & ack == ack add @med4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${MEDACKRATE}/second} counter jump drop50
+        meta length < 100 ip protocol tcp tcp flags & ack == ack add @slow4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${SLOWACKRATE}/second} counter jump drop50"
 else
     ack_rules="# ACK rate regulation disabled as ACKRATE=0 or not set."
 fi
@@ -286,8 +286,10 @@ fi
 # Check if UDPBULKPORT is set
 if [ -n "$UDPBULKPORT" ]; then
     udpbulkport_rules="\
-meta l4proto udp ct original proto-src \$udpbulkport counter jump mark_cs1
-        meta l4proto udp ct original proto-dst \$udpbulkport counter jump mark_cs1"
+ip protocol udp udp sport \$udpbulkport ip dscp set cs1 counter
+        ip6 nexthdr udp udp sport \$udpbulkport ip6 dscp set cs1 counter
+        ip protocol udp udp dport \$udpbulkport ip dscp set cs1 counter
+        ip6 nexthdr udp udp dport \$udpbulkport ip6 dscp set cs1 counter"
 else
     udpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
 fi
@@ -295,7 +297,10 @@ fi
 # Check if TCPBULKPORT is set
 if [ -n "$TCPBULKPORT" ]; then
     tcpbulkport_rules="\
-meta l4proto tcp ct original proto-dst \$tcpbulkport counter jump mark_cs1"
+ip protocol tcp tcp sport \$tcpbulkport ip dscp set cs1 counter
+        ip6 nexthdr tcp tcp sport \$tcpbulkport ip6 dscp set cs1 counter
+        ip protocol tcp tcp dport \$tcpbulkport ip dscp set cs1 counter
+        ip6 nexthdr tcp tcp dport \$tcpbulkport ip6 dscp set cs1 counter"
 else
     tcpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
 fi
@@ -303,7 +308,8 @@ fi
 # Check if VIDCONFPORTS is set
 if [ -n "$VIDCONFPORTS" ]; then
     vidconfports_rules="\
-meta l4proto udp ct original proto-dst \$vidconfports counter jump mark_af42"
+ip protocol udp udp dport \$vidconfports ip dscp set af42 counter
+        ip6 nexthdr udp udp dport \$vidconfports ip6 dscp set af42 counter"
 else
     vidconfports_rules="# VIDCONFPORTS Port rules disabled, no ports defined."
 fi
@@ -311,16 +317,16 @@ fi
 # Check if REALTIME4 and REALTIME6 are set
 if [ -n "$REALTIME4" ]; then
     realtime4_rules="\
-meta l4proto udp ip daddr \$realtime4 ip dscp set cs5 counter
-        meta l4proto udp ip saddr \$realtime4 ip dscp set cs5 counter"
+ip protocol udp ip daddr \$realtime4 ip dscp set cs5 counter
+        ip protocol udp ip saddr \$realtime4 ip dscp set cs5 counter"
 else
     realtime4_rules="# REALTIME4 rules disabled, address not defined."
 fi
 
 if [ -n "$REALTIME6" ]; then
     realtime6_rules="\
-meta l4proto udp ip6 daddr \$realtime6 ip6 dscp set cs5 counter
-        meta l4proto udp ip6 saddr \$realtime6 ip6 dscp set cs5 counter"
+ip6 nexthdr udp ip6 daddr \$realtime6 ip6 dscp set cs5 counter
+        ip6 nexthdr udp ip6 saddr \$realtime6 ip6 dscp set cs5 counter"
 else
     realtime6_rules="# REALTIME6 rules disabled, address not defined."
 fi
@@ -328,16 +334,16 @@ fi
 # Check if LOWPRIOLAN4 and LOWPRIOLAN6 are set
 if [ -n "$LOWPRIOLAN4" ]; then
     lowpriolan4_rules="\
-meta l4proto udp ip daddr \$lowpriolan4 ip dscp set cs0 counter
-        meta l4proto udp ip saddr \$lowpriolan4 ip dscp set cs0 counter"
+ip protocol udp ip daddr \$lowpriolan4 ip dscp set cs0 counter
+        ip protocol udp ip saddr \$lowpriolan4 ip dscp set cs0 counter"
 else
     lowpriolan4_rules="# LOWPRIOLAN4 rules disabled, address not defined."
 fi
 
 if [ -n "$LOWPRIOLAN6" ]; then
     lowpriolan6_rules="\
-meta l4proto udp ip6 daddr \$lowpriolan6 ip6 dscp set cs0 counter
-        meta l4proto udp ip6 saddr \$lowpriolan6 ip6 dscp set cs0 counter"
+ip6 nexthdr udp ip6 daddr \$lowpriolan6 ip6 dscp set cs0 counter
+        ip6 nexthdr udp ip6 saddr \$lowpriolan6 ip6 dscp set cs0 counter"
 else
     lowpriolan6_rules="# LOWPRIOLAN6 rules disabled, address not defined."
 fi
@@ -345,8 +351,8 @@ fi
 # Check if UDP rate limiting should be applied
 if [ "$UDP_RATE_LIMIT_ENABLED" -eq 1 ]; then
     udp_rate_limit_rules="\
-meta l4proto udp ip dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip dscp set cs0 counter
-        meta l4proto udp ip6 dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip6 dscp set cs0 counter"
+ip protocol udp ip dscp > cs2 add @udp_meter4 {ip saddr . ip daddr . udp sport . udp dport limit rate over 450/second} counter ip dscp set cs0 counter
+        ip6 nexthdr udp ip6 dscp > cs2 add @udp_meter6 {ip6 saddr . ip6 daddr . udp sport . udp dport limit rate over 450/second} counter ip6 dscp set cs0 counter"
 else
     udp_rate_limit_rules="# UDP rate limiting is disabled."
 fi
@@ -354,8 +360,8 @@ fi
 # Check if TCP upgrade for slow connections should be applied
 if [ "$TCP_UPGRADE_ENABLED" -eq 1 ]; then
     tcp_upgrade_rules="
-meta l4proto tcp ip dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets } ip dscp set af42 counter
-        meta l4proto tcp ip6 dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
+ip protocol tcp ip dscp != cs1 add @slowtcp4 {ip saddr . ip daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets } ip dscp set af42 counter
+        ip6 nexthdr tcp ip6 dscp != cs1 add @slowtcp6 {ip6 saddr . ip6 daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
 else
     tcp_upgrade_rules="# TCP upgrade for slow connections is disabled"
 fi
@@ -419,65 +425,49 @@ table inet dscptag {
     }
 
 
-    set xfst4ack { typeof ct id . ct direction
+    set xfst4ack { typeof ip daddr . ip saddr . tcp dport . tcp sport
         flags dynamic;
         timeout 5m
     }
-    set fast4ack { typeof ct id . ct direction
+    set fast4ack { typeof ip daddr . ip saddr . tcp dport . tcp sport
         flags dynamic;
         timeout 5m
     }
-    set med4ack { typeof ct id . ct direction
+    set med4ack { typeof ip daddr . ip saddr . tcp dport . tcp sport
         flags dynamic;
         timeout 5m
     }
-    set slow4ack { typeof ct id . ct direction
+    set slow4ack { typeof ip daddr . ip saddr . tcp dport . tcp sport
         flags dynamic;
         timeout 5m
     }
-    set udp_meter {typeof ct id . ct direction
+    set udp_meter4 {typeof ip saddr . ip daddr . udp sport . udp dport
         flags dynamic;
         timeout 5m
     }
-    set slowtcp {typeof ct id . ct direction
+    set udp_meter6 {typeof ip6 saddr . ip6 daddr . udp sport . udp dport
+        flags dynamic;
+        timeout 5m
+    }
+    set slowtcp4 {typeof ip saddr . ip daddr . tcp sport . tcp dport
+        flags dynamic;
+        timeout 5m
+    }
+    set slowtcp6 {typeof ip6 saddr . ip6 daddr . tcp sport . tcp dport
         flags dynamic;
         timeout 5m
     }
 
     chain drop995 {
-	numgen random mod 1000 ge 995 return
-	drop
+        numgen random mod 1000 < 995 drop
     }
     chain drop95 {
-	numgen random mod 1000 ge 950 return
-	drop
+        numgen random mod 100 < 95 drop
     }
     chain drop50 {
-	numgen random mod 1000 ge 500 return
-	drop
+        numgen random mod 100 < 50 drop
     }
 
-    chain mark_500ms {
-        ip dscp < cs4 ip dscp != cs1 ip dscp set cs0 counter return
-        ip6 dscp < cs4 ip6 dscp != cs1 ip6 dscp set cs0 counter
-    }
-    chain mark_10s {
-        ip dscp < cs4 ip dscp set cs1 counter return
-        ip6 dscp < cs4 ip6 dscp set cs1 counter
-    }
-
-    chain mark_cs0 {
-        ip dscp set cs0 return
-        ip6 dscp set cs0
-    }
-    chain mark_cs1 {
-        ip dscp set cs1 return
-        ip6 dscp set cs1
-    }
-    chain mark_af42 {
-        ip dscp set af42 return
-        ip6 dscp set af42
-    }
 
     chain dscptag {
         type filter hook $NFT_HOOK priority $NFT_PRIORITY; policy accept;
@@ -485,7 +475,8 @@ table inet dscptag {
         
         $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPDOWN" -eq 1 ]; then
             echo "# wash all the DSCP on ingress ... "
-            echo "        counter jump mark_cs0"
+            echo "        ip dscp set cs0 counter"
+            echo "        ip6 dscp set cs0 counter"
           fi
         )
 
@@ -511,10 +502,10 @@ table inet dscptag {
         $udp_rate_limit_rules
         
         # down prioritize the first 500ms of tcp packets
-        meta l4proto tcp ct bytes < \$first500ms jump mark_500ms
+        ip protocol tcp ct bytes < \$first500ms ip dscp < cs4 ip dscp set cs0 counter
 
         # downgrade tcp that has transferred more than 10 seconds worth of packets
-        meta l4proto tcp ct bytes > \$first10s jump mark_10s
+        ip protocol tcp ct bytes > \$first10s ip dscp < cs4 ip dscp set cs1 counter
 
         $tcp_upgrade_rules
         
@@ -530,13 +521,13 @@ ${DYNAMIC_RULES}
 
         $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPUP" -eq 1 ]; then
             echo "# wash all DSCP on egress ... "
-            echo "meta oifname \$wan jump mark_cs0"
+            echo "meta oifname \$wan ip dscp set cs0"
+            echo "        meta oifname \$wan ip6 dscp set cs0"
           fi
         )
     }
 }
 DSCPEOF
-
 ## Set up ctinfo downstream shaping
 
 # Set up ingress handle for WAN interface
