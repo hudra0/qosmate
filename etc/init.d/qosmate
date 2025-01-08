@@ -312,7 +312,6 @@ start_service() {
     /etc/qosmate.sh
     /etc/init.d/firewall reload
     logger -t qosmate "Service started"
-    /etc/init.d/qosmate enable
 }
 
 stop_service() {
@@ -328,7 +327,6 @@ stop_service() {
     
     # Only disable if not in restart
     if [ "$DISABLE_ON_STOP" != "0" ]; then
-        /etc/init.d/qosmate disable
         uci set qosmate.global.enabled='0'
         uci commit qosmate
     fi
@@ -391,18 +389,25 @@ status_service() {
 
     echo "==== qosmate Status ===="
     
-    # Check if the service is enabled
+    # Check if autostart is enabled
     if /etc/init.d/qosmate enabled; then
+        echo "qosmate autostart is enabled."
+    else
+        echo "qosmate autostart is not enabled."
+    fi
+
+    # Check if the service is enabled in UCI config
+    if [ "$(uci -q get qosmate.global.enabled)" = "1" ]; then
         echo "qosmate service is enabled."
     else
-        echo "qosmate service is not enabled."
+        echo "qosmate service is disabled."
     fi
 
     # Check if traffic shaping is active
     local IFB="ifb-$WAN"
     
     if tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc cake"; then
-        if /etc/init.d/qosmate enabled; then
+        if [ "$(uci -q get qosmate.global.enabled)" = "1" ]; then
             echo "Traffic shaping is active on the egress interface ($WAN)."
         else
             echo "Default CAKE qdisc is active on the egress interface ($WAN), but qosmate is not managing it."
@@ -410,20 +415,20 @@ status_service() {
     elif tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc hfsc"; then
         echo "Traffic shaping (HFSC) is active on the egress interface ($WAN)."
     else
-        echo "No qosmate traffic shaping is active on the egress interface ($WAN)."
+        echo "No traffic shaping is active on the egress interface ($WAN)."
     fi
 
     if tc qdisc show dev "$IFB" 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; then
         echo "Traffic shaping is active on the ingress interface ($IFB)."
     else
-        echo "Traffic shaping is not active on the ingress interface ($IFB)."
+        echo "No traffic shaping is active on the ingress interface ($IFB)."
     fi
 
     echo "==== Overall Status ===="
     # Determine if the service is actually running
-    if /etc/init.d/qosmate enabled && { tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc hfsc" ||
-		tc qdisc show dev "$IFB" 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; }; then
-        	echo "qosmate is currently active and managing traffic shaping."
+    if [ "$(uci -q get qosmate.global.enabled)" = "1" ] && { tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc hfsc" ||
+            tc qdisc show dev "$IFB" 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; }; then
+            echo "qosmate is currently active and managing traffic shaping."
     else
         echo "qosmate is not currently active or managing traffic shaping."
     fi
