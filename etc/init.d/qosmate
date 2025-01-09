@@ -312,6 +312,7 @@ start_service() {
     /etc/qosmate.sh
     /etc/init.d/firewall reload
     logger -t qosmate "Service started"
+    /etc/init.d/qosmate enable
 }
 
 stop_service() {
@@ -327,6 +328,7 @@ stop_service() {
     
     # Only disable if not in restart
     if [ "$DISABLE_ON_STOP" != "0" ]; then
+        /etc/init.d/qosmate disable
         uci set qosmate.global.enabled='0'
         uci commit qosmate
     fi
