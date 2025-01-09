@@ -275,10 +275,10 @@ DYNAMIC_RULES=$(generate_dynamic_nft_rules)
 # Check if ACKRATE is greater than 0
 if [ "$ACKRATE" -gt 0 ]; then
     ack_rules="\
-meta length < 100 ip protocol tcp tcp flags & ack == ack add @xfst4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${XFSTACKRATE}/second} counter jump drop995
-        meta length < 100 ip protocol tcp tcp flags & ack == ack add @fast4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${FASTACKRATE}/second} counter jump drop95
-        meta length < 100 ip protocol tcp tcp flags & ack == ack add @med4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${MEDACKRATE}/second} counter jump drop50
-        meta length < 100 ip protocol tcp tcp flags & ack == ack add @slow4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${SLOWACKRATE}/second} counter jump drop50"
+meta length < 100 tcp flags ack add @xfst4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${XFSTACKRATE}/second} counter jump drop995
+        meta length < 100 tcp flags ack add @fast4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${FASTACKRATE}/second} counter jump drop95
+        meta length < 100 tcp flags ack add @med4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${MEDACKRATE}/second} counter jump drop50
+        meta length < 100 tcp flags ack add @slow4ack {ip daddr . ip saddr . tcp dport . tcp sport limit rate over ${SLOWACKRATE}/second} counter jump drop50"
 else
     ack_rules="# ACK rate regulation disabled as ACKRATE=0 or not set."
 fi
@@ -286,10 +286,10 @@ fi
 # Check if UDPBULKPORT is set
 if [ -n "$UDPBULKPORT" ]; then
     udpbulkport_rules="\
-ip protocol udp udp sport \$udpbulkport ip dscp set cs1 counter
-        ip6 nexthdr udp udp sport \$udpbulkport ip6 dscp set cs1 counter
-        ip protocol udp udp dport \$udpbulkport ip dscp set cs1 counter
-        ip6 nexthdr udp udp dport \$udpbulkport ip6 dscp set cs1 counter"
+udp sport \$udpbulkport ip dscp set cs1 counter
+        udp sport \$udpbulkport ip6 dscp set cs1 counter
+        udp dport \$udpbulkport ip dscp set cs1 counter
+        udp dport \$udpbulkport ip6 dscp set cs1 counter"
 else
     udpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
 fi
@@ -297,10 +297,10 @@ fi
 # Check if TCPBULKPORT is set
 if [ -n "$TCPBULKPORT" ]; then
     tcpbulkport_rules="\
-ip protocol tcp tcp sport \$tcpbulkport ip dscp set cs1 counter
-        ip6 nexthdr tcp tcp sport \$tcpbulkport ip6 dscp set cs1 counter
-        ip protocol tcp tcp dport \$tcpbulkport ip dscp set cs1 counter
-        ip6 nexthdr tcp tcp dport \$tcpbulkport ip6 dscp set cs1 counter"
+tcp sport \$tcpbulkport ip dscp set cs1 counter
+        tcp sport \$tcpbulkport ip6 dscp set cs1 counter
+        tcp dport \$tcpbulkport ip dscp set cs1 counter
+        tcp dport \$tcpbulkport ip6 dscp set cs1 counter"
 else
     tcpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
 fi
@@ -308,8 +308,8 @@ fi
 # Check if VIDCONFPORTS is set
 if [ -n "$VIDCONFPORTS" ]; then
     vidconfports_rules="\
-ip protocol udp udp dport \$vidconfports ip dscp set af42 counter
-        ip6 nexthdr udp udp dport \$vidconfports ip6 dscp set af42 counter"
+udp dport \$vidconfports ip dscp set af42 counter
+        udp dport \$vidconfports ip6 dscp set af42 counter"
 else
     vidconfports_rules="# VIDCONFPORTS Port rules disabled, no ports defined."
 fi
@@ -317,16 +317,16 @@ fi
 # Check if REALTIME4 and REALTIME6 are set
 if [ -n "$REALTIME4" ]; then
     realtime4_rules="\
-ip protocol udp ip daddr \$realtime4 ip dscp set cs5 counter
-        ip protocol udp ip saddr \$realtime4 ip dscp set cs5 counter"
+meta l4proto udp ip daddr \$realtime4 ip dscp set cs5 counter
+        meta l4proto udp ip saddr \$realtime4 ip dscp set cs5 counter"
 else
     realtime4_rules="# REALTIME4 rules disabled, address not defined."
 fi
 
 if [ -n "$REALTIME6" ]; then
     realtime6_rules="\
-ip6 nexthdr udp ip6 daddr \$realtime6 ip6 dscp set cs5 counter
-        ip6 nexthdr udp ip6 saddr \$realtime6 ip6 dscp set cs5 counter"
+meta l4proto udp ip6 daddr \$realtime6 ip6 dscp set cs5 counter
+        meta l4proto udp ip6 saddr \$realtime6 ip6 dscp set cs5 counter"
 else
     realtime6_rules="# REALTIME6 rules disabled, address not defined."
 fi
@@ -334,16 +334,16 @@ fi
 # Check if LOWPRIOLAN4 and LOWPRIOLAN6 are set
 if [ -n "$LOWPRIOLAN4" ]; then
     lowpriolan4_rules="\
-ip protocol udp ip daddr \$lowpriolan4 ip dscp set cs0 counter
-        ip protocol udp ip saddr \$lowpriolan4 ip dscp set cs0 counter"
+meta l4proto udp ip daddr \$lowpriolan4 ip dscp set cs0 counter
+        meta l4proto udp ip saddr \$lowpriolan4 ip dscp set cs0 counter"
 else
     lowpriolan4_rules="# LOWPRIOLAN4 rules disabled, address not defined."
 fi
 
 if [ -n "$LOWPRIOLAN6" ]; then
     lowpriolan6_rules="\
-ip6 nexthdr udp ip6 daddr \$lowpriolan6 ip6 dscp set cs0 counter
-        ip6 nexthdr udp ip6 saddr \$lowpriolan6 ip6 dscp set cs0 counter"
+meta l4proto udp ip6 daddr \$lowpriolan6 ip6 dscp set cs0 counter
+        meta l4proto udp ip6 saddr \$lowpriolan6 ip6 dscp set cs0 counter"
 else
     lowpriolan6_rules="# LOWPRIOLAN6 rules disabled, address not defined."
 fi
@@ -351,8 +351,8 @@ fi
 # Check if UDP rate limiting should be applied
 if [ "$UDP_RATE_LIMIT_ENABLED" -eq 1 ]; then
     udp_rate_limit_rules="\
-ip protocol udp ip dscp > cs2 add @udp_meter4 {ip saddr . ip daddr . udp sport . udp dport limit rate over 450/second} counter ip dscp set cs0 counter
-        ip6 nexthdr udp ip6 dscp > cs2 add @udp_meter6 {ip6 saddr . ip6 daddr . udp sport . udp dport limit rate over 450/second} counter ip6 dscp set cs0 counter"
+ip dscp > cs2 add @udp_meter4 {ip saddr . ip daddr . udp sport . udp dport limit rate over 450/second} counter ip dscp set cs0 counter
+        ip6 dscp > cs2 add @udp_meter6 {ip6 saddr . ip6 daddr . udp sport . udp dport limit rate over 450/second} counter ip6 dscp set cs0 counter"
 else
     udp_rate_limit_rules="# UDP rate limiting is disabled."
 fi
@@ -360,8 +360,8 @@ fi
 # Check if TCP upgrade for slow connections should be applied
 if [ "$TCP_UPGRADE_ENABLED" -eq 1 ]; then
     tcp_upgrade_rules="
-ip protocol tcp ip dscp != cs1 add @slowtcp4 {ip saddr . ip daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets } ip dscp set af42 counter
-        ip6 nexthdr tcp ip6 dscp != cs1 add @slowtcp6 {ip6 saddr . ip6 daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
+ip dscp != cs1 add @slowtcp4 {ip saddr . ip daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets } ip dscp set af42 counter
+        ip6 dscp != cs1 add @slowtcp6 {ip6 saddr . ip6 daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
 else
     tcp_upgrade_rules="# TCP upgrade for slow connections is disabled"
 fi
@@ -502,10 +502,10 @@ table inet dscptag {
         $udp_rate_limit_rules
         
         # down prioritize the first 500ms of tcp packets
-        ip protocol tcp ct bytes < \$first500ms ip dscp < cs4 ip dscp set cs0 counter
+        meta l4proto tcp ct bytes < \$first500ms ip dscp < cs4 ip dscp set cs0 counter
 
         # downgrade tcp that has transferred more than 10 seconds worth of packets
-        ip protocol tcp ct bytes > \$first10s ip dscp < cs4 ip dscp set cs1 counter
+        meta l4proto tcp ct bytes > \$first10s ip dscp < cs4 ip dscp set cs1 counter
 
         $tcp_upgrade_rules
         
