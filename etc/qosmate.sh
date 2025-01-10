@@ -424,6 +424,12 @@ table inet dscptag {
                     cs2 : 1:14 , cs1 : 1:15, cs0 : 1:13}
     }
 
+    map markmap { type dscp : mark ;
+        elements = {ef : 0xae, cs5 : 0xa8, cs6 : 0xb0, cs7 : 0xb8,
+                   cs4 : 0xa0, af41 : 0xa2, af42 : 0xa4,
+                   cs2 : 0x90, cs1 : 0x88, cs0 : 0x80}
+    }
+
 
     set xfst4ack { typeof ip daddr . ip saddr . tcp dport . tcp sport
         flags dynamic;
@@ -516,8 +522,8 @@ ${DYNAMIC_RULES}
         meta priority set ip6 dscp map @priomap counter
 
         # Store DSCP in conntrack for restoration on ingress
-        ct mark set ip dscp or 128 counter
-        ct mark set ip6 dscp or 128 counter
+        ct mark set ip dscp map @markmap counter
+        ct mark set ip6 dscp map @markmap counter
 
         $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPUP" -eq 1 ]; then
             echo "# wash all DSCP on egress ... "
