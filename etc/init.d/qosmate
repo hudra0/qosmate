@@ -705,7 +705,7 @@ parse_speedtest_output() {
     local speedtest_cmd="$1" direction="$2"
     case "$speedtest_cmd" in
         speedtest-go*)
-            grep "${direction}:" | grep -m1 -oE '[0-9]+\.[0-9]+'
+            grep "${direction}:" | grep -oE '[0-9]+\.[0-9]+' | head -n1
             ;;
         "speedtest --simple"*)
             # match to (Upload:|Download:).*, print field 2. if no match, return 1
