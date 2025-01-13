@@ -424,7 +424,6 @@ table inet dscptag {
                     cs2 : 1:14 , cs1 : 1:15, cs0 : 1:13}
     }
 
-
     set xfst4ack { typeof ip daddr . ip saddr . tcp dport . tcp sport
         flags dynamic;
         timeout 5m
@@ -516,8 +515,8 @@ ${DYNAMIC_RULES}
         meta priority set ip6 dscp map @priomap counter
 
         # Store DSCP in conntrack for restoration on ingress
-        ct mark set ip dscp or 128 counter
-        ct mark set ip6 dscp or 128 counter
+        meta nfproto ipv4 ct mark set (@nh,8,8 & 252) >> 2 or 128 counter
+        meta nfproto ipv6 ct mark set (@nh,0,16 & 4032) >> 6 or 128 counter
 
         $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPUP" -eq 1 ]; then
             echo "# wash all DSCP on egress ... "
