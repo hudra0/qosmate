@@ -326,8 +326,8 @@ stop_service() {
 
     echo "Stopping service qosmate..."
     
-    # Only disable if not in restart
-    if [ "$DISABLE_ON_STOP" != "0" ]; then
+    # Only disable if not in shutdown and not in restart
+    if [ "$DISABLE_ON_STOP" != "0" ] && [ -z "$FROM_SHUTDOWN" ]; then
         /etc/init.d/qosmate disable
         uci set qosmate.global.enabled='0'
         uci commit qosmate
@@ -358,6 +358,13 @@ stop_service() {
     /etc/init.d/firewall reload
     logger -t qosmate "Service stopped"
     exit 0
+}
+
+shutdown() {
+    # Set variable for shutdown
+    FROM_SHUTDOWN=1
+    # Call stop_service
+    stop_service
 }
 
 status_service() {
