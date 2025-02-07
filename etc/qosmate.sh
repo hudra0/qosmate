@@ -360,8 +360,8 @@ fi
 # Check if TCP upgrade for slow connections should be applied
 if [ "$TCP_UPGRADE_ENABLED" -eq 1 ]; then
     tcp_upgrade_rules="
-ip dscp != cs1 add @slowtcp4 {ip saddr . ip daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets } ip dscp set af42 counter
-        ip6 dscp != cs1 add @slowtcp6 {ip6 saddr . ip6 daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
+ip dscp cs0 add @slowtcp4 {ip saddr . ip daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets } ip dscp set af42 counter
+        ip6 dscp cs0 add @slowtcp6 {ip6 saddr . ip6 daddr . tcp sport . tcp dport limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
 else
     tcp_upgrade_rules="# TCP upgrade for slow connections is disabled"
 fi
@@ -421,7 +421,7 @@ table inet dscptag {
     map priomap { type dscp : classid ;
         elements =  {ef : 1:11, cs5 : 1:11, cs6 : 1:11, cs7 : 1:11,
                     cs4 : 1:12, af41 : 1:12, af42 : 1:12,
-                    cs2 : 1:14 , cs1 : 1:15, cs0 : 1:13}
+                    cs2 : 1:14 , cs1 : 1:15, cs0 : 1:13, af11: 1:16}
     }
 
     set xfst4ack { typeof ip daddr . ip saddr . tcp dport . tcp sport
@@ -479,8 +479,8 @@ table inet dscptag {
           fi
         )
 
-        $RULE_SET_TCPMSS_UP
-        $RULE_SET_TCPMSS_DOWN
+        #$RULE_SET_TCPMSS_UP
+        #$RULE_SET_TCPMSS_DOWN
 
         $udpbulkport_rules
 
@@ -501,13 +501,17 @@ table inet dscptag {
         $udp_rate_limit_rules
         
         # down prioritize the first 500ms of tcp packets
-        meta l4proto tcp ct bytes < \$first500ms ip dscp < cs4 ip dscp set cs0 counter
+        #meta l4proto tcp ct bytes < \$first500ms ip dscp < cs4 ip dscp set cs0 counter
 
         # downgrade tcp that has transferred more than 10 seconds worth of packets
-        meta l4proto tcp ct bytes > \$first10s ip dscp < cs4 ip dscp set cs1 counter
+        meta l4proto tcp ct bytes > \$first10s ip dscp {cs0,af42} ip dscp set cs2 counter
 
         $tcp_upgrade_rules
-        
+	# prioritize dns, ntp and icmp special packets for cake-autorate/sqm-autorate
+        meta skuid dnsmasq ip dscp set ef counter
+        meta skuid chrony ip dscp set ef counter
+        icmp type {timestamp-request,timestamp-reply} ip dscp set ef counter
+
 ${DYNAMIC_RULES}
 
         ## classify for the HFSC queues:
@@ -535,6 +539,15 @@ tc qdisc add dev $WAN handle ffff: ingress
 # Create IFB interface
 ip link add name ifb-$WAN type ifb
 ip link set ifb-$WAN up
+
+#disable nic offloading as it damages MSS
+DEVS=$(ip link | grep UP | awk '{print $2}' | grep -v lo | tr -d : | awk -F @ '{print $1}')
+for DEV in $DEVS; do
+TOE_OPTIONS="rx tx sg tso ufo gso gro lro rxhash"
+  for TOE_OPTION in $TOE_OPTIONS; do
+    /usr/sbin/ethtool --offload "$DEV" "$TOE_OPTION" off #&>/dev/null || true
+  done
+done
 
 # Redirect ingress traffic from WAN to IFB and restore DSCP from conntrack
 tc filter add dev $WAN parent ffff: protocol all matchall action ctinfo dscp 63 128 mirred egress redirect dev ifb-$WAN
@@ -602,7 +615,7 @@ tc qdisc del dev "$DEV" root > /dev/null 2>&1
 
 case $LINKTYPE in
     "atm")
-	tc qdisc replace dev "$DEV" handle 1: root stab mtu 2047 tsize 512 mpu 68 overhead ${OH} linklayer atm hfsc default 13
+	tc qdisc replace dev "$DEV" handle 1: root stab mtu 2048 tsize 128 mpu 56 overhead ${OH} linklayer atm hfsc default 13
 	;;
     "DOCSIS")
 	tc qdisc replace dev $DEV stab overhead 25 linklayer ethernet handle 1: root hfsc default 13
@@ -620,9 +633,9 @@ fi
 
 # if we're on the LAN side, create a queue just for traffic from the
 # router, like LUCI and DNS lookups
-if [ $DIR = "lan" ]; then
-    tc class add dev "$DEV" parent 1: classid 1:2 hfsc ls m1 50000kbit d "${DUR}ms" m2 10000kbit
-fi
+#if [ $DIR = "lan" ]; then
+#    tc class add dev "$DEV" parent 1: classid 1:2 hfsc ls m1 50000kbit d "${DUR}ms" m2 10000kbit
+#fi
 
 
 #limit the link overall:
@@ -650,7 +663,10 @@ tc class add dev "$DEV" parent 1:1 classid 1:13 hfsc ls m1 "$((RATE*20/100))kbit
 tc class add dev "$DEV" parent 1:1 classid 1:14 hfsc ls m1 "$((RATE*7/100))kbit" d "${DUR}ms" m2 "$((RATE*15/100))kbit"
 
 # bulk
-tc class add dev "$DEV" parent 1:1 classid 1:15 hfsc ls m1 "$((RATE*3/100))kbit" d "${DUR}ms" m2 "$((RATE*10/100))kbit"
+tc class add dev "$DEV" parent 1:1 classid 1:15 hfsc ls m1 "$((RATE*2/100))kbit" d "${DUR}ms" m2 "$((RATE*8/100))kbit"
+
+# guest
+tc class add dev "$DEV" parent 1:1 classid 1:16 hfsc ls m1 "$((RATE*1/100))kbit" d "${DUR}ms" m2 "$((RATE*2/100))kbit"
 
 
 
@@ -680,9 +696,12 @@ fi
 # for fq_codel
 INTVL=$((100+2*1500*8/RATE))
 TARG=$((540*8/RATE+4))
-
-
-
+#TARG=$((3*TARG))
+EXTRAARG=" ecn no_dq_rate_estimator"
+if [ "$RATE" -lt 3000 ]; then
+    EXTRAARG=" noecn bytemode no_dq_rate_estimator"
+    MTU=$((744))
+fi
 case $useqdisc in
     "drr")
 	tc qdisc add dev "$DEV" parent 1:11 handle 2:0 drr
@@ -721,7 +740,10 @@ case $useqdisc in
 	## send game packets to 10:, they're all treated the same
 	;;
     "fq_codel")
-	tc qdisc add dev "$DEV" parent "1:11" fq_codel memory_limit $((RATE*200/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
+	tc qdisc add dev "$DEV" parent "1:11" fq_codel interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2)) $EXTRAARG # memory_limit $((RATE*200/8))
+	;;
+    "fq_pie")
+	tc qdisc add dev "$DEV" parent "1:11" fq_pie target "${TARG}ms" tupdate "${TARG}ms" $EXTRAARG noquantum $((MTU * 2))
 	;;
     "netem")
         # Only apply NETEM if this direction is enabled
@@ -774,14 +796,17 @@ if [ "$DIR" = "lan" ]; then
     tc filter add dev $DEV parent 1: protocol ip prio 1 u32 match ip dsfield 0x40 0xfc classid 1:14 # cs2 (16)
     tc filter add dev $DEV parent 1: protocol ip prio 1 u32 match ip dsfield 0x20 0xfc classid 1:15 # cs1 (8)
     tc filter add dev $DEV parent 1: protocol ip prio 1 u32 match ip dsfield 0x00 0xfc classid 1:13 # none (0)
+    tc filter add dev $DEV parent 1: protocol ip prio 1 u32 match ip dsfield 0x28 0xfc classid 1:16 # af11 (10)
 fi
 
 echo "adding $nongameqdisc qdisc for non-game traffic"
-for i in 12 13 14 15; do 
+for i in 12 13 14 15 16; do 
     if [ "$nongameqdisc" = "cake" ]; then
         tc qdisc add dev "$DEV" parent "1:$i" cake $nongameqdiscoptions
     elif [ "$nongameqdisc" = "fq_codel" ]; then
-        tc qdisc add dev "$DEV" parent "1:$i" fq_codel memory_limit $((RATE*200/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
+        tc qdisc add dev "$DEV" parent "1:$i" fq_codel interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2)) $EXTRAARG #memory_limit $((RATE*200/8))
+    elif [ "$nongameqdisc" = "fq_pie" ]; then
+        tc qdisc add dev "$DEV" parent "1:$i" fq_pie target "${TARG}ms" tupdate "${TARG}ms" $EXTRAARG quantum $((MTU * 2))
     else
         echo "Unsupported qdisc for non-game traffic: $nongameqdisc"
         exit 1
@@ -845,7 +870,7 @@ setup_cake() {
 
 # Main logic for selecting and applying the QoS system
 if [ "$ROOT_QDISC" = "hfsc" ]; then
-    if [ "$gameqdisc" != "fq_codel" ] && [ "$gameqdisc" != "red" ] && [ "$gameqdisc" != "pfifo" ] && [ "$gameqdisc" != "bfifo" ] && [ "$gameqdisc" != "netem" ]; then
+    if [ "$gameqdisc" != "fq_pie" ] && [ "$gameqdisc" != "fq_codel" ] && [ "$gameqdisc" != "red" ] && [ "$gameqdisc" != "pfifo" ] && [ "$gameqdisc" != "bfifo" ] && [ "$gameqdisc" != "netem" ]; then
         echo "Warning: $gameqdisc is not tested and may not work on OpenWrt. Reverting to red."
         gameqdisc="red"
     fi
