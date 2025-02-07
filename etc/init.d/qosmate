@@ -308,11 +308,13 @@ start_service() {
     # Create custom rules file if it doesn't exist
     manage_custom_rules_file create
     nft -f /etc/qosmate.d/custom_rules.nft
-
+    wanip=$(ifstatus wan |  jsonfilter -e '@["ipv4-address"][0].address')
+    nft add rule inet qosmate_custom fixmsspre ip daddr "$wanip" ip saddr !=192.168.0.0/16 tcp flags syn / fin,syn,rst tcp option maxseg size set 592 counter
     /etc/qosmate.sh
     /etc/init.d/firewall reload
     logger -t qosmate "Service started"
     /etc/init.d/qosmate enable
+    /etc/init.d/sqm-autorate start
 }
 
 stop_service() {
@@ -323,7 +325,7 @@ stop_service() {
         load_config
         OLD_WAN="$WAN"
     fi
-
+    /etc/init.d/sqm-autorate stop
     echo "Stopping service qosmate..."
     
     # Only disable if not in restart
@@ -352,7 +354,7 @@ stop_service() {
 
     # Remove the temporary file
     rm -f /tmp/qosmate_wan
-
+    echo f > /proc/net/nf_conntrack
     echo "Reloading network service..."
     /etc/init.d/network reload
     /etc/init.d/firewall reload
