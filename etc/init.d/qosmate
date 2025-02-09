@@ -307,6 +307,7 @@ start_service() {
 
     # Create custom rules file if it doesn't exist
     manage_custom_rules_file create
+    nft delete table inet qosmate_custom 2>/dev/null
     nft -f /etc/qosmate.d/custom_rules.nft
 
     /etc/qosmate.sh
