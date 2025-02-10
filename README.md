@@ -332,7 +332,7 @@ ef 192.168 3074  # Shows connections matching IP "192.168" AND port "3074" AND D
 The table view can be customized using the zoom control, allowing you to adjust the display density based on your preferences and screen size.
 
 ## Custom Rules Configuration
-QoSmate allows advanced users to create custom rules using nftables syntax. These rules are processed in addition to QoSmate's default rules and enable granular control over traffic prioritization. Custom rules can be used to implement advanced features like rate limiting or domain-based traffic marking.
+QoSmate allows advanced users to create custom rules using nftables syntax. These rules are processed in addition to QoSmate's default rules and enable granular control over traffic prioritization. Custom rules can be used to implement advanced features like rate limit or domain-based traffic marking.
 
 Before using custom rules, ensure you are familiar with nftables syntax and basic networking concepts. Rules are processed in order of their priority values, with lower numbers being processed first.
 
@@ -340,7 +340,7 @@ Before using custom rules, ensure you are familiar with nftables syntax and basi
 
 Custom rules are stored in `/etc/qosmate.d/custom_rules.nft` and are validated before being applied. Any syntax errors will prevent the rules from being activated.
 
-### Example 1: Rate Limiting and Marking
+### Example 1: Rate Limiting Marking
 This example demonstrates how to mark traffic from a specific IP address when it exceeds a certain packet rate:
 
 ```bash
