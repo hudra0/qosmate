@@ -331,6 +331,88 @@ ef 192.168 3074  # Shows connections matching IP "192.168" AND port "3074" AND D
 ### Adjustable View
 The table view can be customized using the zoom control, allowing you to adjust the display density based on your preferences and screen size.
 
+## Custom Rules Configuration
+QoSmate allows advanced users to create custom rules using nftables syntax. These rules are processed in addition to QoSmate's default rules and enable granular control over traffic prioritization. Custom rules can be used to implement advanced features like rate limiting or domain-based traffic marking.
+
+Before using custom rules, ensure you are familiar with nftables syntax and basic networking concepts. Rules are processed in order of their priority values, with lower numbers being processed first.
+
+> **Note**: QoSmate automatically wraps your custom rules in `table inet qosmate_custom { ... }`. You only need to define the sets and chains within this table.
+
+Custom rules are stored in `/etc/qosmate.d/custom_rules.nft` and are validated before being applied. Any syntax errors will prevent the rules from being activated.
+
+### Example 1: Rate Limiting and Marking
+This example demonstrates how to mark traffic from a specific IP address when it exceeds a certain packet rate:
+
+```bash
+chain forward {
+    type filter hook forward priority 0; policy accept;
+    
+    # Mark high-rate TCP traffic from specific IP
+    ip saddr 192.168.138.100 tcp flags & (fin|syn|rst|ack) != 0
+    limit rate over 300/second burst 300 packets
+    counter ip dscp set cs1
+    comment "Mark TCP traffic from 192.168.138.100 exceeding 300 pps as CS1"
+}
+```
+### Example 2: Domain-Based marking
+To mark connections based on their FQDN (Fully Qualified Domain Name), you can utilize IP sets (nftsets) in conjunction with DNS resolution. This approach allows for dynamic DSCP marking of traffic to specific domains. 
+
+1. First, ensure you have the dnsmasq-full package installed:
+
+```bash
+opkg update && opkg install dnsmasq-full
+```
+
+2. Create the custom rules:
+
+```bash
+# Define dynamic set for domain IPs
+set domain_ips {
+    type ipv4_addr
+    flags dynamic, timeout
+    timeout 1h
+}
+
+chain forward {
+    type filter hook postrouting priority 10; policy accept;
+    
+    # Mark traffic to/from the domains' IPs
+    ip daddr @domain_ips counter ip dscp set cs4 \
+        comment "Mark traffic to resolved domain IPs"
+    ip saddr @domain_ips counter ip dscp set cs4 \
+        comment "Mark traffic from resolved domain IPs"
+    
+    # Store DSCP in conntrack mark for restoration on ingress
+    ct mark set ip dscp or 128 comment "Store IPv4 DSCP in conntrack"
+    ct mark set ip6 dscp or 128 comment "Store IPv6 DSCP in conntrack"
+}
+```
+
+3. In /etc/config/dhcp, add the ipset configuration:
+```
+config ipset
+        list name 'domain_ips'
+        list domain 'example.com'
+        option table 'qosmate_custom'
+        option table_family 'inet'
+```
+This setup:
+1. Creates an ipset named domain_ips in the qosmate_custom table.
+2. Automatically adds resolved IPs for example.com to the set.
+3. Uses the custom rules to mark the traffic.
+
+The postrouting priority (10) ensures these rules run after QoSmate's default rules.
+
+#### Management via LuCI:
+1. Navigate to **Network → QoSmate → Custom Rules** to manage nftables rules
+2. Use **Network → DHCP and DNS → IP Sets** to configure domain-based rules
+3. After adding rules, verify they are active:
+   ```bash
+   nft list table qosmate_custom  # View custom rules
+   nft list set inet qosmate_custom domain_ips  # View IP set contents
+   ```
+4. Monitor rule effectiveness using the Connections tab
+
 ## Command Line Interface
 QoSmate can be controlled and configured via the command line. The basic syntax is:
 ```
