@@ -1,7 +1,11 @@
 [![Ko‑Fi][ko_fi_shield]][ko_fi]
+[![OpenWrt Forum][openwrt_forum_shield]][openwrt_forum]
 
 [ko_fi_shield]: https://img.shields.io/static/v1.svg?label=%20&message=Ko-Fi&color=F16061&logo=ko-fi&logoColor=white
 [ko_fi]: https://ko-fi.com/hudra
+
+[openwrt_forum_shield]: https://img.shields.io/static/v1.svg?label=%20&message=OpenWrt%20Forum&style=popout&color=blue&logo=OpenWrt&logoColor=white
+[openwrt_forum]: https://forum.openwrt.org/t/qosmate-yet-another-quality-of-service-tool-for-openwrt/
 
 # QoSmate: Quality of Service for OpenWrt
 
