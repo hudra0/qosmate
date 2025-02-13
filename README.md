@@ -4,6 +4,8 @@ QoSmate is a Quality of Service (QoS) solution for OpenWrt routers that aims to 
 
 The project builds upon the amazing work of [@dlakelan](https://github.com/dlakelan) and his [SimpleHFSCgamerscript](https://github.com/dlakelan/routerperf/blob/master/SimpleHFSCgamerscript.sh), extending its capabilities and adding a user-friendly interface. QoSmate integrates concepts from various QoS systems, including SQM, DSCPCLASSIFY and cake-qos-simple to provide a comprehensive approach to traffic control.
 
+> **Compatibility Note**: Officially, only OpenWrt is supported. Forks may introduce fundamental changes or adjustments that could impact compatibility or functionality.
+
 Key aspects of QoSmate include
 - Support for both HFSC and CAKE queueing disciplines
 - A LuCI-based interface for easy configuration
@@ -31,9 +33,10 @@ Before installing QoSmate, ensure that:
 Install the QoSmate backend (which contains a main script/init script/hotplug and a config-file) with the following command:
 
 ```bash
-wget -O /etc/init.d/qosmate https://raw.githubusercontent.com/hudra0/qosmate/main/etc/init.d/qosmate && chmod +x /etc/init.d/qosmate
-wget -O /etc/qosmate.sh https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh && chmod +x /etc/qosmate.sh
-[ ! -f /etc/config/qosmate ] && wget -O /etc/config/qosmate https://raw.githubusercontent.com/hudra0/qosmate/main/etc/config/qosmate
+wget -O /etc/init.d/qosmate https://raw.githubusercontent.com/hudra0/qosmate/main/etc/init.d/qosmate && chmod +x /etc/init.d/qosmate && \
+wget -O /etc/qosmate.sh https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh && chmod +x /etc/qosmate.sh && \
+[ ! -f /etc/config/qosmate ] && wget -O /etc/config/qosmate https://raw.githubusercontent.com/hudra0/qosmate/main/etc/config/qosmate; \
+/etc/init.d/qosmate enable
 ```
 
 ### b) Frontend Installation
