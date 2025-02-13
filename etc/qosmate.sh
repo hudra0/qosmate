@@ -743,7 +743,8 @@ case $useqdisc in
 	tc qdisc add dev "$DEV" parent "1:11" fq_codel interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2)) $EXTRAARG # memory_limit $((RATE*200/8))
 	;;
     "fq_pie")
-	tc qdisc add dev "$DEV" parent "1:11" fq_pie target "${TARG}ms" tupdate "${TARG}ms" $EXTRAARG noquantum $((MTU * 2))
+    PIE_TARG=$((3*TARG))
+	tc qdisc add dev "$DEV" parent "1:11" fq_pie target "${PIE_TARG}ms" tupdate "${PIE_TARG}ms" $EXTRAARG nobytemode quantum $((MTU * 2))
 	;;
     "netem")
         # Only apply NETEM if this direction is enabled
@@ -806,7 +807,8 @@ for i in 12 13 14 15 16; do
     elif [ "$nongameqdisc" = "fq_codel" ]; then
         tc qdisc add dev "$DEV" parent "1:$i" fq_codel interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2)) $EXTRAARG #memory_limit $((RATE*200/8))
     elif [ "$nongameqdisc" = "fq_pie" ]; then
-        tc qdisc add dev "$DEV" parent "1:$i" fq_pie target "${TARG}ms" tupdate "${TARG}ms" $EXTRAARG quantum $((MTU * 2))
+        PIE_TARG=$((3*TARG))
+        tc qdisc add dev "$DEV" parent "1:$i" fq_pie target "${PIE_TARG}ms" tupdate "${PIE_TARG}ms" $EXTRAARG quantum $((MTU * 2))
     else
         echo "Unsupported qdisc for non-game traffic: $nongameqdisc"
         exit 1
