@@ -227,12 +227,12 @@ QoSmate allows you to define custom DSCP (Differentiated Services Code Point) ma
 #### Example rule configuration:
 ```
 config rule 
-	option name 'gaming_traffic' 
-	option proto 'udp' 
-	option src_ip '192.168.1.100' 
-	option dest_port '3074' 
-	option class 'cs5' 
-	option counter '1'
+    option name 'gaming_traffic' 
+    option proto 'udp' 
+    option src_ip '192.168.1.100' 
+    option dest_port '3074' 
+    option class 'cs5' 
+    option counter '1'
 ```
 This rule would mark UDP traffic from IP 192.168.1.100 to port 3074 with the CS5 DSCP class, which is typically used for gaming traffic, and enable packet counting for this rule.
 
@@ -308,6 +308,84 @@ This is more or less equivalent to the `realtime4` and `realtime6` variables fro
 
 This rule is also applied when the auto-setup is used via CLI or UI and a Gaming Device IP (optional) is entered.
 
+### IP Sets in QoSmate
+QoSmate features an integrated IP Sets UI which allows you to manage both static and dynamic IP sets directly from the LuCI interface under **Network → QoSmate → IP Sets**. This replaces the "old" method of configuring sets via custom rules manually and simplifies the process of grouping IP addresses for DSCP marking.
+
+#### Configuration Options
+
+| Option        | Description                                                                                                                                                | Type                     | Default |
+|---------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------|---------|
+| name          | Name of the IP set. Used to reference the set in QoS rules with the @ prefix (e.g., @gaming_devices). Must contain only letters, numbers, and underscores.  | string                   |         |
+| mode          | Defines how the set is populated. 'static' for manually specified IP lists, 'dynamic' for automatically populated sets (e.g., via DNS resolution).           | enum (static, dynamic)   | static  |
+| family        | Specifies the IP version for addresses in this set.                                                                                                         | enum (ipv4, ipv6)       | ipv4    |
+| ip4           | List of IPv4 addresses or networks to include in the set. Only applicable when mode is 'static'.                                                            | list(string)            |         |
+| ip6           | List of IPv6 addresses or networks to include in the set. Only applicable when mode is 'static'.                                                            | list(string)            |         |
+| timeout       | Duration after which entries are removed from the set if not refreshed. Format: number + unit (s/m/h). Only applicable when mode is 'dynamic'.              | string                   | 1h      |
+| enabled       | Enables or disables the IP set.                                                                                                                             | boolean                  | 1       |
+
+#### Static IP Sets
+Static IP sets are used to group together IP addresses that you want to manage collectively in your QoS rules. For example, you might want to create a set for all gaming devices on your network. Once created, you can reference these sets in your rules using the `@setname` syntax.
+
+**Example:** Creating a static IP set named `@gaming_devices`:
+```bash
+config ipset
+    option name 'gaming_devices'
+    option mode 'static'
+    option family 'ipv4'
+    list ip4 '192.168.1.50'
+    list ip4 '192.168.1.51'
+    list ip4 '192.168.1.52'
+    list ip4 '192.168.1.53'
+```
+This set can then be referenced in your QoS rules:
+```bash
+config rule
+    option name 'Gaming Priority'
+    option proto 'udp'
+    list src_ip '@gaming_devices'    
+    list dest_port '!=80'
+    list dest_port '!=443'    
+    option class 'cs5'    
+    option counter '1'
+    option enabled '1'
+```
+
+#### Dynamic IP Sets
+Dynamic IP sets are designed to be populated by external processes such as `dnsmasq-full`. With dynamic sets, IP addresses can be added automatically, for example based on DNS resolution of specified domains. This facilitates domain-based marking without manually updating IP addresses. More information can be found in the [Openwrt dnsmasq Ipset documentation](https://openwrt.org/docs/guide-user/base-system/dhcp#ip_sets).
+
+**⚠️ Important:** Requires the dnsmasq-full package.
+
+1. Create a dynamic IP set in QoSmate's UI:
+```bash
+config ipset
+    option name 'streaming_services'
+    option mode 'dynamic'
+    option family 'ipv4'
+    option timeout '2h'
+```
+
+2. Configure `/etc/config/dhcp` to populate the set or use LuCI under **Network → DHCP and DNS → IP Sets** - make sure to reference the qosmate nftables table called dscptag:
+```bash
+config ipset
+    list name 'streaming_services'
+    list domain 'netflix.com'
+    list domain 'youtube.com'
+    option table 'dscptag'
+    option table_family 'inet'
+```
+
+3. Create a rule using the dynamic set:
+```bash
+config rule
+    option name 'Video Streaming'
+    option class 'af41'
+    list daddr '@streaming_services'
+    option counter '1'
+    option enabled '1'
+```
+
+> **Usage Note:** Dynamic IP sets are only tested with `dnsmasq-full`, other DNS resolvers (such as AdGuard or Unbound) are not tested.
+
 ## Connections Tab
 
 The Connections tab provides a real-time view of all active network connections, including their DSCP markings and traffic statistics. This feature helps you monitor and verify your QoS configuration.
@@ -367,13 +445,9 @@ chain forward {
 ### Example 2: Domain-Based marking
 To mark connections based on their FQDN (Fully Qualified Domain Name), you can utilize IP sets (nftsets) in conjunction with DNS resolution. This approach allows for dynamic DSCP marking of traffic to specific domains. 
 
-1. First, ensure you have the dnsmasq-full package installed:
+**⚠️ Important:** Requires the dnsmasq-full package.
 
-```bash
-opkg update && opkg install dnsmasq-full
-```
-
-2. Create the custom rules:
+1. Create the custom rules:
 
 ```bash
 # Define dynamic set for domain IPs
@@ -384,21 +458,18 @@ set domain_ips {
 }
 
 chain forward {
-    type filter hook postrouting priority 10; policy accept;
+    type filter hook forward priority -10; policy accept;
     
     # Mark traffic to/from the domains' IPs
     ip daddr @domain_ips counter ip dscp set cs4 \
         comment "Mark traffic to resolved domain IPs"
     ip saddr @domain_ips counter ip dscp set cs4 \
         comment "Mark traffic from resolved domain IPs"
-    
-    # Store DSCP in conntrack mark for restoration on ingress
-    ct mark set ip dscp or 128 comment "Store IPv4 DSCP in conntrack"
-    ct mark set ip6 dscp or 128 comment "Store IPv6 DSCP in conntrack"
-}
+    }
 ```
+> Note: If you want the DSCP value to be restored on ingress (incoming traffic) as well, please consider the following: Especially when using HFSC, the corresponding chain must be executed before QoSmate. In this case, the Ingress DSCP Washing in QoSmate should be disabled.
 
-3. In /etc/config/dhcp, add the ipset configuration:
+2. In /etc/config/dhcp, add the ipset configuration:
 ```
 config ipset
         list name 'domain_ips'
