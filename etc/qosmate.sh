@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317
 
 VERSION="0.5.48"
 
@@ -152,6 +153,86 @@ is_ipv6() {
     esac
 }
 
+# Debug function
+debug_log() {
+    local message="$1"
+    logger -t qosmate "$message"
+}
+
+# Function to create NFT sets from config
+create_nft_sets() {
+    local sets_created=""
+    
+    create_set() {
+        local section="$1" name ip_list mode timeout set_flags is_ipv6_set=0
+
+        config_get name "$section" name
+        # Only process if enabled (default: enabled)
+        local enabled=1
+        config_get_bool enabled "$section" enabled 1
+        [ "$enabled" -eq 0 ] && return 0
+
+        # Read mode option; default is "static"
+        config_get mode "$section" mode "static"
+        # Read timeout value; default "1h"
+        config_get timeout "$section" timeout "1h"
+
+        # Read family parameter
+        config_get family "$section" family "ipv4"
+
+        # Get the IP list (if any) for static sets based on the family parameter
+        if [ "$family" = "ipv6" ]; then
+            config_get ip_list "$section" ip6
+            is_ipv6_set=1
+        else
+            config_get ip_list "$section" ip4
+            is_ipv6_set=0
+        fi
+
+        # Use the family parameter from the UCI configuration ("ipv4" or "ipv6")
+        if [ "$mode" = "dynamic" ]; then
+            set_flags="dynamic, timeout"
+            if [ "$family" = "ipv6" ]; then
+                debug_log "Creating dynamic IPv6 set: $name"
+                echo "set $name { type ipv6_addr; flags $set_flags; timeout $timeout; }"
+            else
+                debug_log "Creating dynamic IPv4 set: $name"
+                echo "set $name { type ipv4_addr; flags $set_flags; timeout $timeout; }"
+            fi
+        else
+            set_flags="interval"
+            if [ -n "$ip_list" ]; then
+                if [ "$family" = "ipv6" ]; then
+                    debug_log "Creating static IPv6 set: $name"
+                    echo "set $name { type ipv6_addr; flags $set_flags; elements = { $(echo "$ip_list" | tr ' ' ',') }; }"
+                else
+                    debug_log "Creating static IPv4 set: $name"
+                    echo "set $name { type ipv4_addr; flags $set_flags; elements = { $(echo "$ip_list" | tr ' ' ',') }; }"
+                fi
+            else
+                if [ "$family" = "ipv6" ]; then
+                    debug_log "Creating empty static IPv6 set: $name"
+                    echo "set $name { type ipv6_addr; flags $set_flags; }"
+                else
+                    debug_log "Creating empty static IPv4 set: $name"
+                    echo "set $name { type ipv4_addr; flags $set_flags; }"
+                fi
+            fi
+        fi
+        sets_created="$sets_created $name"
+    }
+    
+    config_load 'qosmate'
+    config_foreach create_set ipset
+    
+    # Store created sets for validation in create_nft_rule
+    export QOSMATE_SETS="$sets_created"
+    [ -n "$sets_created" ] && debug_log "Created sets: $sets_created"
+}
+
+# Create NFT sets
+SETS=$(create_nft_sets)
+
 # Create rules
 create_nft_rule() {
     local config="$1"
@@ -188,22 +269,29 @@ create_nft_rule() {
         local result=""
         local exclude=0
         
-        if [ $(echo "$values" | grep -c "!=") -gt 0 ]; then
-            exclude=1
-            values=$(echo "$values" | sed 's/!=//g')
-        fi
-        
-        if [ $(echo "$values" | wc -w) -gt 1 ]; then
-            if [ $exclude -eq 1 ]; then
-                result="$prefix != { $(echo $values | tr ' ' ',') }"
-            else
-                result="$prefix { $(echo $values | tr ' ' ',') }"
-            fi
+        # Handle set references (@setname)
+        if echo "$values" | grep -q '^@'; then
+            local setname=$(echo "$values" | sed 's/^@//')
+            debug_log "Using set reference: $setname"
+            result="$prefix @$setname"
         else
-            if [ $exclude -eq 1 ]; then
-                result="$prefix != $values"
+            if [ $(echo "$values" | grep -c "!=") -gt 0 ]; then
+                exclude=1
+                values=$(echo "$values" | sed 's/!=//g')
+            fi
+            
+            if [ $(echo "$values" | wc -w) -gt 1 ]; then
+                if [ $exclude -eq 1 ]; then
+                    result="$prefix != { $(echo $values | tr ' ' ',') }"
+                else
+                    result="$prefix { $(echo $values | tr ' ' ',') }"
+                fi
             else
-                result="$prefix $values"
+                if [ $exclude -eq 1 ]; then
+                    result="$prefix != $values"
+                else
+                    result="$prefix $values"
+                fi
             fi
         fi
         echo "$result"
@@ -418,11 +506,14 @@ table inet dscptag {
                     cs2 : 1:14 , cs1 : 1:15, cs0 : 1:13}
     }
 
+# Create sets first
+${SETS}
 
     set xfst4ack { typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
+
     set fast4ack { typeof ct id . ct direction
         flags dynamic;
         timeout 5m
@@ -639,8 +730,6 @@ fi
 tc class add dev "$DEV" parent 1: classid 1:1 hfsc ls m2 "${RATE}kbit" ul m2 "${RATE}kbit"
 
 
-
-
 gameburst=$((gamerate*10))
 if [ $gameburst -gt $((RATE*97/100)) ] ; then
     gameburst=$((RATE*97/100));
@@ -661,7 +750,6 @@ tc class add dev "$DEV" parent 1:1 classid 1:14 hfsc ls m1 "$((RATE*7/100))kbit"
 
 # bulk
 tc class add dev "$DEV" parent 1:1 classid 1:15 hfsc ls m1 "$((RATE*3/100))kbit" d "${DUR}ms" m2 "$((RATE*10/100))kbit"
-
 
 
 ## set this to "drr" or "qfq" to differentiate between different game
@@ -768,7 +856,6 @@ case $useqdisc in
             tc qdisc add dev "$DEV" parent 1:11 handle 10: pfifo limit $((PFIFOMIN+MAXDEL*RATE/8/PACKETSIZE))
         fi
     ;;
-
 
 esac
 
@@ -877,4 +964,3 @@ if [ "$ROOT_QDISC" = "hfsc" ] && [ "$gameqdisc" = "red" ]; then
 else
    tc -s qdisc
 fi
-
