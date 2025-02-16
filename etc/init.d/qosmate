@@ -22,6 +22,8 @@ QOSMATE_FRONTEND_BASE_URL="${QOSMATE_FRONTEND_BASE_URL:-https://raw.githubuserco
 QOSMATE_FRONTEND_URL_JS="$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view"
 QOSMATE_FRONTEND_PATH_JS=/www/luci-static/resources/view/qosmate
 
+QOSMATE_JS_FILES="settings hfsc cake advanced rules connections custom_rules ipsets"
+
 load_config() {
     config_load 'qosmate'
     config_get WAN settings 'WAN' 'eth1'
@@ -175,7 +177,20 @@ check_package_status() {
 }
 
 download_scripts() {
+    # Download backend files if missing
     [ ! -f /etc/qosmate.sh ] && wget -O /etc/qosmate.sh "$QOSMATE_BASE_URL/etc/qosmate.sh" && chmod a+x /etc/qosmate.sh
+    [ ! -f /etc/init.d/qosmate ] && wget -O /etc/init.d/qosmate "$QOSMATE_BASE_URL/etc/init.d/qosmate" && chmod a+x /etc/init.d/qosmate
+    
+    # Download frontend files if missing
+    [ ! -f /usr/share/luci/menu.d/luci-app-qosmate.json ] && wget -O /usr/share/luci/menu.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/luci/menu.d/luci-app-qosmate.json"
+    [ ! -f /usr/share/rpcd/acl.d/luci-app-qosmate.json ] && wget -O /usr/share/rpcd/acl.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/rpcd/acl.d/luci-app-qosmate.json"
+    [ ! -f /usr/libexec/rpcd/luci.qosmate ] && wget -O /usr/libexec/rpcd/luci.qosmate "$QOSMATE_FRONTEND_BASE_URL/root/usr/libexec/rpcd/luci.qosmate" && chmod a+x /usr/libexec/rpcd/luci.qosmate
+
+    # Download JS files if missing
+    local js_file
+    for js_file in $QOSMATE_JS_FILES; do
+        [ ! -f "/www/luci-static/resources/view/qosmate/${js_file}.js" ] && wget -O "/www/luci-static/resources/view/qosmate/${js_file}.js" "$QOSMATE_FRONTEND_URL_JS/${js_file}.js"
+    done
     
     # Create the directory for tc-Netem distributions if it does not exist
     mkdir -p /usr/lib/tc
@@ -655,7 +670,7 @@ update() {
             frontend)
                 notify_component=Frontend
                 fetch_base_url="${QOSMATE_FRONTEND_BASE_URL}/root"
-                js_files="settings hfsc cake advanced rules connections custom_rules ipsets"
+                js_files="$QOSMATE_JS_FILES"
                 gen_files=" \
                     /usr/share/luci/menu.d/luci-app-qosmate.json \
                     /usr/share/rpcd/acl.d/luci-app-qosmate.json \
