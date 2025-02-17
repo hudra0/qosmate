@@ -1,7 +1,7 @@
 #!/bin/sh
 # shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317
 
-VERSION="0.5.50"
+VERSION="0.5.51"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -172,21 +172,18 @@ create_nft_sets() {
         config_get_bool enabled "$section" enabled 1
         [ "$enabled" -eq 0 ] && return 0
 
-        # Read mode option; default is "static"
         config_get mode "$section" mode "static"
-        # Read timeout value; default "1h"
         config_get timeout "$section" timeout "1h"
-
-        # Read family parameter
         config_get family "$section" family "ipv4"
 
-        # Get the IP list (if any) for static sets based on the family parameter
+        # Get the IP list based on family
         if [ "$family" = "ipv6" ]; then
             config_get ip_list "$section" ip6
             is_ipv6_set=1
+            echo "$name ipv6" >> /tmp/qosmate_set_families
         else
             config_get ip_list "$section" ip4
-            is_ipv6_set=0
+            echo "$name ipv4" >> /tmp/qosmate_set_families
         fi
 
         # Use the family parameter from the UCI configuration ("ipv4" or "ipv6")
@@ -222,10 +219,12 @@ create_nft_sets() {
         sets_created="$sets_created $name"
     }
     
+    # Clear the temporary file
+    rm -f /tmp/qosmate_set_families
+    
     config_load 'qosmate'
     config_foreach create_set ipset
     
-    # Store created sets for validation in create_nft_rule
     export QOSMATE_SETS="$sets_created"
     [ -n "$sets_created" ] && debug_log "Created sets: $sets_created"
 }
@@ -262,7 +261,13 @@ create_nft_rule() {
     # Initialize rule string
     local rule_cmd=""
 
-    # Function to handle multiple values
+    # Function to get set family
+    get_set_family() {
+        local setname="$1"
+        [ -f /tmp/qosmate_set_families ] && awk -v set="$setname" '$1 == set {print $2}' /tmp/qosmate_set_families
+    }
+
+    # Function to handle multiple values with IP family awareness
     handle_multiple_values() {
         local values="$1"
         local prefix="$2"
@@ -272,7 +277,12 @@ create_nft_rule() {
         # Handle set references (@setname)
         if echo "$values" | grep -q '^@'; then
             local setname=$(echo "$values" | sed 's/^@//')
-            debug_log "Using set reference: $setname"
+            local family=$(get_set_family "$setname")
+            debug_log "Set $setname has family: $family"
+            
+            if [ "$family" = "ipv6" ]; then
+                prefix=$(echo "$prefix" | sed 's/ip /ip6 /')
+            fi
             result="$prefix @$setname"
         else
             if [ $(echo "$values" | grep -c "!=") -gt 0 ]; then
@@ -323,10 +333,29 @@ create_nft_rule() {
     [ -n "$dest_port" ] && rule_cmd="$rule_cmd $(handle_multiple_values "$dest_port" "th dport")"
 
     # Append class and counter if provided
-    if is_ipv6 "$src_ip" || is_ipv6 "$dest_ip"; then
-        rule_cmd="$rule_cmd ip6 dscp set $class"
-    else
-        rule_cmd="$rule_cmd ip dscp set $class"
+    if [ -n "$src_ip" ] || [ -n "$dest_ip" ]; then
+        local is_ipv6_rule=0
+        
+        # Check if any direct IPs are IPv6
+        if is_ipv6 "$src_ip" || is_ipv6 "$dest_ip"; then
+            is_ipv6_rule=1
+        fi
+        
+        # Check if any referenced sets are IPv6
+        if [ -n "$src_ip" ] && echo "$src_ip" | grep -q '^@'; then
+            local src_set=$(echo "$src_ip" | sed 's/^@//')
+            [ "$(get_set_family "$src_set")" = "ipv6" ] && is_ipv6_rule=1
+        fi
+        if [ -n "$dest_ip" ] && echo "$dest_ip" | grep -q '^@'; then
+            local dest_set=$(echo "$dest_ip" | sed 's/^@//')
+            [ "$(get_set_family "$dest_set")" = "ipv6" ] && is_ipv6_rule=1
+        fi
+        
+        if [ "$is_ipv6_rule" -eq 1 ]; then
+            rule_cmd="$rule_cmd ip6 dscp set $class"
+        else
+            rule_cmd="$rule_cmd ip dscp set $class"
+        fi
     fi
     [ "$counter" -eq 1 ] && rule_cmd="$rule_cmd counter"
 
