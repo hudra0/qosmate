@@ -681,7 +681,7 @@ ip link set ifb-$WAN up
 #disable nic offloading as it damages MSS
 DEVS=$(ip link | grep UP | awk '{print $2}' | grep -v lo | tr -d : | awk -F @ '{print $1}')
 for DEV in $DEVS; do
-TOE_OPTIONS="rx tx sg tso ufo gso gro lro rxhash"
+TOE_OPTIONS="rx tx sg tso ufo gso gro lro"
   for TOE_OPTION in $TOE_OPTIONS; do
     /usr/sbin/ethtool --offload "$DEV" "$TOE_OPTION" off #&>/dev/null || true
   done
