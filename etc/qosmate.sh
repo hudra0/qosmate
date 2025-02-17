@@ -515,36 +515,36 @@ table inet dscptag {
 # Create sets first
 ${SETS}
 
-    set xfst4ack { typeof ip saddr . ip daddr . udp sport . udp dport
+    set xfst4ack { typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
 
-    set fast4ack { typeof ip saddr . ip daddr . udp sport . udp dport
+    set fast4ack { typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
-    set med4ack { typeof ip saddr . ip daddr . udp sport . udp dport
+    set med4ack { typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
-    set slow4ack { typeof ip saddr . ip daddr . udp sport . udp dport
+    set slow4ack { typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
-    set udp_meter4 {typeof ip saddr . ip daddr . udp sport . udp dport
+    set udp_meter4 {typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
-    set udp_meter6 {typeof ip saddr . ip daddr . udp sport . udp dport
+    set udp_meter6 {typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
-    set slowtcp4 {typeof ip saddr . ip daddr . udp sport . udp dport
+    set slowtcp4 {typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
-    set slowtcp6 {typeof ip saddr . ip daddr . udp sport . udp dport
+    set slowtcp6 {typeof ct id . ct direction
         flags dynamic;
         timeout 5m
     }
