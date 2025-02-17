@@ -379,7 +379,7 @@ config ipset
 config rule
     option name 'Video Streaming'
     option class 'af41'
-    list daddr '@streaming_services'
+    list dest_ip '@streaming_services'
     option counter '1'
     option enabled '1'
 ```
