@@ -99,4 +99,17 @@ config custom_rules 'custom_rules'
 #	option class 'cs1'
 #	option counter '1'
 
+#config ipset
+#	option name 'gaming_devices'
+#	option mode 'static'
+#	option family 'ipv4'
+#	list ip4 '192.168.37.50'
+#	list ip4 '192.168.37.51'
+#	list ip4 '192.168.37.52'
+#	option enabled '1'
 
+#config ipset
+#	option name 'domain_ips'
+#	option mode 'dynamic'
+#	option family 'ipv4'
+#	option enabled '1'
