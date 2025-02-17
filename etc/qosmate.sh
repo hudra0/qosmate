@@ -1,6 +1,7 @@
 #!/bin/sh
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317
 
-VERSION="0.5.48"
+VERSION="0.5.50"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -152,6 +153,86 @@ is_ipv6() {
     esac
 }
 
+# Debug function
+debug_log() {
+    local message="$1"
+    logger -t qosmate "$message"
+}
+
+# Function to create NFT sets from config
+create_nft_sets() {
+    local sets_created=""
+    
+    create_set() {
+        local section="$1" name ip_list mode timeout set_flags is_ipv6_set=0
+
+        config_get name "$section" name
+        # Only process if enabled (default: enabled)
+        local enabled=1
+        config_get_bool enabled "$section" enabled 1
+        [ "$enabled" -eq 0 ] && return 0
+
+        # Read mode option; default is "static"
+        config_get mode "$section" mode "static"
+        # Read timeout value; default "1h"
+        config_get timeout "$section" timeout "1h"
+
+        # Read family parameter
+        config_get family "$section" family "ipv4"
+
+        # Get the IP list (if any) for static sets based on the family parameter
+        if [ "$family" = "ipv6" ]; then
+            config_get ip_list "$section" ip6
+            is_ipv6_set=1
+        else
+            config_get ip_list "$section" ip4
+            is_ipv6_set=0
+        fi
+
+        # Use the family parameter from the UCI configuration ("ipv4" or "ipv6")
+        if [ "$mode" = "dynamic" ]; then
+            set_flags="dynamic, timeout"
+            if [ "$family" = "ipv6" ]; then
+                debug_log "Creating dynamic IPv6 set: $name"
+                echo "set $name { type ipv6_addr; flags $set_flags; timeout $timeout; }"
+            else
+                debug_log "Creating dynamic IPv4 set: $name"
+                echo "set $name { type ipv4_addr; flags $set_flags; timeout $timeout; }"
+            fi
+        else
+            set_flags="interval"
+            if [ -n "$ip_list" ]; then
+                if [ "$family" = "ipv6" ]; then
+                    debug_log "Creating static IPv6 set: $name"
+                    echo "set $name { type ipv6_addr; flags $set_flags; elements = { $(echo "$ip_list" | tr ' ' ',') }; }"
+                else
+                    debug_log "Creating static IPv4 set: $name"
+                    echo "set $name { type ipv4_addr; flags $set_flags; elements = { $(echo "$ip_list" | tr ' ' ',') }; }"
+                fi
+            else
+                if [ "$family" = "ipv6" ]; then
+                    debug_log "Creating empty static IPv6 set: $name"
+                    echo "set $name { type ipv6_addr; flags $set_flags; }"
+                else
+                    debug_log "Creating empty static IPv4 set: $name"
+                    echo "set $name { type ipv4_addr; flags $set_flags; }"
+                fi
+            fi
+        fi
+        sets_created="$sets_created $name"
+    }
+    
+    config_load 'qosmate'
+    config_foreach create_set ipset
+    
+    # Store created sets for validation in create_nft_rule
+    export QOSMATE_SETS="$sets_created"
+    [ -n "$sets_created" ] && debug_log "Created sets: $sets_created"
+}
+
+# Create NFT sets
+SETS=$(create_nft_sets)
+
 # Create rules
 create_nft_rule() {
     local config="$1"
@@ -188,22 +269,29 @@ create_nft_rule() {
         local result=""
         local exclude=0
         
-        if [ $(echo "$values" | grep -c "!=") -gt 0 ]; then
-            exclude=1
-            values=$(echo "$values" | sed 's/!=//g')
-        fi
-        
-        if [ $(echo "$values" | wc -w) -gt 1 ]; then
-            if [ $exclude -eq 1 ]; then
-                result="$prefix != { $(echo $values | tr ' ' ',') }"
-            else
-                result="$prefix { $(echo $values | tr ' ' ',') }"
-            fi
+        # Handle set references (@setname)
+        if echo "$values" | grep -q '^@'; then
+            local setname=$(echo "$values" | sed 's/^@//')
+            debug_log "Using set reference: $setname"
+            result="$prefix @$setname"
         else
-            if [ $exclude -eq 1 ]; then
-                result="$prefix != $values"
+            if [ $(echo "$values" | grep -c "!=") -gt 0 ]; then
+                exclude=1
+                values=$(echo "$values" | sed 's/!=//g')
+            fi
+            
+            if [ $(echo "$values" | wc -w) -gt 1 ]; then
+                if [ $exclude -eq 1 ]; then
+                    result="$prefix != { $(echo $values | tr ' ' ',') }"
+                else
+                    result="$prefix { $(echo $values | tr ' ' ',') }"
+                fi
             else
-                result="$prefix $values"
+                if [ $exclude -eq 1 ]; then
+                    result="$prefix != $values"
+                else
+                    result="$prefix $values"
+                fi
             fi
         fi
         echo "$result"
@@ -286,10 +374,8 @@ fi
 # Check if UDPBULKPORT is set
 if [ -n "$UDPBULKPORT" ]; then
     udpbulkport_rules="\
-udp sport \$udpbulkport ip dscp set cs1 counter
-        udp sport \$udpbulkport ip6 dscp set cs1 counter
-        udp dport \$udpbulkport ip dscp set cs1 counter
-        udp dport \$udpbulkport ip6 dscp set cs1 counter"
+udp sport \$udpbulkport counter jump mark_cs1
+        udp dport \$udpbulkport counter jump mark_cs1"
 else
     udpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
 fi
@@ -297,10 +383,8 @@ fi
 # Check if TCPBULKPORT is set
 if [ -n "$TCPBULKPORT" ]; then
     tcpbulkport_rules="\
-tcp sport \$tcpbulkport ip dscp set cs1 counter
-        tcp sport \$tcpbulkport ip6 dscp set cs1 counter
-        tcp dport \$tcpbulkport ip dscp set cs1 counter
-        tcp dport \$tcpbulkport ip6 dscp set cs1 counter"
+tcp sport \$tcpbulkport counter jump mark_cs1
+        tcp dport \$tcpbulkport counter jump mark_cs1"
 else
     tcpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
 fi
@@ -308,8 +392,7 @@ fi
 # Check if VIDCONFPORTS is set
 if [ -n "$VIDCONFPORTS" ]; then
     vidconfports_rules="\
-udp dport \$vidconfports ip dscp set af42 counter
-        udp dport \$vidconfports ip6 dscp set af42 counter"
+udp dport \$vidconfports counter jump mark_af42"
 else
     vidconfports_rules="# VIDCONFPORTS Port rules disabled, no ports defined."
 fi
@@ -424,6 +507,9 @@ table inet dscptag {
                     cs2 : 1:14 , cs1 : 1:15, cs0 : 1:13, af11: 1:16}
     }
 
+# Create sets first
+${SETS}
+
     set xfst4ack { typeof ip daddr . ip saddr . tcp dport . tcp sport
         flags dynamic;
         timeout 5m
@@ -458,15 +544,39 @@ table inet dscptag {
     }
 
     chain drop995 {
-        numgen random mod 1000 < 995 drop
+	numgen random mod 1000 ge 995 return
+	drop
     }
     chain drop95 {
-        numgen random mod 100 < 95 drop
+	numgen random mod 1000 ge 950 return
+	drop
     }
     chain drop50 {
-        numgen random mod 100 < 50 drop
+	numgen random mod 1000 ge 500 return
+	drop
     }
 
+    chain mark_500ms {
+        ip dscp < cs4 ip dscp != cs1 ip dscp set cs0 counter return
+        ip6 dscp < cs4 ip6 dscp != cs1 ip6 dscp set cs0 counter
+    }
+    chain mark_10s {
+        ip dscp < cs4 ip dscp set cs1 counter return
+        ip6 dscp < cs4 ip6 dscp set cs1 counter
+    }
+
+    chain mark_cs0 {
+        ip dscp set cs0 return
+        ip6 dscp set cs0
+    }
+    chain mark_cs1 {
+        ip dscp set cs1 return
+        ip6 dscp set cs1
+    }
+    chain mark_af42 {
+        ip dscp set af42 return
+        ip6 dscp set af42
+    }
 
     chain dscptag {
         type filter hook $NFT_HOOK priority $NFT_PRIORITY; policy accept;
@@ -474,8 +584,7 @@ table inet dscptag {
         
         $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPDOWN" -eq 1 ]; then
             echo "# wash all the DSCP on ingress ... "
-            echo "        ip dscp set cs0 counter"
-            echo "        ip6 dscp set cs0 counter"
+            echo "        counter jump mark_cs0"
           fi
         )
 
@@ -524,13 +633,13 @@ ${DYNAMIC_RULES}
 
         $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPUP" -eq 1 ]; then
             echo "# wash all DSCP on egress ... "
-            echo "meta oifname \$wan ip dscp set cs0"
-            echo "        meta oifname \$wan ip6 dscp set cs0"
+            echo "meta oifname \$wan jump mark_cs0"
           fi
         )
     }
 }
 DSCPEOF
+
 ## Set up ctinfo downstream shaping
 
 # Set up ingress handle for WAN interface
@@ -640,8 +749,6 @@ fi
 
 #limit the link overall:
 tc class add dev "$DEV" parent 1: classid 1:1 hfsc ls m2 "${RATE}kbit" ul m2 "${RATE}kbit"
-
-
 
 
 gameburst=$((gamerate*10))
@@ -782,7 +889,6 @@ case $useqdisc in
         fi
     ;;
 
-
 esac
 
 if [ "$DIR" = "lan" ]; then
@@ -894,4 +1000,3 @@ if [ "$ROOT_QDISC" = "hfsc" ] && [ "$gameqdisc" = "red" ]; then
 else
    tc -s qdisc
 fi
-
