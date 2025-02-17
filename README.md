@@ -311,6 +311,8 @@ This rule is also applied when the auto-setup is used via CLI or UI and a Gaming
 ### IP Sets in QoSmate
 QoSmate features an integrated IP Sets UI which allows you to manage both static and dynamic IP sets directly from the LuCI interface under **Network → QoSmate → IP Sets**. This replaces the "old" method of configuring sets via custom rules manually and simplifies the process of grouping IP addresses for DSCP marking.
 
+> **⚠️ Important:** Mixing IPv4 and IPv6 addresses in the same IP set is not supported and will cause nftables errors. Make sure to create separate sets for IPv4 and IPv6 addresses. The 'family' option must match the IP version of all addresses in the set.
+
 #### Configuration Options
 
 | Option        | Description                                                                                                                                                | Type                     | Default |
