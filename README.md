@@ -1,8 +1,19 @@
+[![Ko‑Fi][ko_fi_shield]][ko_fi]
+[![OpenWrt Forum][openwrt_forum_shield]][openwrt_forum]
+
+[ko_fi_shield]: https://img.shields.io/static/v1.svg?label=%20&message=Ko-Fi&color=F16061&logo=ko-fi&logoColor=white
+[ko_fi]: https://ko-fi.com/hudra
+
+[openwrt_forum_shield]: https://img.shields.io/static/v1.svg?label=%20&message=OpenWrt%20Forum&style=popout&color=blue&logo=OpenWrt&logoColor=white
+[openwrt_forum]: https://forum.openwrt.org/t/qosmate-yet-another-quality-of-service-tool-for-openwrt/
+
 # QoSmate: Quality of Service for OpenWrt
 
 QoSmate is a Quality of Service (QoS) solution for OpenWrt routers that aims to optimize network performance while allowing for controlled prioritization of specific traffic types. It uses nftables for packet classification and offers both CAKE (Common Applications Kept Enhanced) and HFSC (Hierarchical Fair Service Curve) queueing disciplines for traffic management. It uses tc-ctinfo to restore DSCP marks on ingress.
 
 The project builds upon the amazing work of [@dlakelan](https://github.com/dlakelan) and his [SimpleHFSCgamerscript](https://github.com/dlakelan/routerperf/blob/master/SimpleHFSCgamerscript.sh), extending its capabilities and adding a user-friendly interface. QoSmate integrates concepts from various QoS systems, including SQM, DSCPCLASSIFY and cake-qos-simple to provide a comprehensive approach to traffic control.
+
+> **Compatibility Note**: Officially, only OpenWrt is supported. Forks may introduce fundamental changes or adjustments that could impact compatibility or functionality.
 
 Key aspects of QoSmate include
 - Support for both HFSC and CAKE queueing disciplines
@@ -31,9 +42,10 @@ Before installing QoSmate, ensure that:
 Install the QoSmate backend (which contains a main script/init script/hotplug and a config-file) with the following command:
 
 ```bash
-wget -O /etc/init.d/qosmate https://raw.githubusercontent.com/hudra0/qosmate/main/etc/init.d/qosmate && chmod +x /etc/init.d/qosmate
-wget -O /etc/qosmate.sh https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh && chmod +x /etc/qosmate.sh
-[ ! -f /etc/config/qosmate ] && wget -O /etc/config/qosmate https://raw.githubusercontent.com/hudra0/qosmate/main/etc/config/qosmate
+wget -O /etc/init.d/qosmate https://raw.githubusercontent.com/hudra0/qosmate/main/etc/init.d/qosmate && chmod +x /etc/init.d/qosmate && \
+wget -O /etc/qosmate.sh https://raw.githubusercontent.com/hudra0/qosmate/main/etc/qosmate.sh && chmod +x /etc/qosmate.sh && \
+[ ! -f /etc/config/qosmate ] && wget -O /etc/config/qosmate https://raw.githubusercontent.com/hudra0/qosmate/main/etc/config/qosmate; \
+/etc/init.d/qosmate enable
 ```
 
 ### b) Frontend Installation
@@ -55,6 +67,7 @@ wget -O /usr/libexec/rpcd/luci.qosmate https://raw.githubusercontent.com/hudra0/
 chmod +x /usr/libexec/rpcd/luci.qosmate && \
 /etc/init.d/rpcd restart && \
 /etc/init.d/uhttpd restart
+# End of command - Press Enter after pasting
 
 ```
 
@@ -214,12 +227,12 @@ QoSmate allows you to define custom DSCP (Differentiated Services Code Point) ma
 #### Example rule configuration:
 ```
 config rule 
-	option name 'gaming_traffic' 
-	option proto 'udp' 
-	option src_ip '192.168.1.100' 
-	option dest_port '3074' 
-	option class 'cs5' 
-	option counter '1'
+    option name 'gaming_traffic' 
+    option proto 'udp' 
+    option src_ip '192.168.1.100' 
+    option dest_port '3074' 
+    option class 'cs5' 
+    option counter '1'
 ```
 This rule would mark UDP traffic from IP 192.168.1.100 to port 3074 with the CS5 DSCP class, which is typically used for gaming traffic, and enable packet counting for this rule.
 
@@ -295,6 +308,86 @@ This is more or less equivalent to the `realtime4` and `realtime6` variables fro
 
 This rule is also applied when the auto-setup is used via CLI or UI and a Gaming Device IP (optional) is entered.
 
+### IP Sets in QoSmate
+QoSmate features an integrated IP Sets UI which allows you to manage both static and dynamic IP sets directly from the LuCI interface under **Network → QoSmate → IP Sets**. This replaces the "old" method of configuring sets via custom rules manually and simplifies the process of grouping IP addresses for DSCP marking.
+
+> **⚠️ Important:** Mixing IPv4 and IPv6 addresses in the same IP set is not supported and will cause nftables errors. Make sure to create separate sets for IPv4 and IPv6 addresses. The 'family' option must match the IP version of all addresses in the set.
+
+#### Configuration Options
+
+| Option        | Description                                                                                                                                                | Type                     | Default |
+|---------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------|---------|
+| name          | Name of the IP set. Used to reference the set in QoS rules with the @ prefix (e.g., @gaming_devices). Must contain only letters, numbers, and underscores.  | string                   |         |
+| mode          | Defines how the set is populated. 'static' for manually specified IP lists, 'dynamic' for automatically populated sets (e.g., via DNS resolution).           | enum (static, dynamic)   | static  |
+| family        | Specifies the IP version for addresses in this set.                                                                                                         | enum (ipv4, ipv6)       | ipv4    |
+| ip4           | List of IPv4 addresses or networks to include in the set. Only applicable when mode is 'static'.                                                            | list(string)            |         |
+| ip6           | List of IPv6 addresses or networks to include in the set. Only applicable when mode is 'static'.                                                            | list(string)            |         |
+| timeout       | Duration after which entries are removed from the set if not refreshed. Format: number + unit (s/m/h). Only applicable when mode is 'dynamic'.              | string                   | 1h      |
+| enabled       | Enables or disables the IP set.                                                                                                                             | boolean                  | 1       |
+
+#### Static IP Sets
+Static IP sets are used to group together IP addresses that you want to manage collectively in your QoS rules. For example, you might want to create a set for all gaming devices on your network. Once created, you can reference these sets in your rules using the `@setname` syntax.
+
+**Example:** Creating a static IP set named `@gaming_devices`:
+```bash
+config ipset
+    option name 'gaming_devices'
+    option mode 'static'
+    option family 'ipv4'
+    list ip4 '192.168.1.50'
+    list ip4 '192.168.1.51'
+    list ip4 '192.168.1.52'
+    list ip4 '192.168.1.53'
+```
+This set can then be referenced in your QoS rules:
+```bash
+config rule
+    option name 'Gaming Priority'
+    option proto 'udp'
+    list src_ip '@gaming_devices'    
+    list dest_port '!=80'
+    list dest_port '!=443'    
+    option class 'cs5'    
+    option counter '1'
+    option enabled '1'
+```
+
+#### Dynamic IP Sets
+Dynamic IP sets are designed to be populated by external processes such as `dnsmasq-full`. With dynamic sets, IP addresses can be added automatically, for example based on DNS resolution of specified domains. This facilitates domain-based marking without manually updating IP addresses. More information can be found in the [Openwrt dnsmasq Ipset documentation](https://openwrt.org/docs/guide-user/base-system/dhcp#ip_sets).
+
+**⚠️ Important:** Requires the dnsmasq-full package.
+
+1. Create a dynamic IP set in QoSmate's UI:
+```bash
+config ipset
+    option name 'streaming_services'
+    option mode 'dynamic'
+    option family 'ipv4'
+    option timeout '2h'
+```
+
+2. Configure `/etc/config/dhcp` to populate the set or use LuCI under **Network → DHCP and DNS → IP Sets** - make sure to reference the qosmate nftables table called dscptag:
+```bash
+config ipset
+    list name 'streaming_services'
+    list domain 'netflix.com'
+    list domain 'youtube.com'
+    option table 'dscptag'
+    option table_family 'inet'
+```
+
+3. Create a rule using the dynamic set:
+```bash
+config rule
+    option name 'Video Streaming'
+    option class 'af41'
+    list dest_ip '@streaming_services'
+    option counter '1'
+    option enabled '1'
+```
+
+> **Usage Note:** Dynamic IP sets are only tested with `dnsmasq-full`, other DNS resolvers (such as AdGuard or Unbound) are not tested.
+
 ## Connections Tab
 
 The Connections tab provides a real-time view of all active network connections, including their DSCP markings and traffic statistics. This feature helps you monitor and verify your QoS configuration.
@@ -327,6 +420,81 @@ ef 192.168 3074  # Shows connections matching IP "192.168" AND port "3074" AND D
 
 ### Adjustable View
 The table view can be customized using the zoom control, allowing you to adjust the display density based on your preferences and screen size.
+
+## Custom Rules Configuration
+QoSmate allows advanced users to create custom rules using nftables syntax. These rules are processed in addition to QoSmate's default rules and enable granular control over traffic prioritization. Custom rules can be used to implement advanced features like rate limit or domain-based traffic marking.
+
+Before using custom rules, ensure you are familiar with nftables syntax and basic networking concepts. Rules are processed in order of their priority values, with lower numbers being processed first.
+
+> **Note**: QoSmate automatically wraps your custom rules in `table inet qosmate_custom { ... }`. You only need to define the sets and chains within this table.
+
+Custom rules are stored in `/etc/qosmate.d/custom_rules.nft` and are validated before being applied. Any syntax errors will prevent the rules from being activated.
+
+### Example 1: Rate Limiting Marking
+This example demonstrates how to mark traffic from a specific IP address when it exceeds a certain packet rate:
+
+```bash
+chain forward {
+    type filter hook forward priority 0; policy accept;
+    
+    # Mark high-rate TCP traffic from specific IP
+    ip saddr 192.168.138.100 tcp flags & (fin|syn|rst|ack) != 0
+    limit rate over 300/second burst 300 packets
+    counter ip dscp set cs1
+    comment "Mark TCP traffic from 192.168.138.100 exceeding 300 pps as CS1"
+}
+```
+### Example 2: Domain-Based marking
+To mark connections based on their FQDN (Fully Qualified Domain Name), you can utilize IP sets (nftsets) in conjunction with DNS resolution. This approach allows for dynamic DSCP marking of traffic to specific domains. 
+
+**⚠️ Important:** Requires the dnsmasq-full package.
+
+1. Create the custom rules:
+
+```bash
+# Define dynamic set for domain IPs
+set domain_ips {
+    type ipv4_addr
+    flags dynamic, timeout
+    timeout 1h
+}
+
+chain forward {
+    type filter hook forward priority -10; policy accept;
+    
+    # Mark traffic to/from the domains' IPs
+    ip daddr @domain_ips counter ip dscp set cs4 \
+        comment "Mark traffic to resolved domain IPs"
+    ip saddr @domain_ips counter ip dscp set cs4 \
+        comment "Mark traffic from resolved domain IPs"
+    }
+```
+> Note: If you want the DSCP value to be restored on ingress (incoming traffic) as well, please consider the following: Especially when using HFSC, the corresponding chain must be executed before QoSmate. In this case, the Ingress DSCP Washing in QoSmate should be disabled.
+
+2. In /etc/config/dhcp, add the ipset configuration:
+```
+config ipset
+        list name 'domain_ips'
+        list domain 'example.com'
+        option table 'qosmate_custom'
+        option table_family 'inet'
+```
+This setup:
+1. Creates an ipset named domain_ips in the qosmate_custom table.
+2. Automatically adds resolved IPs for example.com to the set.
+3. Uses the custom rules to mark the traffic.
+
+The postrouting priority (10) ensures these rules run after QoSmate's default rules.
+
+#### Management via LuCI:
+1. Navigate to **Network → QoSmate → Custom Rules** to manage nftables rules
+2. Use **Network → DHCP and DNS → IP Sets** to configure domain-based rules
+3. After adding rules, verify they are active:
+   ```bash
+   nft list table qosmate_custom  # View custom rules
+   nft list set inet qosmate_custom domain_ips  # View IP set contents
+   ```
+4. Monitor rule effectiveness using the Connections tab
 
 ## Command Line Interface
 QoSmate can be controlled and configured via the command line. The basic syntax is:
@@ -556,3 +724,9 @@ Contributions to QoSmate are welcome! Please submit issues and pull requests on 
 ## Acknowledgements
 
 QoSmate is inspired by and builds upon the work of SimpleHFSCgamerscript, SQM, cake-qos-simple, qosify and DSCPCLASSIFY. I thank all contributors and the OpenWrt community for their valuable insights and contributions.
+
+## Support
+
+The ultimate reward is seeing people benefit and enjoy using this project - no donations needed! But if you insist on buying me a coffee:
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/hudra)
