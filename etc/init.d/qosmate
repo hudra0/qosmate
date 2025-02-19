@@ -6,13 +6,14 @@ STOP=99
 
 USE_PROCD=1
 
-EXTRA_COMMANDS="check_version update auto_setup expand_config auto_setup_noninteractive validate_custom_rules"
+EXTRA_COMMANDS="check_version update auto_setup expand_config auto_setup_noninteractive validate_custom_rules health_check"
 EXTRA_HELP="        check_version   Check for updates
         update          Update qosmate
         auto_setup      Automatically configure qosmate
         expand_config   Expand the configuration with all possible options
         auto_setup_noninteractive   Automatically configure qosmate with no interaction
-        validate_custom_rules    Validate custom rules"
+        validate_custom_rules    Validate custom rules
+        health_check    Check if QoSmate is properly configured and running"
 
 REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake kmod-sched-red luci-lib-jsonc lua"
 
@@ -1066,6 +1067,68 @@ expand_config() {
     add_options cake COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD PRIORITY_QUEUE_INGRESS PRIORITY_QUEUE_EGRESS HOST_ISOLATION NAT_INGRESS NAT_EGRESS ACK_FILTER_EGRESS RTT AUTORATE_INGRESS EXTRA_PARAMETERS_INGRESS EXTRA_PARAMETERS_EGRESS
 
     echo "Configuration expanded successfully. You can now edit all available options in $config_file"
+}
+
+health_check() {
+    # Check if QoSmate is properly configured and running
+    local status=""
+    local errors=0
+    
+    load_config
+    
+    # Check if the service is enabled
+    if /etc/init.d/qosmate enabled; then
+        status="${status}service:enabled;"
+    else
+        status="${status}service:disabled;"
+        errors=$((errors + 1))
+    fi
+    
+    # Check nftables configuration
+    if nft list table inet dscptag >/dev/null 2>&1; then
+        status="${status}nft:ok;"
+    else
+        status="${status}nft:failed;"
+        errors=$((errors + 1))
+    fi
+    
+    # Check tc configuration on WAN interface
+    if [ -n "$WAN" ] && tc qdisc show dev "$WAN" 2>/dev/null | grep -E -q "hfsc|cake"; then
+        status="${status}tc:ok;"
+    else
+        status="${status}tc:failed;"
+        errors=$((errors + 1))
+    fi
+    
+    # Check if essential config file exists
+    if [ -f "/etc/config/qosmate" ]; then
+        status="${status}config:ok;"
+    else
+        status="${status}config:missing;"
+        errors=$((errors + 1))
+    fi
+    
+    # Check required packages
+    local missing_packages=""
+    for pkg in $REQUIRED_PACKAGES; do
+        if ! check_package "$pkg"; then
+            missing_packages="${missing_packages}${pkg} "
+        fi
+    done
+    
+    if [ -z "$missing_packages" ]; then
+        status="${status}packages:ok;"
+    else
+        status="${status}packages:missing:${missing_packages};"
+        errors=$((errors + 1))
+    fi
+    
+    # Output status
+    echo "status=$status;errors=$errors"
+    
+    # Return code depending on errors
+    [ $errors -eq 0 ] || return 1
+    return 0
 }
 
 pkg_manager="$(detect_package_manager)" # global variable
