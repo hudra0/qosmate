@@ -566,6 +566,7 @@ ubus call system board
 /etc/init.d/qosmate check_version
 /etc/init.d/qosmate status
 cat /etc/config/qosmate
+ifstatus wan | grep -e device
 ```
 
 ### Connection Details
