@@ -235,7 +235,7 @@ SETS=$(create_nft_sets)
 # Create rules
 create_nft_rule() {
     local config="$1"
-    local src_ip src_port dest_ip dest_port proto class counter name enabled
+    local src_ip src_port dest_ip dest_port proto class counter name enabled trace
     config_get src_ip "$config" src_ip
     config_get src_port "$config" src_port
     config_get dest_ip "$config" dest_ip
@@ -243,6 +243,7 @@ create_nft_rule() {
     config_get proto "$config" proto
     config_get class "$config" class
     config_get_bool counter "$config" counter 0
+    config_get_bool trace "$config" trace 0
     config_get name "$config" name
     config_get_bool enabled "$config" enabled 1  # Default to enabled if not set
 
@@ -358,6 +359,9 @@ create_nft_rule() {
         fi
     fi
     [ "$counter" -eq 1 ] && rule_cmd="$rule_cmd counter"
+    
+    # Add trace if enabled
+    [ "$trace" -eq 1 ] && rule_cmd="$rule_cmd meta nftrace set 1"
 
     # Add comment if name is provided
     [ -n "$name" ] && rule_cmd="$rule_cmd comment \"$name\""
