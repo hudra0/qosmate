@@ -15,7 +15,7 @@ EXTRA_HELP="        check_version   Check for updates
         validate_custom_rules    Validate custom rules
         health_check    Check if QoSmate is properly configured and running"
 
-REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake kmod-sched-red luci-lib-jsonc lua"
+REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake kmod-sched-red luci-lib-jsonc lua jq"
 
 # Base URL (raw) for repositories (can be overridden for different branches/commits)
 QOSMATE_BASE_URL="${QOSMATE_BASE_URL:-https://raw.githubusercontent.com/hudra0/qosmate/main}"
@@ -23,7 +23,7 @@ QOSMATE_FRONTEND_BASE_URL="${QOSMATE_FRONTEND_BASE_URL:-https://raw.githubuserco
 QOSMATE_FRONTEND_URL_JS="$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view"
 QOSMATE_FRONTEND_PATH_JS=/www/luci-static/resources/view/qosmate
 
-QOSMATE_JS_FILES="settings hfsc cake advanced rules connections custom_rules ipsets"
+QOSMATE_JS_FILES="settings hfsc cake advanced rules connections custom_rules ipsets statistics"
 
 load_config() {
     config_load 'qosmate'
@@ -186,6 +186,7 @@ download_scripts() {
     [ ! -f /usr/share/luci/menu.d/luci-app-qosmate.json ] && wget -O /usr/share/luci/menu.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/luci/menu.d/luci-app-qosmate.json"
     [ ! -f /usr/share/rpcd/acl.d/luci-app-qosmate.json ] && wget -O /usr/share/rpcd/acl.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/rpcd/acl.d/luci-app-qosmate.json"
     [ ! -f /usr/libexec/rpcd/luci.qosmate ] && wget -O /usr/libexec/rpcd/luci.qosmate "$QOSMATE_FRONTEND_BASE_URL/root/usr/libexec/rpcd/luci.qosmate" && chmod a+x /usr/libexec/rpcd/luci.qosmate
+    [ ! -f /usr/libexec/rpcd/luci.qosmate_stats ] && wget -O /usr/libexec/rpcd/luci.qosmate_stats "$QOSMATE_FRONTEND_BASE_URL/root/usr/libexec/rpcd/luci.qosmate_stats" && chmod a+x /usr/libexec/rpcd/luci.qosmate_stats
 
     # Download JS files if missing
     local js_file
