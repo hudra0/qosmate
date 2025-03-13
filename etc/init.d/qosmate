@@ -183,17 +183,21 @@ download_scripts() {
     [ ! -f /etc/init.d/qosmate ] && wget -O /etc/init.d/qosmate "$QOSMATE_BASE_URL/etc/init.d/qosmate" && chmod a+x /etc/init.d/qosmate
     
     # Download frontend files if missing
-    [ ! -f /usr/share/luci/menu.d/luci-app-qosmate.json ] && wget -O /usr/share/luci/menu.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/luci/menu.d/luci-app-qosmate.json"
-    [ ! -f /usr/share/rpcd/acl.d/luci-app-qosmate.json ] && wget -O /usr/share/rpcd/acl.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/rpcd/acl.d/luci-app-qosmate.json"
-    [ ! -f /usr/libexec/rpcd/luci.qosmate ] && wget -O /usr/libexec/rpcd/luci.qosmate "$QOSMATE_FRONTEND_BASE_URL/root/usr/libexec/rpcd/luci.qosmate" && chmod a+x /usr/libexec/rpcd/luci.qosmate
-    [ ! -f /usr/libexec/rpcd/luci.qosmate_stats ] && wget -O /usr/libexec/rpcd/luci.qosmate_stats "$QOSMATE_FRONTEND_BASE_URL/root/usr/libexec/rpcd/luci.qosmate_stats" && chmod a+x /usr/libexec/rpcd/luci.qosmate_stats
+    local frontend_updated=0
+    [ ! -f /usr/share/luci/menu.d/luci-app-qosmate.json ] && wget -O /usr/share/luci/menu.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/luci/menu.d/luci-app-qosmate.json" && frontend_updated=1
+    [ ! -f /usr/share/rpcd/acl.d/luci-app-qosmate.json ] && wget -O /usr/share/rpcd/acl.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/rpcd/acl.d/luci-app-qosmate.json" && frontend_updated=1
+    [ ! -f /usr/libexec/rpcd/luci.qosmate ] && wget -O /usr/libexec/rpcd/luci.qosmate "$QOSMATE_FRONTEND_BASE_URL/root/usr/libexec/rpcd/luci.qosmate" && chmod a+x /usr/libexec/rpcd/luci.qosmate && frontend_updated=1
+    [ ! -f /usr/libexec/rpcd/luci.qosmate_stats ] && wget -O /usr/libexec/rpcd/luci.qosmate_stats "$QOSMATE_FRONTEND_BASE_URL/root/usr/libexec/rpcd/luci.qosmate_stats" && chmod a+x /usr/libexec/rpcd/luci.qosmate_stats && frontend_updated=1
 
     # Download JS files if missing
     local js_file
     for js_file in $QOSMATE_JS_FILES; do
-        [ ! -f "/www/luci-static/resources/view/qosmate/${js_file}.js" ] && wget -O "/www/luci-static/resources/view/qosmate/${js_file}.js" "$QOSMATE_FRONTEND_URL_JS/${js_file}.js"
+        [ ! -f "/www/luci-static/resources/view/qosmate/${js_file}.js" ] && wget -O "/www/luci-static/resources/view/qosmate/${js_file}.js" "$QOSMATE_FRONTEND_URL_JS/${js_file}.js" && frontend_updated=1
     done
     
+    # Restart rpcd only if any frontend files were updated
+    [ "$frontend_updated" -eq 1 ] && /etc/init.d/rpcd restart
+
     # Create the directory for tc-Netem distributions if it does not exist
     mkdir -p /usr/lib/tc
 
