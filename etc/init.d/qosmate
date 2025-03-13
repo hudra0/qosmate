@@ -676,8 +676,10 @@ update() {
                 gen_files=" \
                     /usr/share/luci/menu.d/luci-app-qosmate.json \
                     /usr/share/rpcd/acl.d/luci-app-qosmate.json \
-                    /usr/libexec/rpcd/luci.qosmate"
-                exec_files="/usr/libexec/rpcd/luci.qosmate"
+                    /usr/libexec/rpcd/luci.qosmate \
+                    /usr/libexec/rpcd/luci.qosmate_stats"
+                exec_files="/usr/libexec/rpcd/luci.qosmate \
+                    /usr/libexec/rpcd/luci.qosmate_stats"
         esac
 
         eval component_upd_avail="\"\${${component}_upd_avail}\""
