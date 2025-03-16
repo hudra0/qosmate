@@ -500,6 +500,83 @@ The postrouting priority (10) ensures these rules run after QoSmate's default ru
    ```
 4. Monitor rule effectiveness using the Connections tab
 
+### Example 3: Bandwidth Limiting with Custom Rules
+
+QoSmate allows you to implement targeted bandwidth limiting for specific devices, applications, or ports using custom nftables rules. This functionality is particularly useful for restricting the network usage of certain clients or preventing bandwidth-intensive applications from impacting network performance.
+
+> **Note on Conversion**: Nftables doesn't accept kbit/s as a unit. To convert from kbit/s to kbytes/second, simply divide by 8. Example: 4000 kbit/s equals 500 kbytes/second.
+
+#### Basic Rate Limiting Per Direction
+
+This example shows how to limit bandwidth for a specific device (192.168.1.100) to 4000 kbit/s (= 500 kbytes/s) in both directions:
+
+```
+chain forward {
+    type filter hook forward priority 0; policy accept;
+    
+    # Limit download traffic to 192.168.1.100 to 4000 kbit/s (= 500 kbytes/s)
+    ip daddr 192.168.1.100 limit rate over 500 kbytes/second counter drop
+    
+    # Limit upload traffic from 192.168.1.100 to 4000 kbit/s (= 500 kbytes/s)
+    ip saddr 192.168.1.100 limit rate over 500 kbytes/second counter drop
+}
+```
+
+These rules use the `limit rate over` matcher to drop packets that exceed the specified threshold. The `counter` allows monitoring of dropped packets.
+
+#### Rate Limiting with Burst Allowance
+
+In many cases, it's beneficial to allow short burst data transfers. The `burst` parameter allows a client to temporarily exceed the limit:
+
+```
+chain forward {
+    type filter hook forward priority 0; policy accept;
+    
+    # Limit download with burst allowance
+    ip daddr 192.168.1.100 limit rate over 500 kbytes/second burst 500 kbytes counter drop
+    
+    # Limit upload with burst allowance
+    ip saddr 192.168.1.100 limit rate over 500 kbytes/second burst 500 kbytes counter drop
+}
+```
+
+The `burst` option is particularly useful for applications that transfer data in bursts, as it provides a better user experience while still limiting average bandwidth.
+
+#### Port-Based Rate Limiting
+
+To limit traffic for a specific application port, you can use the conntrack mechanism (`ct`):
+
+```
+chain forward {
+    type filter hook forward priority 0; policy accept;
+    
+    # Limit traffic with destination port 3074 to 1 MB/s (8 Mbit/s)
+    ct original proto-dst 3074 limit rate over 1 mbytes/second counter drop
+}
+```
+
+This rule limits all traffic with destination port 3074 in the original conntrack entry to 1 MB/s (8 Mbit/s). This is useful for limiting specific services like gaming traffic (port 3074 is used by Xbox Live, for example).
+
+#### Combined IP and Port Limiting
+
+For more precise control, you can combine IP addresses and ports:
+
+```
+chain forward {
+    type filter hook forward priority 0; policy accept;
+    
+    # Limit traffic to/from 192.168.1.100 with destination port 3074 to 1 MB/s
+    ip saddr 192.168.1.100 ct original proto-dst 3074 limit rate over 1 mbytes/second counter drop
+    ip daddr 192.168.1.100 ct reply proto-src 3074 limit rate over 1 mbytes/second counter drop
+}
+```
+
+This example shows:
+1. The first rule limits outgoing traffic from 192.168.1.100 to port 3074
+2. The second rule limits incoming traffic to 192.168.1.100 from port 3074 (reply traffic)
+
+Note the use of `ct reply proto-src` to correctly identify return traffic.
+
 ## Command Line Interface
 QoSmate can be controlled and configured via the command line. The basic syntax is:
 ```
