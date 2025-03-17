@@ -743,11 +743,113 @@ git clone https://github.com/hudra0/qosmate.git package/qosmate
 `mkdir -p package/luci-app-qosmate
 git clone https://github.com/hudra0/luci-app-qosmate.git package/luci-app-qosmate`
 
+## QoSmate Traffic Shaping: HFSC and CAKE
+
+QoSmate supports two traffic shaping systems: HFSC and CAKE. Each combines queueing disciplines (qdiscs) with bandwidth control mechanisms to provide different approaches to traffic management and prioritization.
+
+### HFSC (Hierarchical Fair Service Curve)
+
+HFSC in QoSmate creates a hierarchical queueing structure with integrated traffic shaping that divides traffic into distinct classes with different service guarantees. The system offers control over both bandwidth and latency for different traffic types.
+
+#### HFSC Queue Structure
+![image](https://github.com/user-attachments/assets/8e2948e9-6ffa-46ff-b9e2-43e0f370bc82)
+
+QoSmate's HFSC implementation organizes traffic into 5 main classes:
+
+1. **Realtime Class (1:11)** - Highest priority class for gaming and latency-sensitive applications
+   - Handles packets marked with DSCP values CS5, CS6, CS7, and EF
+   - Limited to GAMEUP/GAMEDOWN bandwidth (configurable, defaults to 15% of total bandwidth + 400kbps)
+   - Uses configurable qdisc (pfifo, bfifo, red, fq_codel, or netem)
+
+2. **Fast Interactive Class (1:12)** - For interactive, non-gaming applications
+   - Handles packets marked with DSCP values CS4, AF41, and AF42
+   - Gets 30% of bandwidth under congestion
+
+3. **Normal Class (1:13)** - Default class for general browsing and unmarked traffic
+   - Handles packets with default (CS0) DSCP marking
+   - Gets 45% of bandwidth under congestion
+
+4. **Low Priority Class (1:14)** - For background transfers
+   - Handles packets marked with DSCP value CS2
+   - Gets 15% of bandwidth under congestion
+
+5. **Bulk Class (1:15)** - Lowest priority class for long-running transfers
+   - Handles packets marked with DSCP value CS1
+   - Gets 10% of bandwidth under congestion
+   - Perfect for torrents, large backups, and other bandwidth-intensive but delay-tolerant traffic
+
+#### How HFSC Prioritization Works
+
+HFSC uses service curves to control bandwidth allocation and latency:
+
+1. **Realtime Traffic (Gaming)**
+   - Gets guaranteed minimum bandwidth regardless of other traffic
+   - Uses qdisc configurable via `gameqdisc` option
+   - Can use RED, FQ_CODEL, PFIFO, BFIFO or NETEM qdisc for fine-tuned control
+
+2. **Non-Realtime Traffic**
+   - Uses either FQ_CODEL or CAKE qdisc (configurable)
+   - Fair allocation within each class
+   - Classes only compete when link is saturated
+
+3. **Bandwidth Utilization**
+   - When bandwidth is available, any class can use more than its allocation
+   - When congestion occurs, each class is limited to its fair share according to class priority
+
+#### HFSC Configuration Example
+
+Here's a basic example of how QoSmate configures HFSC queues:
+
+```
+# Create root qdisc with proper overhead
+tc qdisc replace dev $WAN stab overhead 40 linklayer ethernet handle 1: root hfsc default 13
+
+# Define overall bandwidth limit
+tc class add dev $WAN parent 1: classid 1:1 hfsc ls m2 "${RATE}kbit" ul m2 "${RATE}kbit"
+
+# Create realtime class with guaranteed bandwidth
+tc class add dev $WAN parent 1:1 classid 1:11 hfsc rt m1 "${gameburst}kbit" d "${DUR}ms" m2 "${gamerate}kbit"
+
+# Create non-realtime classes with different priorities
+tc class add dev $WAN parent 1:1 classid 1:12 hfsc ls m1 "$((RATE*70/100))kbit" d "${DUR}ms" m2 "$((RATE*30/100))kbit"
+tc class add dev $WAN parent 1:1 classid 1:13 hfsc ls m1 "$((RATE*20/100))kbit" d "${DUR}ms" m2 "$((RATE*45/100))kbit"
+tc class add dev $WAN parent 1:1 classid 1:14 hfsc ls m1 "$((RATE*7/100))kbit" d "${DUR}ms" m2 "$((RATE*15/100))kbit"
+tc class add dev $WAN parent 1:1 classid 1:15 hfsc ls m1 "$((RATE*3/100))kbit" d "${DUR}ms" m2 "$((RATE*10/100))kbit"
+```
+
+### CAKE (Common Applications Kept Enhanced)
+
+CAKE is a comprehensive traffic control system that combines queue management with traffic shaping. More information can be found [here](https://www.bufferbloat.net/projects/codel/wiki/CakeTechnical/) and [here](https://man7.org/linux/man-pages/man8/tc-cake.8.html).
+#### CAKE Features in QoSmate
+
+1. **Diffserv Traffic Prioritization** (Diffserv3, Diffserv4 and Diffserv8)
+   - QoSmate uses diffserv4 by default, creating 4 tiers of service:
+     - Highest: Voice (CS7, CS6, EF)
+     - High: Video (CS5, CS4, AF4x)
+     - Medium: Best Effort (CS0, AF1x, AF2x, AF3x)
+     - Low: Background (CS1, CS2, CS3)
+   - Each tier gets progressively less bandwidth and priority
+
+2. **Host Isolation**
+   - Ensures fair bandwidth allocation between different devices on your network
+   - Prevents a single device from monopolizing bandwidth
+   - Implemented as dual-srchost (for upload) and dual-dsthost (for download)
+
+3. **Advanced Queue Management**
+   - Automatically manages buffers to prevent bufferbloat
+   - Built-in ACK filtering for asymmetric connections
+   - Wash option to control DSCP marking behavior
+
+
+### DSCP Marking
+
+QoSmate uses DSCP (Differentiated Services Code Point) marking to classify and prioritize traffic. The dscptag system classifies traffic based on protocols, ports, and IP addresses, stores values in connection tracking for consistent bidirectional handling, and directs packets to the appropriate queues.
+
 ## Technical Implementation
 
 ### Traffic Shaping Implementation
 
-QoSmate uses a sophisticated approach to handle Quality of Service in both upload and download directions. The implementation leverages Connection Tracking Information (CTInfo) for efficient traffic management.
+QoSmate handles Quality of Service in both upload and download directions. The implementation leverages Connection Tracking Information (CTInfo) for efficient traffic management.
 
 #### How CTInfo Works
 
