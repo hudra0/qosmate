@@ -409,7 +409,7 @@ create_nft_rule() {
     
     # Use connection tracking for source port
     if [ -n "$src_port" ]; then
-        local src_port_result=$(handle_multiple_values "$src_port" "ct original proto-src")
+        local src_port_result=$(handle_multiple_values "$src_port" "th sport")
         if [ "$src_port_result" = "ERROR_MIXED_IP" ]; then
             # Skip this rule entirely
             return 0
@@ -433,7 +433,7 @@ create_nft_rule() {
     
     # Use connection tracking for destination port
     if [ -n "$dest_port" ]; then
-        local dest_port_result=$(handle_multiple_values "$dest_port" "ct original proto-dst")
+        local dest_port_result=$(handle_multiple_values "$dest_port" "th dport")
         if [ "$dest_port_result" = "ERROR_MIXED_IP" ]; then
             # Skip this rule entirely
             return 0
