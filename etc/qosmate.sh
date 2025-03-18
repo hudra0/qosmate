@@ -334,7 +334,7 @@ create_nft_rule() {
     [ -n "$dest_port" ] && rule_cmd="$rule_cmd $(handle_multiple_values "$dest_port" "th dport")"
 
     # Append class and counter if provided
-    if [ -n "$src_ip" ] || [ -n "$dest_ip" ]; then
+    if [ -n "$src_ip" ] || [ -n "$dest_ip" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
         local is_ipv6_rule=0
         
         # Check if any direct IPs are IPv6
