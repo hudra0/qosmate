@@ -258,15 +258,63 @@ create_nft_rule() {
         echo "Error: Class for rule '$config' is empty."
         return 1
     fi
-
-    # Initialize rule string
-    local rule_cmd=""
-
+    
     # Function to get set family
     get_set_family() {
         local setname="$1"
         [ -f /tmp/qosmate_set_families ] && awk -v set="$setname" '$1 == set {print $2}' /tmp/qosmate_set_families
     }
+    
+    # Early check for mixed IPv4/IPv6
+    local has_ipv4=0
+    local has_ipv6=0
+    local is_ipv6_rule=0
+    
+    # Check source IP version
+    if [ -n "$src_ip" ]; then
+        if echo "$src_ip" | grep -q '^@'; then
+            # Handle IP set
+            local src_set=$(echo "$src_ip" | sed 's/^@//')
+            if [ "$(get_set_family "$src_set")" = "ipv6" ]; then
+                has_ipv6=1
+            else
+                has_ipv4=1
+            fi
+        elif is_ipv6 "$src_ip"; then
+            has_ipv6=1
+        else
+            has_ipv4=1
+        fi
+    fi
+    
+    # Check destination IP version
+    if [ -n "$dest_ip" ]; then
+        if echo "$dest_ip" | grep -q '^@'; then
+            # Handle IP set
+            local dest_set=$(echo "$dest_ip" | sed 's/^@//')
+            if [ "$(get_set_family "$dest_set")" = "ipv6" ]; then
+                has_ipv6=1
+            else
+                has_ipv4=1
+            fi
+        elif is_ipv6 "$dest_ip"; then
+            has_ipv6=1
+        else
+            has_ipv4=1
+        fi
+    fi
+    
+    # Check for mixed IPv4/IPv6 rule and exit early if mixed
+    if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then
+        logger -t qosmate "Error: Mixed IPv4/IPv6 addresses in rule (name: $name). Rule skipped."
+        return 0
+    fi
+    
+    # Set IPv6 flag for later use
+    [ "$has_ipv6" -eq 1 ] && is_ipv6_rule=1
+
+    # Initialize rule string
+    local rule_cmd=""
 
     # Function to handle multiple values with IP family awareness
     handle_multiple_values() {
@@ -291,6 +339,33 @@ create_nft_rule() {
                 values=$(echo "$values" | sed 's/!=//g')
             fi
             
+            # Check for mixed IPv4/IPv6 addresses within a set of IP addresses
+            if echo "$prefix" | grep -q "addr" && [ $(echo "$values" | wc -w) -gt 1 ]; then
+                local has_ipv4=0
+                local has_ipv6=0
+                
+                # Check each address in the set
+                for ip in $values; do
+                    if is_ipv6 "$ip"; then
+                        has_ipv6=1
+                    else
+                        has_ipv4=1
+                    fi
+                done
+                
+                # If mixed, log and signal error
+                if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then
+                    logger -t qosmate "Error: Mixed IPv4/IPv6 addresses within a set: { $values }. Rule skipped."
+                    echo "ERROR_MIXED_IP"
+                    return 1
+                fi
+                
+                # Update prefix based on IP type
+                if [ "$has_ipv6" -eq 1 ]; then
+                    prefix=$(echo "$prefix" | sed 's/ip /ip6 /')
+                fi
+            fi
+            
             if [ $(echo "$values" | wc -w) -gt 1 ]; then
                 if [ $exclude -eq 1 ]; then
                     result="$prefix != { $(echo $values | tr ' ' ',') }"
@@ -310,7 +385,12 @@ create_nft_rule() {
 
     # Handle multiple protocols
     if [ -n "$proto" ]; then
-        rule_cmd="$rule_cmd $(handle_multiple_values "$proto" "meta l4proto")"
+        local proto_result=$(handle_multiple_values "$proto" "meta l4proto")
+        if [ "$proto_result" = "ERROR_MIXED_IP" ]; then
+            # Skip this rule entirely
+            return 0
+        fi
+        rule_cmd="$rule_cmd $proto_result"
     fi
 
     # Append source IP and port if provided
@@ -319,9 +399,23 @@ create_nft_rule() {
         if is_ipv6 "$src_ip"; then
             ip_cmd="ip6 saddr"
         fi
-        rule_cmd="$rule_cmd $(handle_multiple_values "$src_ip" "$ip_cmd")"
+        local src_ip_result=$(handle_multiple_values "$src_ip" "$ip_cmd")
+        if [ "$src_ip_result" = "ERROR_MIXED_IP" ]; then
+            # Skip this rule entirely
+            return 0
+        fi
+        rule_cmd="$rule_cmd $src_ip_result"
     fi
-    [ -n "$src_port" ] && rule_cmd="$rule_cmd $(handle_multiple_values "$src_port" "th sport")"
+    
+    # Use connection tracking for source port
+    if [ -n "$src_port" ]; then
+        local src_port_result=$(handle_multiple_values "$src_port" "ct original proto-src")
+        if [ "$src_port_result" = "ERROR_MIXED_IP" ]; then
+            # Skip this rule entirely
+            return 0
+        fi
+        rule_cmd="$rule_cmd $src_port_result"
+    fi
 
     # Append destination IP and port if provided
     if [ -n "$dest_ip" ]; then
@@ -329,29 +423,26 @@ create_nft_rule() {
         if is_ipv6 "$dest_ip"; then
             ip_cmd="ip6 daddr"
         fi
-        rule_cmd="$rule_cmd $(handle_multiple_values "$dest_ip" "$ip_cmd")"
+        local dest_ip_result=$(handle_multiple_values "$dest_ip" "$ip_cmd")
+        if [ "$dest_ip_result" = "ERROR_MIXED_IP" ]; then
+            # Skip this rule entirely
+            return 0
+        fi
+        rule_cmd="$rule_cmd $dest_ip_result"
     fi
-    [ -n "$dest_port" ] && rule_cmd="$rule_cmd $(handle_multiple_values "$dest_port" "th dport")"
-
+    
+    # Use connection tracking for destination port
+    if [ -n "$dest_port" ]; then
+        local dest_port_result=$(handle_multiple_values "$dest_port" "ct original proto-dst")
+        if [ "$dest_port_result" = "ERROR_MIXED_IP" ]; then
+            # Skip this rule entirely
+            return 0
+        fi
+        rule_cmd="$rule_cmd $dest_port_result"
+    fi
+    
     # Append class and counter if provided
-    if [ -n "$src_ip" ] || [ -n "$dest_ip" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
-        local is_ipv6_rule=0
-        
-        # Check if any direct IPs are IPv6
-        if is_ipv6 "$src_ip" || is_ipv6 "$dest_ip"; then
-            is_ipv6_rule=1
-        fi
-        
-        # Check if any referenced sets are IPv6
-        if [ -n "$src_ip" ] && echo "$src_ip" | grep -q '^@'; then
-            local src_set=$(echo "$src_ip" | sed 's/^@//')
-            [ "$(get_set_family "$src_set")" = "ipv6" ] && is_ipv6_rule=1
-        fi
-        if [ -n "$dest_ip" ] && echo "$dest_ip" | grep -q '^@'; then
-            local dest_set=$(echo "$dest_ip" | sed 's/^@//')
-            [ "$(get_set_family "$dest_set")" = "ipv6" ] && is_ipv6_rule=1
-        fi
-        
+    if [ -n "$proto" ] || [ -n "$src_ip" ] || [ -n "$dest_ip" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
         if [ "$is_ipv6_rule" -eq 1 ]; then
             rule_cmd="$rule_cmd ip6 dscp set $class"
         else
