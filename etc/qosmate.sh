@@ -414,7 +414,7 @@ create_nft_rule() {
             # Skip this rule entirely
             return 0
         fi
-        rule_cmd="$rule_cmd $src_port_result"
+        rule_cmd="$rule_cmd $src_port_result ct direction original"
     fi
 
     # Append destination IP and port if provided
@@ -438,18 +438,20 @@ create_nft_rule() {
             # Skip this rule entirely
             return 0
         fi
-        rule_cmd="$rule_cmd $dest_port_result"
+        rule_cmd="$rule_cmd $dest_port_result ct direction original"
     fi
     
     # Append class and counter if provided
     if [ -n "$proto" ] || [ -n "$src_ip" ] || [ -n "$dest_ip" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
         if [ "$is_ipv6_rule" -eq 1 ]; then
             rule_cmd="$rule_cmd ip6 dscp set $class"
+            rule_cmd="$rule_cmd meta mark set meta mark or 64"
         else
             rule_cmd="$rule_cmd ip dscp set $class"
+            rule_cmd="$rule_cmd meta mark set meta mark or 64"
         fi
+        [ "$counter" -eq 1 ] && rule_cmd="$rule_cmd counter"
     fi
-    [ "$counter" -eq 1 ] && rule_cmd="$rule_cmd counter"
     
     # Add trace if enabled
     [ "$trace" -eq 1 ] && rule_cmd="$rule_cmd meta nftrace set 1"
@@ -523,16 +525,16 @@ fi
 # Check if REALTIME4 and REALTIME6 are set
 if [ -n "$REALTIME4" ]; then
     realtime4_rules="\
-meta l4proto udp ip daddr \$realtime4 ip dscp set cs5 counter
-        meta l4proto udp ip saddr \$realtime4 ip dscp set cs5 counter"
+meta l4proto udp ip daddr \$realtime4 ip dscp set cs5 meta mark set meta mark or 64 counter
+        meta l4proto udp ip saddr \$realtime4 ip dscp set cs5 meta mark set meta mark or 64 counter"
 else
     realtime4_rules="# REALTIME4 rules disabled, address not defined."
 fi
 
 if [ -n "$REALTIME6" ]; then
     realtime6_rules="\
-meta l4proto udp ip6 daddr \$realtime6 ip6 dscp set cs5 counter
-        meta l4proto udp ip6 saddr \$realtime6 ip6 dscp set cs5 counter"
+meta l4proto udp ip6 daddr \$realtime6 ip6 dscp set cs5 meta mark set meta mark or 64 counter
+        meta l4proto udp ip6 saddr \$realtime6 ip6 dscp set cs5 meta mark set meta mark or 64 counter"
 else
     realtime6_rules="# REALTIME6 rules disabled, address not defined."
 fi
@@ -540,16 +542,16 @@ fi
 # Check if LOWPRIOLAN4 and LOWPRIOLAN6 are set
 if [ -n "$LOWPRIOLAN4" ]; then
     lowpriolan4_rules="\
-meta l4proto udp ip daddr \$lowpriolan4 ip dscp set cs0 counter
-        meta l4proto udp ip saddr \$lowpriolan4 ip dscp set cs0 counter"
+meta l4proto udp ip daddr \$lowpriolan4 ip dscp set cs0 meta mark set meta mark or 64 counter
+        meta l4proto udp ip saddr \$lowpriolan4 ip dscp set cs0 meta mark set meta mark or 64 counter"
 else
     lowpriolan4_rules="# LOWPRIOLAN4 rules disabled, address not defined."
 fi
 
 if [ -n "$LOWPRIOLAN6" ]; then
     lowpriolan6_rules="\
-meta l4proto udp ip6 daddr \$lowpriolan6 ip6 dscp set cs0 counter
-        meta l4proto udp ip6 saddr \$lowpriolan6 ip6 dscp set cs0 counter"
+meta l4proto udp ip6 daddr \$lowpriolan6 ip6 dscp set cs0 meta mark set meta mark or 64 counter
+        meta l4proto udp ip6 saddr \$lowpriolan6 ip6 dscp set cs0 meta mark set meta mark or 64 counter"
 else
     lowpriolan6_rules="# LOWPRIOLAN6 rules disabled, address not defined."
 fi
@@ -557,8 +559,8 @@ fi
 # Check if UDP rate limiting should be applied
 if [ "$UDP_RATE_LIMIT_ENABLED" -eq 1 ]; then
     udp_rate_limit_rules="\
-meta l4proto udp ip dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip dscp set cs0 counter
-        meta l4proto udp ip6 dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip6 dscp set cs0 counter"
+meta l4proto udp ip dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip dscp set cs0 meta mark set meta mark or 64 counter
+        meta l4proto udp ip6 dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip6 dscp set cs0 meta mark set meta mark or 64 counter"
 else
     udp_rate_limit_rules="# UDP rate limiting is disabled."
 fi
@@ -566,8 +568,8 @@ fi
 # Check if TCP upgrade for slow connections should be applied
 if [ "$TCP_UPGRADE_ENABLED" -eq 1 ]; then
     tcp_upgrade_rules="
-meta l4proto tcp ip dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets } ip dscp set af42 counter
-        meta l4proto tcp ip6 dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
+meta l4proto tcp ip dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets } ip dscp set af42 meta mark set meta mark or 64 counter
+        meta l4proto tcp ip6 dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets} ip6 dscp set af42 meta mark set meta mark or 64 counter"
 else
     tcp_upgrade_rules="# TCP upgrade for slow connections is disabled"
 fi
@@ -673,34 +675,58 @@ ${SETS}
     }
 
     chain mark_500ms {
-        ip dscp < cs4 ip dscp != cs1 ip dscp set cs0 counter return
-        ip6 dscp < cs4 ip6 dscp != cs1 ip6 dscp set cs0 counter
+        ip dscp < cs4 ip dscp != cs1 ip dscp set cs0 meta mark set meta mark or 64 counter return
+        ip6 dscp < cs4 ip6 dscp != cs1 ip6 dscp set cs0 meta mark set meta mark or 64 counter
     }
     chain mark_10s {
-        ip dscp < cs4 ip dscp set cs1 counter return
-        ip6 dscp < cs4 ip6 dscp set cs1 counter
+        ip dscp < cs4 ip dscp set cs1 meta mark set meta mark or 64 counter return
+        ip6 dscp < cs4 ip6 dscp set cs1 meta mark set meta mark or 64 counter
     }
 
-    chain mark_cs0 {
-        ip dscp set cs0 return
+    # Special chain for washing DSCP values without tracking in conntrack
+    # IMPORTANT: This chain is used for general DSCP washing and intentionally 
+    # does NOT set the meta mark bit 64, which means packets processed by this chain 
+    # will NOT be tracked in conntrack. This is different from mark_cs0 chain below,
+    # which sets the meta mark bit and IS tracked in conntrack.
+    # Use this chain for general washing to avoid cluttering conntrack with
+    # irrelevant DSCP values that aren't explicitly set by QoSmate rules.
+    chain wash_cs0 {
+        ip dscp set cs0
         ip6 dscp set cs0
+        return
+    }
+
+    # Chain for explicitly setting DSCP to cs0 for specific traffic
+    # This chain sets the meta mark bit 64, so these changes ARE tracked in conntrack
+    chain mark_cs0 {
+        ip dscp set cs0
+        meta mark set meta mark or 64
+        return
+        ip6 dscp set cs0
+        meta mark set meta mark or 64
     }
     chain mark_cs1 {
-        ip dscp set cs1 return
+        ip dscp set cs1
+        meta mark set meta mark or 64
+        return
         ip6 dscp set cs1
+        meta mark set meta mark or 64
     }
     chain mark_af42 {
-        ip dscp set af42 return
+        ip dscp set af42
+        meta mark set meta mark or 64
+        return
         ip6 dscp set af42
+        meta mark set meta mark or 64
     }
 
     chain dscptag {
         type filter hook $NFT_HOOK priority $NFT_PRIORITY; policy accept;
 
-        iif "lo" accept
-        $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPDOWN" -eq 1 ]; then
+        iif "lo" accept    
+        $(if { [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; } && [ "$WASHDSCPDOWN" -eq 1 ]; then
             echo "# wash all the DSCP on ingress ... "
-            echo "        counter jump mark_cs0"
+            echo "        counter jump wash_cs0"
           fi
         )
 
@@ -739,13 +765,13 @@ ${DYNAMIC_RULES}
         meta priority set ip dscp map @priomap counter
         meta priority set ip6 dscp map @priomap counter
 
-        # Store DSCP in conntrack for restoration on ingress
-        ct mark set ip dscp or 128 counter
-        ct mark set ip6 dscp or 128 counter
+        # Store DSCP in conntrack for restoration on ingress only if modified by QoSmate
+        ct id != 0 meta mark & 64 != 0 ct mark set ip dscp or 128 counter
+        ct id != 0 meta mark & 64 != 0 ct mark set ip6 dscp or 128 counter
 
-        $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPUP" -eq 1 ]; then
+        $(if { [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; } && [ "$WASHDSCPUP" -eq 1 ]; then
             echo "# wash all DSCP on egress ... "
-            echo "meta oifname \$wan jump mark_cs0"
+            echo "meta oifname \$wan jump wash_cs0"
           fi
         )
     }
@@ -833,7 +859,7 @@ case $LINKTYPE in
 	tc qdisc replace dev $DEV stab overhead 25 linklayer ethernet handle 1: root hfsc default 13
 	;;
     *)
-	tc qdisc replace dev $DEV stab overhead 40 linklayer ethernet handle 1: root hfsc default 13
+	tc qdisc replace dev "$DEV" stab overhead 40 linklayer ethernet handle 1: root hfsc default 13
 	;;
 esac
      
@@ -1064,6 +1090,131 @@ setup_cake() {
     tc qdisc add dev $LAN root cake $INGRESS_CAKE_OPTS
 }
 
+# Setup hybrid qdisc with HFSC root and CAKE for non-realtime traffic
+setup_hybrid() {
+    echo "Setting up hybrid queueing discipline (HFSC root with CAKE for non-realtime traffic)"
+    
+    # Clean existing qdiscs
+    tc qdisc del dev "$WAN" root > /dev/null 2>&1
+    tc qdisc del dev "$LAN" root > /dev/null 2>&1
+    
+    # Setup WAN (egress/upload)
+    setup_hybrid_interface "$WAN" "$UPRATE" "$GAMEUP" "wan"
+    
+    # Setup LAN (ingress/download)
+    setup_hybrid_interface "$LAN" "$DOWNRATE" "$GAMEDOWN" "lan"
+}
+
+# Helper function to set up hybrid qdisc on an interface
+setup_hybrid_interface() {
+    local DEV=$1
+    local RATE=$2
+    local GAMERATE=$3
+    local DIR=$4
+    local MTU=1500
+    
+    # Calculate parameters
+    local DUR=$((5*1500*8/RATE))
+    if [ $DUR -lt 25 ]; then
+        DUR=25
+    fi
+    
+    local gameburst=$((GAMERATE*10))
+    if [ $gameburst -gt $((RATE*97/100)) ]; then
+        gameburst=$((RATE*97/100))
+    fi
+    
+    # Calculate RED parameters for realtime class
+    local REDMIN=$((GAMERATE * MAXDEL / 3 / 8))
+    local REDMAX=$((GAMERATE * MAXDEL / 8))
+    local BURST=$(( (REDMIN + REDMIN + REDMAX) / (3 * 500) ))
+    if [ $BURST -lt 2 ]; then
+        BURST=2
+    fi
+    
+    # Setup root HFSC qdisc
+    case $LINKTYPE in
+        "atm")
+            tc qdisc replace dev "$DEV" handle 1: root stab mtu 2047 tsize 512 mpu 68 overhead ${OH} linklayer atm hfsc default 13
+            ;;
+        "DOCSIS")
+            tc qdisc replace dev "$DEV" stab overhead 25 linklayer ethernet handle 1: root hfsc default 13
+            ;;
+        *)
+            tc qdisc replace dev "$DEV" stab overhead 40 linklayer ethernet handle 1: root hfsc default 13
+            ;;
+    esac
+    
+    # If on LAN side, create a queue for router traffic
+    if [ "$DIR" = "lan" ]; then
+        tc class add dev "$DEV" parent 1: classid 1:2 hfsc ls m1 50000kbit d "${DUR}ms" m2 10000kbit
+    fi
+    
+    # Limit link overall
+    tc class add dev "$DEV" parent 1: classid 1:1 hfsc ls m2 "${RATE}kbit" ul m2 "${RATE}kbit"
+    
+    # Create three main classes:
+    
+    # Class 1:11 - High priority realtime traffic (games, VoIP, etc.)
+    tc class add dev "$DEV" parent 1:1 classid 1:11 hfsc rt m1 "${gameburst}kbit" d "${DUR}ms" m2 "${GAMERATE}kbit"
+    
+    # Use RED for realtime traffic
+    tc qdisc add dev "$DEV" parent 1:11 handle 10: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth ${RATE}kbit burst $BURST probability 1.0
+    
+    # Class 1:13 - CAKE class (most traffic)
+    # Allocate most of the bandwidth to this class
+    tc class add dev "$DEV" parent 1:1 classid 1:13 hfsc ls m1 "$((RATE - GAMERATE))kbit" d "${DUR}ms" m2 "$((RATE - GAMERATE))kbit"
+    
+    # Set up CAKE for this class
+    if [ "$DIR" = "wan" ]; then
+        # Egress CAKE setup
+        local CAKE_OPTS="besteffort"
+        [ "$HOST_ISOLATION" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS dual-srchost"
+        [ "$NAT_EGRESS" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS nat" || CAKE_OPTS="$CAKE_OPTS nonat"
+        [ "$WASHDSCPUP" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS wash" || CAKE_OPTS="$CAKE_OPTS nowash"
+        [ -n "$RTT" ] && CAKE_OPTS="$CAKE_OPTS rtt ${RTT}ms"
+        [ -n "$COMMON_LINK_PRESETS" ] && CAKE_OPTS="$CAKE_OPTS $COMMON_LINK_PRESETS"
+        [ -n "$LINK_COMPENSATION" ] && CAKE_OPTS="$CAKE_OPTS $LINK_COMPENSATION" || CAKE_OPTS="$CAKE_OPTS noatm"
+        [ -n "$OVERHEAD" ] && CAKE_OPTS="$CAKE_OPTS overhead $OVERHEAD"
+        [ -n "$MPU" ] && CAKE_OPTS="$CAKE_OPTS mpu $MPU"
+    else
+        # Ingress CAKE setup
+        local CAKE_OPTS="besteffort ingress"
+        [ "$HOST_ISOLATION" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS dual-dsthost"
+        [ "$NAT_INGRESS" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS nat" || CAKE_OPTS="$CAKE_OPTS nonat"
+        [ "$WASHDSCPDOWN" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS wash" || CAKE_OPTS="$CAKE_OPTS nowash"
+        [ -n "$RTT" ] && CAKE_OPTS="$CAKE_OPTS rtt ${RTT}ms"
+        [ -n "$COMMON_LINK_PRESETS" ] && CAKE_OPTS="$CAKE_OPTS $COMMON_LINK_PRESETS"
+        [ -n "$LINK_COMPENSATION" ] && CAKE_OPTS="$CAKE_OPTS $LINK_COMPENSATION" || CAKE_OPTS="$CAKE_OPTS noatm"
+        [ -n "$OVERHEAD" ] && CAKE_OPTS="$CAKE_OPTS overhead $OVERHEAD"
+        [ -n "$MPU" ] && CAKE_OPTS="$CAKE_OPTS mpu $MPU"
+    fi
+    
+    tc qdisc add dev "$DEV" parent 1:13 cake $CAKE_OPTS
+    
+    # Class 1:15 - Bulk traffic (low priority)
+    tc class add dev "$DEV" parent 1:1 classid 1:15 hfsc ls m1 "$((RATE*5/100))kbit" d "${DUR}ms" m2 "$((RATE*10/100))kbit"
+    
+    # Set up a simple fq_codel for bulk traffic
+    local INTVL=$((100+2*1500*8/RATE))
+    local TARG=$((540*8/RATE+4))
+    tc qdisc add dev "$DEV" parent 1:15 fq_codel memory_limit $((RATE*100/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
+    
+    # Apply DSCP traffic filters
+    if [ "$DIR" = "lan" ]; then
+        # Realtime traffic to 1:11
+        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xb8 0xfc classid 1:11 # ef (46)
+        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xa0 0xfc classid 1:11 # cs5 (40)
+        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xc0 0xfc classid 1:11 # cs6 (48)
+        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xe0 0xfc classid 1:11 # cs7 (56)
+        
+        # Bulk traffic to 1:15
+        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x20 0xfc classid 1:15 # cs1 (8)
+        
+        # All other traffic to CAKE (1:13, which is also the default)
+    fi
+}
+
 # Main logic for selecting and applying the QoS system
 if [ "$ROOT_QDISC" = "hfsc" ]; then
     if [ "$gameqdisc" != "fq_codel" ] && [ "$gameqdisc" != "red" ] && [ "$gameqdisc" != "pfifo" ] && [ "$gameqdisc" != "bfifo" ] && [ "$gameqdisc" != "netem" ]; then
@@ -1072,6 +1223,8 @@ if [ "$ROOT_QDISC" = "hfsc" ]; then
     fi
     setqdisc $WAN $UPRATE $GAMEUP $gameqdisc wan
     setqdisc $LAN $DOWNRATE $GAMEDOWN $gameqdisc lan
+elif [ "$ROOT_QDISC" = "hybrid" ]; then
+    setup_hybrid
 elif [ "$ROOT_QDISC" = "cake" ]; then
     setup_cake
 else
