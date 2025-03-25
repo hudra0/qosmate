@@ -740,8 +740,8 @@ ${DYNAMIC_RULES}
         meta priority set ip6 dscp map @priomap counter
 
         # Store DSCP in conntrack for restoration on ingress
-        ct mark set ip dscp or 128 counter
-        ct mark set ip6 dscp or 128 counter
+        ct id != 0 ct mark set ip dscp or 128 counter
+        ct id != 0 ct mark set ip6 dscp or 128 counter
 
         $(if [ "$ROOT_QDISC" = "hfsc" ] && [ "$WASHDSCPUP" -eq 1 ]; then
             echo "# wash all DSCP on egress ... "
