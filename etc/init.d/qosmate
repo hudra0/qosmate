@@ -18,8 +18,8 @@ EXTRA_HELP="        check_version   Check for updates
 REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake kmod-sched-red luci-lib-jsonc lua jq"
 
 # Base URL (raw) for repositories (can be overridden for different branches/commits)
-QOSMATE_BASE_URL="${QOSMATE_BASE_URL:-https://raw.githubusercontent.com/hudra0/qosmate/refs/heads/dev}"
-QOSMATE_FRONTEND_BASE_URL="${QOSMATE_FRONTEND_BASE_URL:-https://raw.githubusercontent.com/hudra0/luci-app-qosmate/refs/heads/dev}"
+QOSMATE_BASE_URL="${QOSMATE_BASE_URL:-https://raw.githubusercontent.com/hudra0/qosmate/main}"
+QOSMATE_FRONTEND_BASE_URL="${QOSMATE_FRONTEND_BASE_URL:-https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main}"
 QOSMATE_FRONTEND_URL_JS="$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view"
 QOSMATE_FRONTEND_PATH_JS=/www/luci-static/resources/view/qosmate
 
