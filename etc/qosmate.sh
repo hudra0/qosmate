@@ -268,7 +268,6 @@ create_nft_rule() {
     # Early check for mixed IPv4/IPv6
     local has_ipv4=0
     local has_ipv6=0
-    local is_ipv6_rule=0
     
     # Check source IP version
     if [ -n "$src_ip" ]; then
@@ -304,14 +303,21 @@ create_nft_rule() {
         fi
     fi
     
-    # Check for mixed IPv4/IPv6 rule and exit early if mixed
-    if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then
-        logger -t qosmate "Error: Mixed IPv4/IPv6 addresses in rule (name: $name). Rule skipped."
-        return 0
+    # Check for mixed IPv4/IPv6 rule *in the input* and exit early if mixed
+    # This check should only fail if the user explicitly provided both v4 and v6 addresses in src_ip or dest_ip
+    if [ -n "$src_ip" ] || [ -n "$dest_ip" ]; then # Only check if an IP was actually provided in config
+       if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then 
+            logger -t qosmate "Error: Mixed IPv4/IPv6 addresses explicitly specified in rule '$name' ($config). Rule skipped."
+            return 0
+        fi
     fi
-    
-    # Set IPv6 flag for later use
-    [ "$has_ipv6" -eq 1 ] && is_ipv6_rule=1
+
+    # If no IP address was specified, we assume the rule applies to both IPv4 and IPv6
+    if [ -z "$src_ip" ] && [ -z "$dest_ip" ] && [ "$has_ipv4" -eq 0 ] && [ "$has_ipv6" -eq 0 ]; then
+        log_msg "INFO" "Rule '$name' ($config): No IP specified, generating rules for both IPv4 and IPv6."
+        has_ipv4=1
+        has_ipv6=1
+    fi
 
     # Initialize rule string
     local rule_cmd=""
@@ -441,29 +447,51 @@ create_nft_rule() {
         rule_cmd="$rule_cmd $dest_port_result"
     fi
     
-    # Append class and counter if provided
-    if [ -n "$proto" ] || [ -n "$src_ip" ] || [ -n "$dest_ip" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
-        if [ "$is_ipv6_rule" -eq 1 ]; then
-            rule_cmd="$rule_cmd ip6 dscp set $class"
-        else
-            rule_cmd="$rule_cmd ip dscp set $class"
+    # Build final rule(s) based on has_ipv4 and has_ipv6 flags
+    local final_rule_v4=""
+    local final_rule_v6=""
+    local common_rule_part=$(echo "$rule_cmd" | sed -e 's/^[ ]*//' -e 's/[ ]*$//') # Trim common parts
+
+    # Generate IPv4 rule if needed
+    if [ "$has_ipv4" -eq 1 ]; then
+        local rule_cmd_v4="$common_rule_part"
+        # Ensure we only add parts if there's something to match on (IP/Port/Proto)
+        if [ -n "$proto" ] || [ -n "$src_ip" ] || [ -n "$dest_ip" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
+            rule_cmd_v4="$rule_cmd_v4 ip dscp set $class"
+        fi
+        [ "$counter" -eq 1 ] && rule_cmd_v4="$rule_cmd_v4 counter"
+        [ "$trace" -eq 1 ] && rule_cmd_v4="$rule_cmd_v4 meta nftrace set 1"
+        [ -n "$name" ] && rule_cmd_v4="$rule_cmd_v4 comment \"ipv4_$name\""
+            
+        rule_cmd_v4=$(echo "$rule_cmd_v4" | sed 's/[ ]*$//') # Trim final rule
+        # Ensure the rule is not just a semicolon
+        if [ -n "$rule_cmd_v4" ] && [ "$rule_cmd_v4" != ";" ]; then
+            final_rule_v4="$rule_cmd_v4;"
         fi
     fi
-    [ "$counter" -eq 1 ] && rule_cmd="$rule_cmd counter"
-    
-    # Add trace if enabled
-    [ "$trace" -eq 1 ] && rule_cmd="$rule_cmd meta nftrace set 1"
 
-    # Add comment if name is provided
-    [ -n "$name" ] && rule_cmd="$rule_cmd comment \"$name\""
+    # Generate IPv6 rule if needed
+    if [ "$has_ipv6" -eq 1 ]; then
+        local rule_cmd_v6="$common_rule_part"
+         # Ensure we only add parts if there's something to match on (IP/Port/Proto)
+        if [ -n "$proto" ] || [ -n "$src_ip" ] || [ -n "$dest_ip" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
+            rule_cmd_v6="$rule_cmd_v6 ip6 dscp set $class"
+        fi
+        [ "$counter" -eq 1 ] && rule_cmd_v6="$rule_cmd_v6 counter"
+        [ "$trace" -eq 1 ] && rule_cmd_v6="$rule_cmd_v6 meta nftrace set 1"
+        [ -n "$name" ] && rule_cmd_v6="$rule_cmd_v6 comment \"ipv6_$name\""
 
-    # Finalize the rule by removing any extra spaces and adding a semicolon
-    rule_cmd=$(echo "$rule_cmd" | sed 's/[ ]*$//')
-
-    # Ensure the rule is not just a semicolon
-    if [ -n "$rule_cmd" ] && [ "$rule_cmd" != ";" ]; then
-        echo "$rule_cmd;"
+        rule_cmd_v6=$(echo "$rule_cmd_v6" | sed 's/[ ]*$//') # Trim final rule
+        # Ensure the rule is not just a semicolon
+        if [ -n "$rule_cmd_v6" ] && [ "$rule_cmd_v6" != ";" ]; then
+             final_rule_v6="$rule_cmd_v6;"
+        fi
     fi
+
+    # Output the generated rules (if any)
+    [ -n "$final_rule_v4" ] && echo "$final_rule_v4"
+    [ -n "$final_rule_v6" ] && echo "$final_rule_v6"
+
 }
 
 generate_dynamic_nft_rules() {
