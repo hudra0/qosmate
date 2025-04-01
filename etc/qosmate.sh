@@ -589,8 +589,8 @@ fi
 # Check if TCP upgrade for slow connections should be applied
 if [ "$TCP_UPGRADE_ENABLED" -eq 1 ]; then
     tcp_upgrade_rules="
-meta l4proto tcp ip dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets } ip dscp set af42 meta mark set meta mark or 64 counter
-        meta l4proto tcp ip6 dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets} ip6 dscp set af42 meta mark set meta mark or 64 counter"
+meta nfproto ipv4 meta l4proto tcp ip dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets } ip dscp set af42 meta mark set meta mark or 64 counter
+        meta nfproto ipv6 meta l4proto tcp ip6 dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets} ip6 dscp set af42 meta mark set meta mark or 64 counter"
 else
     tcp_upgrade_rules="# TCP upgrade for slow connections is disabled"
 fi
@@ -787,8 +787,8 @@ ${DYNAMIC_RULES}
         meta priority set ip6 dscp map @priomap counter
 
         # Store DSCP in conntrack for restoration on ingress only if modified by QoSmate
-        ct id != 0 meta mark & 64 != 0 ct mark set ip dscp or 128 counter
-        ct id != 0 meta mark & 64 != 0 ct mark set ip6 dscp or 128 counter
+        meta nfproto ipv4 ct id != 0 meta mark & 64 != 0 ct mark set ip dscp or 128 counter
+        meta nfproto ipv6 ct id != 0 meta mark & 64 != 0 ct mark set ip6 dscp or 128 counter
 
         $(if { [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; } && [ "$WASHDSCPUP" -eq 1 ]; then
             echo "# wash all DSCP on egress ... "
