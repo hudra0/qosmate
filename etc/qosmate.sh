@@ -714,29 +714,22 @@ ${SETS}
     chain wash_cs0 {
         ip dscp set cs0
         ip6 dscp set cs0
-        return
     }
 
     # Chain for explicitly setting DSCP to cs0 for specific traffic
     # This chain sets the meta mark bit 64, so these changes ARE tracked in conntrack
     chain mark_cs0 {
         ip dscp set cs0
-        meta mark set meta mark or 64
-        return
         ip6 dscp set cs0
         meta mark set meta mark or 64
     }
     chain mark_cs1 {
         ip dscp set cs1
-        meta mark set meta mark or 64
-        return
         ip6 dscp set cs1
         meta mark set meta mark or 64
     }
     chain mark_af42 {
         ip dscp set af42
-        meta mark set meta mark or 64
-        return
         ip6 dscp set af42
         meta mark set meta mark or 64
     }
