@@ -577,6 +577,23 @@ This example shows:
 
 Note the use of `ct reply proto-src` to correctly identify return traffic.
 
+#### Protocol-Specific Rate Limiting
+
+To target bandwidth limits specifically to certain protocols (like UDP), you can combine protocol specification with rate limiting:
+
+```
+chain forward {
+    type filter hook forward priority 0; policy accept;
+    
+    # Limit UDP traffic to port 3074 to 1 MB/s (8 Mbit/s)
+    meta l4proto udp ct original proto-dst 3074 limit rate over 1 mbytes/second counter drop
+    
+    # Limit UDP traffic from port 3074 to 1 MB/s (8 Mbit/s)
+    meta l4proto udp ct original proto-src 3074 limit rate over 1 mbytes/second counter drop
+}
+```
+This approach specifically targets UDP traffic to/from port 3074 (commonly used for Xbox gaming), ensuring other protocols remain unaffected.
+
 ## Command Line Interface
 QoSmate can be controlled and configured via the command line. The basic syntax is:
 ```
