@@ -548,16 +548,16 @@ fi
 # Check if REALTIME4 and REALTIME6 are set
 if [ -n "$REALTIME4" ]; then
     realtime4_rules="\
-meta l4proto udp ip daddr \$realtime4 ip dscp set cs5 meta mark set meta mark or 64 counter
-        meta l4proto udp ip saddr \$realtime4 ip dscp set cs5 meta mark set meta mark or 64 counter"
+meta l4proto udp ip daddr \$realtime4 ip dscp set cs5 counter
+        meta l4proto udp ip saddr \$realtime4 ip dscp set cs5 counter"
 else
     realtime4_rules="# REALTIME4 rules disabled, address not defined."
 fi
 
 if [ -n "$REALTIME6" ]; then
     realtime6_rules="\
-meta l4proto udp ip6 daddr \$realtime6 ip6 dscp set cs5 meta mark set meta mark or 64 counter
-        meta l4proto udp ip6 saddr \$realtime6 ip6 dscp set cs5 meta mark set meta mark or 64 counter"
+meta l4proto udp ip6 daddr \$realtime6 ip6 dscp set cs5 counter
+        meta l4proto udp ip6 saddr \$realtime6 ip6 dscp set cs5 counter"
 else
     realtime6_rules="# REALTIME6 rules disabled, address not defined."
 fi
@@ -565,16 +565,16 @@ fi
 # Check if LOWPRIOLAN4 and LOWPRIOLAN6 are set
 if [ -n "$LOWPRIOLAN4" ]; then
     lowpriolan4_rules="\
-meta l4proto udp ip daddr \$lowpriolan4 ip dscp set cs0 meta mark set meta mark or 64 counter
-        meta l4proto udp ip saddr \$lowpriolan4 ip dscp set cs0 meta mark set meta mark or 64 counter"
+meta l4proto udp ip daddr \$lowpriolan4 ip dscp set cs0 counter
+        meta l4proto udp ip saddr \$lowpriolan4 ip dscp set cs0 counter"
 else
     lowpriolan4_rules="# LOWPRIOLAN4 rules disabled, address not defined."
 fi
 
 if [ -n "$LOWPRIOLAN6" ]; then
     lowpriolan6_rules="\
-meta l4proto udp ip6 daddr \$lowpriolan6 ip6 dscp set cs0 meta mark set meta mark or 64 counter
-        meta l4proto udp ip6 saddr \$lowpriolan6 ip6 dscp set cs0 meta mark set meta mark or 64 counter"
+meta l4proto udp ip6 daddr \$lowpriolan6 ip6 dscp set cs0 counter
+        meta l4proto udp ip6 saddr \$lowpriolan6 ip6 dscp set cs0 counter"
 else
     lowpriolan6_rules="# LOWPRIOLAN6 rules disabled, address not defined."
 fi
@@ -582,8 +582,8 @@ fi
 # Check if UDP rate limiting should be applied
 if [ "$UDP_RATE_LIMIT_ENABLED" -eq 1 ]; then
     udp_rate_limit_rules="\
-meta l4proto udp ip dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip dscp set cs0 meta mark set meta mark or 64 counter
-        meta l4proto udp ip6 dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip6 dscp set cs0 meta mark set meta mark or 64 counter"
+meta l4proto udp ip dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip dscp set cs0 counter
+        meta l4proto udp ip6 dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip6 dscp set cs0 counter"
 else
     udp_rate_limit_rules="# UDP rate limiting is disabled."
 fi
@@ -591,8 +591,8 @@ fi
 # Check if TCP upgrade for slow connections should be applied
 if [ "$TCP_UPGRADE_ENABLED" -eq 1 ]; then
     tcp_upgrade_rules="
-meta nfproto ipv4 meta l4proto tcp ip dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets } ip dscp set af42 meta mark set meta mark or 64 counter
-        meta nfproto ipv6 meta l4proto tcp ip6 dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets} ip6 dscp set af42 meta mark set meta mark or 64 counter"
+meta l4proto tcp ip dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets } ip dscp set af42 counter
+        meta l4proto tcp ip6 dscp != cs1 add @slowtcp {ct id . ct direction limit rate 150/second burst 150 packets} ip6 dscp set af42 counter"
 else
     tcp_upgrade_rules="# TCP upgrade for slow connections is disabled"
 fi
@@ -711,42 +711,25 @@ ${SETS}
     }
 
     chain mark_500ms {
-        ip dscp < cs4 ip dscp != cs1 ip dscp set cs0 meta mark set meta mark or 64 counter return
-        ip6 dscp < cs4 ip6 dscp != cs1 ip6 dscp set cs0 meta mark set meta mark or 64 counter
+        ip dscp < cs4 ip dscp != cs1 ip dscp set cs0 counter
+        ip6 dscp < cs4 ip6 dscp != cs1 ip6 dscp set cs0 counter
     }
     chain mark_10s {
-        ip dscp < cs4 ip dscp set cs1 meta mark set meta mark or 64 counter return
-        ip6 dscp < cs4 ip6 dscp set cs1 meta mark set meta mark or 64 counter
+        ip dscp < cs4 ip dscp set cs1 counter
+        ip6 dscp < cs4 ip6 dscp set cs1 counter
     }
 
-    # Special chain for washing DSCP values without tracking in conntrack
-    # IMPORTANT: This chain is used for general DSCP washing and intentionally 
-    # does NOT set the meta mark bit 64, which means packets processed by this chain 
-    # will NOT be tracked in conntrack. This is different from mark_cs0 chain below,
-    # which sets the meta mark bit and IS tracked in conntrack.
-    # Use this chain for general washing to avoid cluttering conntrack with
-    # irrelevant DSCP values that aren't explicitly set by QoSmate rules.
-    chain wash_cs0 {
-        ip dscp set cs0
-        ip6 dscp set cs0
-    }
-
-    # Chain for explicitly setting DSCP to cs0 for specific traffic
-    # This chain sets the meta mark bit 64, so these changes ARE tracked in conntrack
     chain mark_cs0 {
         ip dscp set cs0
         ip6 dscp set cs0
-        meta mark set meta mark or 64
     }
     chain mark_cs1 {
         ip dscp set cs1
         ip6 dscp set cs1
-        meta mark set meta mark or 64
     }
     chain mark_af42 {
         ip dscp set af42
         ip6 dscp set af42
-        meta mark set meta mark or 64
     }
 
     chain dscptag {
@@ -755,7 +738,7 @@ ${SETS}
         iif "lo" accept    
         $(if { [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; } && [ "$WASHDSCPDOWN" -eq 1 ]; then
             echo "# wash all the DSCP on ingress ... "
-            echo "        counter jump wash_cs0"
+            echo "        counter jump mark_cs0"
           fi
         )
 
@@ -794,13 +777,13 @@ ${DYNAMIC_RULES}
         meta priority set ip dscp map @priomap counter
         meta priority set ip6 dscp map @priomap counter
 
-        # Store DSCP in conntrack for restoration on ingress only if modified by QoSmate
-        meta nfproto ipv4 ct id != 0 meta mark & 64 != 0 ct mark set ip dscp or 128 counter
-        meta nfproto ipv6 ct id != 0 meta mark & 64 != 0 ct mark set ip6 dscp or 128 counter
+        # Store DSCP in conntrack for restoration on ingress
+        ct mark set ip dscp or 128 counter
+        ct mark set ip6 dscp or 128 counter
 
         $(if { [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; } && [ "$WASHDSCPUP" -eq 1 ]; then
             echo "# wash all DSCP on egress ... "
-            echo "meta oifname \$wan jump wash_cs0"
+            echo "meta oifname \$wan jump mark_cs0"
           fi
         )
     }
