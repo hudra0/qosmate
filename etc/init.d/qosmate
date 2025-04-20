@@ -280,13 +280,13 @@ get_files_list() {
 # 1 - BACKEND|FRONTEND
 # 2 - types: any combination (space-separated) of 'GEN', 'EXTRA', 'JS', 'EXEC'
 print_file_list() {
-	local me=print_file_list origin="$1" file_types="$2" file_type files
+	local me=print_file_list component="$1" file_types="$2" file_type files
 
 	[ -n "$1" ] && [ -n "$2" ] || { error_out "$me: missing args."; return 1; }
 
-	case "$origin" in
+	case "$component" in
 		BACKEND|FRONTEND) ;;
-		*) error_out "$me: invalid origin '$origin'."; return 1
+		*) error_out "$me: invalid component '$component'."; return 1
 	esac
 
 	for file_type in ${file_types}; do
@@ -294,9 +294,10 @@ print_file_list() {
 			GEN|EXTRA|JS|EXEC) ;;
 			*) error_out "$me: invalid type '$file_type'"; return 1
 		esac
-		eval "printf '%s ' \"\${QOSMATE_${file_type}_FILES_${origin}}\""
+		eval "printf '%s ' \"\${QOSMATE_${file_type}_FILES_${component}}\""
 	done
 	printf '\n'
+	:
 }
 
 # When updating, old version of the script should call post_update_[X] functions from the new version
@@ -519,15 +520,15 @@ update() {
 						{ upd_failed; return 1; }
 				fi
 
-				new_file_list="$(/bin/sh ${dist_dir}/${QOSMATE_SERVICE_PATH} print_file_list "GEN JS EXTRA")" &&
+				new_file_list="$(/bin/sh ${dist_dir}${QOSMATE_SERVICE_PATH} print_file_list "$component" "GEN JS EXTRA")" &&
 					[ -n "$new_file_list" ] &&
-				exec_files="$(/bin/sh ${dist_dir}/${QOSMATE_SERVICE_PATH} print_file_list "EXEC")" && [ -n "$new_file_list" ] ||
-					{
-						error_out "Failed to get file list from the fetched QoSmate version." \
-							"NOTE: Older qosmate versions may not support printing the file list."
-						upd_failed
-						return 1
-					}
+				exec_files="$(/bin/sh ${dist_dir}${QOSMATE_SERVICE_PATH} print_file_list "$component" "EXEC")" &&
+					[ -n "$exec_files" ] || {
+							error_out "Failed to get file list from the fetched QoSmate version." \
+								"NOTE: Older qosmate versions may not support printing the file list."
+							upd_failed
+							return 1
+						}
 				write_str_to_file "$new_file_list" "${dist_dir}/new_file_list" &&
 				write_str_to_file "$exec_files" "${dist_dir}/exec_files" ||
 					{ upd_failed; return 1; }
