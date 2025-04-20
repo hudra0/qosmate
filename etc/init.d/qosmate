@@ -1510,13 +1510,11 @@ pkg_manager="$(detect_package_manager)" # global variable
 
 # if called directrly via /bin/sh with one of the keywords, set $action to the keyword
 case "$1" in
-	update|post_update_1|post_update_2) action=update; shift
+	update|print_file_list|post_update_1|post_update_2) action="$1"; shift
 esac
 
 case "$action" in
-	update) update "$@"; exit $? ;;
-	post_update_1) post_update_1 "$@"; exit $? ;;
-	post_update_2) post_update_2 "$@"; exit $? ;;
+	update|print_file_list|post_update_1|post_update_2) "$action" "$@"; exit $? ;;
 esac
 
 :
