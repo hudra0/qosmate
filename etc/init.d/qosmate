@@ -9,7 +9,7 @@ USE_PROCD=1
 VERSION="dev"
 UPD_CHANNEL="release"
 
-EXTRA_COMMANDS="check_version update auto_setup expand_config auto_setup_noninteractive validate_custom_rules health_check sync_timestamps"
+EXTRA_COMMANDS="check_version update auto_setup expand_config auto_setup_noninteractive validate_custom_rules health_check"
 EXTRA_HELP="
         check_version              Check for updates
         update                     Update qosmate
@@ -17,8 +17,7 @@ EXTRA_HELP="
         expand_config              Expand the configuration with all possible options
         auto_setup_noninteractive  Automatically configure qosmate with no interaction
         validate_custom_rules      Validate custom rules
-        health_check               Check if QoSmate is properly configured and running
-        sync_timestamps            If you manually edited some files, use this command to silence the warning"
+        health_check               Check if QoSmate is properly configured and running"
 
 REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake kmod-sched-red luci-lib-jsonc lua jq"
 
@@ -42,7 +41,6 @@ QOSMATE_UPD_DIR=/var/run/qosmate-update
 
 
 ### Utility vars
-_DELIM_="$(printf '\35')"
 _NL_='
 '
 DEFAULT_IFS=" 	${_NL_}"
@@ -51,25 +49,26 @@ IFS="$DEFAULT_IFS"
 
 ### Components
 QOSMATE_COMPONENTS="BACKEND FRONTEND"
-
+QOSMATE_FILES_REG_PATH_BACKEND=/etc/qosmate.d/backend_reg.md5
+QOSMATE_FILES_REG_PATH_FRONTEND=/etc/qosmate.d/frontend_reg.md5
 
 ### Backend files
 QOSMATE_SERVICE_PATH=/etc/init.d/qosmate
 
-# stores the version, update channel, and sets the reference timestamp
+# stores the version and update channel
 QOSMATE_MAIN_FILE_BACKEND=$QOSMATE_SERVICE_PATH
 
 QOSMATE_FILE_TYPES_BACKEND="GEN EXTRA" # change the value if adding more types
-QOSMATE_GEN_FILES_BACKEND=" \
-	$QOSMATE_SERVICE_PATH \
-	/etc/qosmate.sh \
-	/usr/lib/tc/experimental.dist \
-	/usr/lib/tc/normal.dist \
-	/usr/lib/tc/normmix20-64.dist \
-	/usr/lib/tc/pareto.dist \
+QOSMATE_GEN_FILES_BACKEND="
+	$QOSMATE_SERVICE_PATH
+	/etc/qosmate.sh
+	/usr/lib/tc/experimental.dist
+	/usr/lib/tc/normal.dist
+	/usr/lib/tc/normmix20-64.dist
+	/usr/lib/tc/pareto.dist
 	/usr/lib/tc/paretonormal.dist"
-QOSMATE_EXEC_FILES_BACKEND=" \
-	$QOSMATE_SERVICE_PATH \
+QOSMATE_EXEC_FILES_BACKEND="
+	$QOSMATE_SERVICE_PATH
 	/etc/qosmate.sh"
 QOSMATE_EXTRA_FILES_BACKEND="" # might be useful in the future?
 
@@ -77,35 +76,35 @@ QOSMATE_EXTRA_FILES_BACKEND="" # might be useful in the future?
 ### Frontend files
 QOSMATE_FRONTEND_DIR_JS=/www/luci-static/resources/view/qosmate
 
-# stores the version, update channel, and sets the reference timestamp
+# stores the version and update channel
 QOSMATE_MAIN_FILE_FRONTEND="${QOSMATE_FRONTEND_DIR_JS}/settings.js" 
 
 QOSMATE_FILE_TYPES_FRONTEND="GEN EXTRA JS" # change the value if adding more types
-QOSMATE_GEN_FILES_FRONTEND=" \
-	/usr/share/luci/menu.d/luci-app-qosmate.json \
-	/usr/share/rpcd/acl.d/luci-app-qosmate.json \
-	/usr/libexec/rpcd/luci.qosmate \
+QOSMATE_GEN_FILES_FRONTEND="
+	/usr/share/luci/menu.d/luci-app-qosmate.json
+	/usr/share/rpcd/acl.d/luci-app-qosmate.json
+	/usr/libexec/rpcd/luci.qosmate
 	/usr/libexec/rpcd/luci.qosmate_stats"
 QOSMATE_EXTRA_FILES_FRONTEND="" # might be useful in the future?
 
-QOSMATE_JS_FILENAMES=" \
-	settings.js \
-	hfsc.js \
-	cake.js \
-	advanced.js \
-	rules.js \
-	connections.js \
-	custom_rules.js \
-	ipsets.js \
+QOSMATE_JS_FILENAMES="
+	settings.js
+	hfsc.js
+	cake.js
+	advanced.js
+	rules.js
+	connections.js
+	custom_rules.js
+	ipsets.js
 	statistics.js"
 # generate js file list with paths
 QOSMATE_JS_FILES_FRONTEND=
 for js_file in ${QOSMATE_JS_FILENAMES}; do
-	QOSMATE_JS_FILES_FRONTEND="${QOSMATE_JS_FILES_FRONTEND}${QOSMATE_FRONTEND_DIR_JS}/${js_file} "
+	QOSMATE_JS_FILES_FRONTEND="${QOSMATE_JS_FILES_FRONTEND}${QOSMATE_FRONTEND_DIR_JS}/${js_file}${_NL_}"
 done
 
-QOSMATE_EXEC_FILES_FRONTEND=" \
-	/usr/libexec/rpcd/luci.qosmate \
+QOSMATE_EXEC_FILES_FRONTEND="
+	/usr/libexec/rpcd/luci.qosmate
 	/usr/libexec/rpcd/luci.qosmate_stats"
 
 
@@ -121,7 +120,7 @@ write_str_to_file() {
 # 0 - (optional) '-p'
 # 1 - path
 try_mkdir() {
-	local p=
+	local IFS="$DEFAULT_IFS" p=
 	[ "$1" = '-p' ] && { p='-p'; shift; }
 	[ -d "$1" ] && return 0
 	mkdir ${p} "$1" || { error_out "Failed to create directory '$1'."; return 1; }
@@ -166,69 +165,6 @@ are_var_names_safe() {
 	:
 }
 
-# 1 - path to file
-get_file_timestamp() {
-	[ -f "$1" ] || { error_out "get_file_timestamp: file '$1' not found."; return 1; }
-	ls --full-time "$1" |
-	awk '
-		BEGIN{rv=1}
-		match($0,/[0-9]{4}-[0-9]{2}-[0-9]{2}[ \t]+[0-9]{2}:[0-9]{2}:[0-9]{2}/) {
-			print substr($0,RSTART,RLENGTH)
-			rv=0
-			exit
-		}
-		END{exit rv}
-	' || {
-			error_out "" "Failed to get timestamp of file '$1'."
-			return 1
-		}
-	:
-}
-
-# 1 - component: <BACKEND|FRONTEND>
-# 2 - paths to files
-# Error codes:
-# 1 - general error
-# 2 - missing files
-# 3 - non-match detected or fail to get timestamp
-# otherwise return 0
-verify_timestamps() {
-	local file component="$1" no_match_files='' main_file_path me=verify_timestamps
-	[ -n "$1" ] && [ -n "$2" ] || { error_out "$me: missing args."; return 1; }
-
-	for file in $2; do
-		[ -f "$file" ] || { error_out "$me: file '$file' is missing."; return 1; }
-	done
-
-	eval "main_file_path=\"\${QOSMATE_MAIN_FILE_${component}}\""
-	main_timestamp="$(get_file_timestamp "$main_file_path")" || return 1
-
-	no_match_files="$(
-		ls --full-time $2 |
-		awk -v R="$main_timestamp" '
-			BEGIN{rv=0}
-			{
-				if ($0~/^[-rwx]{10}[ \t]/)
-				{
-					if ( match($0,/[0-9]{4}-[0-9]{2}-[0-9]{2}[ \t]+[0-9]{2}:[0-9]{2}:[0-9]{2}/) ) {
-							t=substr($0,RSTART,RLENGTH)
-							if (R==t) {next}
-							else {no_match=no_match $NF " "; rv=1}
-					}
-					else {no_match=no_match $NF " "; rv=1}
-				}
-				else {next}
-			}
-			END{if (no_match) {print no_match}; exit rv}
-		'
-	)" || {
-		log_msg -warn "" "Timestamp of files '$no_match_files' doesn't match timestamp of the main $component file '$main_file_path'." \
-			"Warning: Possible QoSmate installation integrity problem." \
-			"If you manually edited the file(s), run 'service qosmate sync_timestamps $component' to silence the warning." ""
-		return 3
-	}
-}
-
 ### Update-related functions
 
 # 1 - component: <BACKEND|FRONTEND>
@@ -236,52 +172,34 @@ verify_timestamps() {
 # 0 - OK
 # 1 - general error
 # 2 - missing files
-# 3 - non-matching timestamps
+# 3 - non-matching md5sums
 check_files_integrity() {
-	local file files file_types component main_timestamp cf_rv=0 component="$1"
+	local reg_file file files file_types component component="$1"
 
 	files=
-	eval "file_types=\"\${QOSMATE_FILE_TYPES_${component}}\""
+	eval "file_types=\"\${QOSMATE_FILE_TYPES_${component}}\"
+		reg_file=\"\${QOSMATE_FILES_REG_PATH_${component}}\""
 
-	get_file_list files "$component" ALL && [ -n "$files" ] ||
+	files="$(print_file_list "$component" ALL)" && [ -n "$files" ] ||
 		{ error_out "Failed to get file list for component '$component'."; return 1; }
 	
-	for file in $files; do
+	local IFS="$_NL_"
+	for file in ${reg_file}${_NL_}${files}; do
 		[ -f "$file" ] || { error_out "Missing file: '$file'."; return 2; }
 	done
 
-	verify_timestamps "$component" "$files" ||
-	case $? in
-		2) return 2 ;;
-		3) cf_rv=3 ;;
-		*) return 1
-	esac
-	return $cf_rv
-}
-
-# When updating, old version of the script should call this function from the new version via
-#   'sh <qosmate_init_preinst_path> print_file_list <BACKEND|FRONTEND> <ALL|"[types]"">'
-# 1 - BACKEND|FRONTEND
-# 2 - types: 'ALL' (doesn't print executable files) or any combination (space-separated) of 'GEN', 'EXTRA', 'JS', 'EXEC'
-print_file_list() {
-	[ -n "$1" ] && [ -n "$2" ] || { error_out "print_file_list: missing args."; return 1; }
-	local files='' component="$1"
-	shift
-	get_file_list files "$component" "$*" || return 1
-	printf '%s\n' "$files"
+	IFS="$DEFAULT_IFS"
+	md5sum -c "$reg_file" &>/dev/null || return 3
 	:
 }
 
-# 1 - var name for output
-# 2 - BACKEND|FRONTEND
-# 3 - types: 'ALL' (doesn't print executable files) or any combination (space-separated) of 'GEN', 'EXTRA', 'JS', 'EXEC'
-get_file_list() {
-	local me=get_file_list gf_out_var="$1" component="$2" file_types="$3" file_type gf_files=''
+# 1 - component: BACKEND|FRONTEND
+# 2 - types: 'ALL' (doesn't print executable files) or any combination (space-separated) of 'GEN', 'EXTRA', 'JS', 'EXEC'
+print_file_list() {
+	local me=print_file_list file_type files='' \
+		component="$1" file_types="$2"
 
-	[ -n "$1" ] && [ -n "$2" ] && [ -n "$3" ] || { error_out "$me: missing args."; return 1; }
-	are_var_names_safe "$1" || return 1
-
-	eval "$gf_out_var="
+	[ -n "$1" ] && [ -n "$2" ] || { error_out "$me: missing args."; return 1; }
 
 	case "$component" in
 		BACKEND|FRONTEND) ;;
@@ -295,15 +213,13 @@ get_file_list() {
 	for file_type in ${file_types}; do
 		case "$file_type" in
 			GEN|EXTRA|JS|EXEC)
-				eval "gf_files=\"${gf_files}\${QOSMATE_${file_type}_FILES_${component}} \"" ;;
+				eval "files=\"${files}\${QOSMATE_${file_type}_FILES_${component}}${_NL_}\"" ;;
 			*) error_out "$me: invalid type '$file_type'"; return 1
 		esac
 	done
 
-	# remove extra whitespaces, tabs, newlines
-	local IFS="$DEFAULT_IFS"
-	set -- $gf_files
-	eval "$gf_out_var"='$*'
+	# remove extra newlines, leading and trailing whitespaces and tabs
+	printf '%s\n' "$files" | sed "s/^\s*//;s/\s*$//;/^$/d"
 	:
 }
 
@@ -361,7 +277,8 @@ fetch_qosmate_component() {
 	rm -f "$ucl_err_file"
 
 	[ "$fetch_rv" = 0 ] && {
-		mv "${extract_dir:-?}"/* "${upd_dir:-?}/" || { rm -rf "${extract_dir:-?}"; error_out "Failed to move files to dist dir."; return 1; }
+		mv "${extract_dir:-?}"/* "${upd_dir:-?}/" ||
+			{ rm -rf "${extract_dir:-?}"; error_out "Failed to move files to dist dir."; return 1; }
 	}
 	rm -rf "${extract_dir:-?}"
 
@@ -466,7 +383,26 @@ update() {
 
 	unexp_arg() { upd_failed "update: unexpected argument '$1'."; }
 
-	local file origin new_file_list exec_files sim_path='' version='' ver_str_arg='' def_ver_str='' \
+	# frontend path fixups
+	# 1 - var name to output fixed up path
+	# 2 - destination file path
+	fixup_frontend_path() {
+		are_var_names_safe "$1" || return 1
+		eval "$1="
+		local fixup_preinst_dir fixup_filename fixup_prinst_dir fixup_preinst_path
+		case "$2" in
+			/usr/*) fixup_preinst_path="/root${2}" ;;
+			/www/*)
+				fixup_preinst_path="/htdocs${2#/www}"
+				fixup_filename="${fixup_preinst_path##*/}"
+				fixup_preinst_dir="${fixup_preinst_path%"$fixup_filename"}"
+				fixup_preinst_path="${fixup_preinst_dir%"qosmate/"}${fixup_filename}" ;;
+			*) fixup_preinst_path="${file}"
+		esac
+		eval "$1"='$fixup_preinst_path'
+	}
+
+	local file fixed_path origin new_file_list exec_files sim_path='' version='' ver_str_arg='' def_ver_str='' \
 		extract_dir='' norestart='' dist_dir='' ref='' tarball_url='' file_list_query_path \
 		backend_upd_req='' multi_upd_req='' upd_component='' upd_components='' \
 		req_upd_channel upd_channel='' def_upd_channel=''
@@ -599,7 +535,18 @@ update() {
 					return 1
 				}
 
-				exec_files="$(/bin/sh "$file_list_query_path" print_file_list "$component" "EXEC")" &&
+				# fix frontend paths
+				if [ "$component" = FRONTEND ]; then
+					local IFS="$_NL_"
+					for file in $new_file_list; do
+						fixup_frontend_path fixed_path "${file}" &&
+						try_mkdir -p "${dist_dir}${file%/*}" &&
+						mv "$dist_dir$fixed_path" "$dist_dir$file" || { upd_failed; return 1; }
+					done
+					IFS="$DEFAULT_IFS"
+				fi
+
+				exec_files="$(/bin/sh "$file_list_query_path" print_file_list "$component" EXEC)" &&
 				write_str_to_file "$exec_files" "${dist_dir}/exec_files" || { upd_failed; return 1; }
 				eval "ref_${component}"='$ref'
 				eval "upd_channel_${component}"='$upd_channel'
@@ -638,27 +585,7 @@ install_qosmate_files() {
 		error_out "install_qosmate_files: Failed to install new $component files."
 	}
 
-	# frontend path fixups
-	# 1 - var name to output fixed up path
-	# 2 - dist dir
-	# 3 - destination file path
-	fixup_frontend_path() {
-		are_var_names_safe "$1" || return 1
-		eval "$1="
-		local fixup_preinst_dir fixup_filename fixup_prinst_dir fixup_preinst_path
-		case "$3" in
-			/usr/*) fixup_preinst_path="${2}/root${3}" ;;
-			/www/*)
-				fixup_preinst_path="${2}/htdocs${3#/www}"
-				fixup_filename="${fixup_preinst_path##*/}"
-				fixup_preinst_dir="${fixup_preinst_path%"$fixup_filename"}"
-				fixup_preinst_path="${fixup_preinst_dir%"qosmate/"}${fixup_filename}" ;;
-			*) fixup_preinst_path="${2}${file}"
-		esac
-		eval "$1"='$fixup_preinst_path'
-	}
-
-	local file prefix preinst_path curr_files='' new_file_list='' new_exec_files='' \
+	local file prefix preinst_path curr_files new_file_list new_file_list exec_files='' \
 		dist_dir main_file_path frontend_updated='' \
 		upper_dist_dir="$1" components="$2" version upd_channel
 
@@ -671,28 +598,20 @@ install_qosmate_files() {
 
 		dist_dir="${upper_dist_dir}/${component}"
 
-		# read new files list
-		read -r new_file_list < "${dist_dir}/new_file_list" && [ -n "$new_file_list" ] &&
-		read -r new_exec_files < "${dist_dir}/exec_files" ||
+		# read new file list
+		new_file_list="$(cat "${dist_dir}/new_file_list")" && [ -n "$new_file_list" ] &&
+		exec_files="$(cat "${dist_dir}/exec_files")" ||
 			{
 				rm -f "${dist_dir}/new_file_list" "${dist_dir}/exec_files"
 				inst_failed "Failed to read new file list."
 				return 1
 			}
-		rm -f "${dist_dir}/new_file_list" "${dist_dir}/exec_files"
+		rm -f "${dist_dir}/exec_files"
 
-		# replace newlines with whitespaces
-		new_file_list="${new_file_list//"$_NL_"/ }"
+		# get current file list
+		curr_files="$(print_file_list "$component" ALL)" || { inst_failed; return 1; }
 
-		# get current files list
-		get_file_list curr_files "$component" ALL || return 1
-
-		# get timestamp of the main file for component
 		eval "main_file_path=\"\${QOSMATE_MAIN_FILE_${component}}\""
-		local old_main_timestamp='' new_timestamp
-		[ -f "$main_file_path" ] && {
-			old_main_timestamp="$(get_file_timestamp "$main_file_path")" || { inst_failed; return 1; }
-		}
 
 		# version and update channel string replacement vars
 		local ver_ptrn_prefix ver_repl_str upd_ch_repl_str
@@ -713,12 +632,7 @@ install_qosmate_files() {
 			old_install_has_new_format=1
 
 		# set version and update channel in component's main file
-		local preinst_main_file_path
-		if [ "$component" = FRONTEND ]; then
-			fixup_frontend_path preinst_main_file_path "$dist_dir" "$main_file_path" || return 1
-		else
-			preinst_main_file_path="${dist_dir}/${main_file_path}"
-		fi
+		local preinst_main_file_path="${dist_dir}${main_file_path}"
 
 		sed -i "
 			/^\s*${ver_ptrn_prefix}VERSION\s*=/{s/.*/${ver_ptrn_prefix}${ver_repl_str}/;}
@@ -729,61 +643,97 @@ install_qosmate_files() {
 					grep -q "^${ver_ptrn_prefix}${upd_ch_repl_str}" "$preinst_main_file_path" ||
 						{ inst_failed "Failed to set version in file '$preinst_main_file_path'."; return 1; }
 
+		# Check for changed files
+		local curr_reg_file changed_files='' unchanged_files='' man_changed_files='' \
+			prefixed_curr_reg_file="${dist_dir}/prefixed_reg_${component}.md5"
+		eval "curr_reg_file=\"\${QOSMATE_FILES_REG_PATH_${component}}\""
+
+		if [ -s "$curr_reg_file" ]; then
+			# prefix file paths in the reg file for md5sum comparison
+			sed -E "/^$/d;s~([^ 	]+$)~${dist_dir}\\1~" "$curr_reg_file" > "$prefixed_curr_reg_file"
+			unchanged_files="$(md5sum -c "$prefixed_curr_reg_file" 2>/dev/null |
+				sed -n "/:\s*OK\s*$/{s/\s*:\s*OK\s*$//;s~^\s*${dist_dir}~~;p;}")"
+
+			# remove unchanged files from $new_file_list to reliably get a list of files to copy
+			changed_files="$(
+				printf '%s\n' "$unchanged_files" | awk '
+					NR==FNR {unch[$0];next}
+					{
+						if ($0=="" || $0 in unch) {next}
+						print $0
+					}
+				' - "${dist_dir}/new_file_list"
+			)"
+
+			# Detect manually modified files
+			man_changed_files="$(md5sum -c "$curr_reg_file" 2>/dev/null |
+				sed -n "/:\s*FAIL\s*$/{s/\s*:\s*FAIL\s*$//;p;}")"
+		else
+			changed_files="$(sed 's/^\s*[^ 	]*\s*//;/^$/d' "${dist_dir}/new_file_list")"
+		fi
+		rm -f "$prefixed_curr_reg_file"
+
+		local IFS="$_NL_"
+		for file in $unchanged_files; do
+			[ -n "$file" ] || continue
+			log_msg "File '$file' did not change - not updating."
+		done
+
+		local mod_files_bk_dir="/tmp/qosmate_old_modified_files"
+		for file in $man_changed_files; do
+			[ -n "$file" ] && [ -f "$file" ] || continue
+			log_msg -warn "File '$file' was manually modified - overwriting."
+			if try_mkdir -p "$mod_files_bk_dir" && cp "$file" "${mod_files_bk_dir}/${file##*/}"; then
+				log_msg "Saved a backup copy of manually modified file to ${mod_files_bk_dir}/${file##*/}"
+			else
+				log_msg -warn "Can not create a backup copy of manually modified file '$file' - overwriting anyway."
+			fi
+		done
+
+		# make md5sum registry of new files
+		# shellcheck disable=SC2046
+		set -- $(printf '%s\n' "$new_file_list" | sed "/^$/d;s~^\s*~${dist_dir}~")
+		md5sums="$(md5sum "$@")" && [ -n "$md5sums" ] || { inst_failed "failed to get md5sums for new files."; return 1; }
+		IFS="$DEFAULT_IFS"
+		printf '%s\n' "$md5sums" | sed "s~\s${dist_dir}~ ~" > "${dist_dir}/new_files.md5" || { inst_failed; return 1; }
+
 		# Copy changed files
-		new_timestamp="$(get_file_timestamp "$preinst_main_file_path")" || { inst_failed; return 1; }
-		local file_timestamp mod_files_bk_dir="/tmp/qosmate_old_modified_files"
-		for file in $new_file_list
+		for file in $changed_files
 		do
-			if [ "$component" = FRONTEND ]; then
-				fixup_frontend_path preinst_path "$dist_dir" "$file"
-			else
-				preinst_path="${dist_dir}${file}"
-			fi
+			IFS="$DEFAULT_IFS"
+			preinst_path="${dist_dir}${file}"
 
-			if [ -f "$file" ] &&
-				md5sum "$preinst_path" "$file" | awk 'BEGIN{rv=1} {if ($1 in seen) {rv=0; next}; seen[$1]} END{exit rv}'
-			then
-				log_msg "File '$file' did not change - not updating."
-			else
-				# Check for manually modified files and create a backup copy if needed
-				if [ -n "$old_install_has_new_format" ] && [ -n "$old_main_timestamp" ] &&
-					file_timestamp="$(get_file_timestamp "$file")" &&
-					[ "$file_timestamp" != "$old_main_timestamp" ] ; then
-						log_msg -warn "Timestamp of file '$file' doesn't match the main $component timestamp."
-						if try_mkdir -p "$mod_files_bk_dir" && cp "$file" "${mod_files_bk_dir}/${file##*/}"; then
-							log_msg "Saved a backup copy of manually modified file to ${mod_files_bk_dir}/${file##*/}"
-						else
-							log_msg -warn "Can not create a backup copy of manually modified file '$file' - overwriting anyway."
-						fi
-				fi
-
-				log_msg "Copying file '${file}'."
-				{ [ -d "${file%/*}" ] || try_mkdir -p "${file%/*}"; } &&
-				cp "$preinst_path" "$file" ||
-					{ inst_failed "Failed to copy file '$preinst_path' to '$file'."; return 1; }
-				[ "$component" = FRONTEND ] && frontend_updated=1
-			fi
-
-			# set new timestamp
-			touch -d "$new_timestamp" "$file" || { inst_failed "Failed to set timestamp for file '$file'."; return 1; }
+			log_msg "Copying file '${file}'."
+			try_mkdir -p "${file%/*}" && cp "$preinst_path" "$file" ||
+				{ inst_failed "Failed to copy file '$preinst_path' to '$file'."; return 1; }
+			[ "$component" = FRONTEND ] && frontend_updated=1
 		done
 
 		# delete obsolete files
+		IFS="$_NL_"
 		for file in ${curr_files}
 		do
 			[ -f "$file" ] || continue
 
-			# check for $file in $new_file_list, allowing whitespaces and tabs as list delimiter
+			# check for $file in $new_file_list, allowing newline as list delimiter
 			case "$new_file_list" in
-				"$file"|"$file"[\ \	]*|*[\ \	]"$file"|*[\ \	]"$file"[\ \	]*)
+				"$file"|"${file}${_NL_}"*|*"${_NL_}${file}"|*"${_NL_}${file}${_NL_}"*)
 					continue ;;
 				*)
-					log_msg "Deleting obsolete file $file."
+					log_msg "Deleting obsolete file '$file'."
 					rm -f "$file"
 			esac
 		done
 
-		chmod +x $new_exec_files || { inst_failed "Failed to make files '$new_exec_files' executable."; return 1; }
+		for file in $exec_files; do
+			[ -n "$file" ] || continue
+			chmod +x "$file" || { inst_failed "Failed to make file '$file' executable."; return 1; }
+		done
+		IFS="$DEFAULT_IFS"
+
+		# save the md5sum registry file
+		try_mkdir -p "${curr_reg_file%/*}" && mv "${dist_dir}/new_files.md5" "$curr_reg_file" ||
+			{ inst_failed "Failed to move file '${dist_dir}/new_files.md5' to '$curr_reg_file'."; return 1; }
 	done
 
     # Restart rpcd only if any frontend files were updated
@@ -793,25 +743,6 @@ install_qosmate_files() {
 
 
 ### Servce functions
-
-# sync all files timestamps to main component file's timestamp
-# 1 - component: <BACKEND|FRONTEND>
-sync_timestamps() {
-	local timestamp file files file_types main_file_path component="$1"
-	eval "main_file_path=\"\${QOSMATE_MAIN_FILE_${component}}\""
-
-	timestamp="$(get_file_timestamp "$main_file_path")" || return 1
-
-	files=
-	eval "file_types=\"\${QOSMATE_FILE_TYPES_${component}}\""
-	get_file_list files "$component" ALL && [ -n "$files" ] ||
-		{ error_out "Failed to get file list for component '$component'."; return 1; }
-	
-	for file in $files; do
-		[ -f "$file" ] || { error_out "Missing file: '$file'."; return 1; }
-		touch -d "$timestamp" "$file" || { error_out "Failed to set timestamp for file '$file'"; return 1; }
-	done
-}
 
 load_config() {
     config_load 'qosmate'
@@ -1067,7 +998,7 @@ start_service() {
 		1) return 1 ;;
 		2) # missing files
 			update -n -v "$UPD_CHANNEL" -c BACKEND || return 1 ;;
-		3) ;; # non-matching timestamps
+		3) ;; # non-matching md5sums
 	esac
     install_packages
     create_hotplug_script  # Create the hotplug script instead of downloading it
@@ -1625,7 +1556,7 @@ health_check() {
     local status=""
     local errors=0
 
-    # Check files existence and timestamps
+    # Check files existence and md5sums
 	for component in ${QOSMATE_COMPONENTS}; do
 		if check_files_integrity "$component"; then
 			status="${status}${component}_integrity:ok;"
