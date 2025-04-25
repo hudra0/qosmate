@@ -242,14 +242,11 @@ post_update_2() {
 # Fetches qosmate distribution for specified component
 # 1 - component (BACKEND|FRONTEND)
 # 2 - tarball url
-# 3 - github ref
 fetch_qosmate_component() {
 	local arg repo_name me=fetch_qosmate_component
-	for arg in 1 2 3; do
-		eval "[ -z \"\${$arg}\" ]" && { error_out "$me: missing argument $arg."; return 1; }
-	done
+	[ -n "$1" ] && [ -n "$2" ] || { error_out "$me: missing arguments."; return 1; }
 
-	local fetch_tarball_url="$2" component="$1" upd_dir extract_dir fetch_rv
+	local component="$1" fetch_tarball_url="$2" upd_dir extract_dir fetch_rv
 	local upd_dir="${QOSMATE_UPD_DIR}/${component}"
 	local tarball="${upd_dir}/remote_qosmate.tar.gz" ucl_err_file="${upd_dir}/ucl_err"
 
@@ -497,7 +494,7 @@ update() {
 							}
 							END{exit rv}" "$QOSMATE_MAIN_FILE_FRONTEND"
 					)" || {
-						log_msg -err "Failed to get current FRONTEND update channel. Defaulting to 'release'."
+						error_out "Failed to get current FRONTEND update channel. Defaulting to 'release'."
 						def_upd_channel=release
 					}
 				fi
@@ -517,7 +514,7 @@ update() {
 				else
 					get_gh_ref_data "$component" "$upd_channel" "$version" ref tarball_url || return 1
 					log_msg "" "Downloading $component, version '$ref' (update channel: '$upd_channel')."
-					fetch_qosmate_component "$component" "$tarball_url" "$ref" || { upd_failed; return 1; }
+					fetch_qosmate_component "$component" "$tarball_url" || { upd_failed; return 1; }
 				fi
 
 				if [ -n "$backend_upd_req" ]; then
@@ -801,11 +798,11 @@ check_pkg_manager() {
             return 0
             ;;
         conflict)
-            logger -s -t qosmate -p user.err "Multiple package managers detected (apk and opkg). Package management disabled."
+            error_out "Multiple package managers detected (apk and opkg). Package management disabled."
             return 1
             ;;
         *)
-            logger -s -t qosmate -p user.err "Error: No supported package manager found."
+            error_out "Error: No supported package manager found."
             return 1
             ;;
     esac
@@ -860,20 +857,17 @@ install_packages() {
         # Install missing packages
         for pkg in $REQUIRED_PACKAGES; do
             if ! check_package "$pkg"; then
-                echo "Installing $pkg..."
-                logger -t qosmate "Installing $pkg..."
+                log_msg "Installing $pkg..."
                 case "$pkg_manager" in
                     "apk")
                         apk add "$pkg" || {
-                            echo "Failed to install $pkg."
-                            logger -t qosmate "Failed to install $pkg."
+                            error_out "Failed to install $pkg."
                             return 1  # Abort if the installation fails
                         }
                         ;;
                     "opkg")
                         opkg install "$pkg" || {
-                            echo "Failed to install $pkg."
-                            logger -t qosmate "Failed to install $pkg."
+                            error_out "Failed to install $pkg."
                             return 1  # Abort if the installation fails
                         }
                         ;;
@@ -893,8 +887,7 @@ check_package_status() {
     done
     
     if [ -n "$missing_packages" ]; then
-        echo "Missing packages:$missing_packages"
-        logger -t qosmate "Missing packages:$missing_packages"
+        error_out "Missing packages:$missing_packages"
         return 1
     fi
     return 0
@@ -982,7 +975,7 @@ manage_custom_rules_file() {
     case "$action" in
         create)
             # Ensure the directory exists
-            [ ! -d "/etc/qosmate.d" ] && mkdir -p "/etc/qosmate.d"
+            try_mkdir -p "/etc/qosmate.d"
             
             # Create the file if it doesn't exist
             [ ! -f "/etc/qosmate.d/custom_rules.nft" ] && touch "/etc/qosmate.d/custom_rules.nft"
