@@ -666,7 +666,12 @@ install_qosmate_files() {
 
 			# Detect manually modified files
 			man_changed_files="$(md5sum -c "$curr_reg_file" 2>/dev/null |
-				sed -n "/:\s*FAIL\s*$/{s/\s*:\s*FAIL\s*$//;p;}")"
+				sed -n "/:\s*FAILED\s*$/{s/\s*:\s*FAILED\s*$//;p;}")"
+
+			# Add manually modified files to changed files
+			if [ -n "$man_changed_files" ]; then
+				changed_files="$(printf '%s\n' "${changed_files}${_NL_}${man_changed_files}" | sort -u | sed '/^$/d')"
+			fi
 		else
 			changed_files="$(sed 's/^\s*[^ 	]*\s*//;/^$/d' "${dist_dir}/new_file_list")"
 		fi
