@@ -894,6 +894,8 @@ check_package_status() {
 }
 
 create_hotplug_script() {
+    [ -s "/etc/hotplug.d/iface/13-qosmateHotplug" ] && { log_msg "Hotplug script already exists."; return 0; }
+	log_msg "Creating the hotplug script."
     cat > /etc/hotplug.d/iface/13-qosmateHotplug << 'EOF'
 #!/bin/sh
 
