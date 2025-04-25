@@ -240,7 +240,6 @@ post_update_2() {
 }
 
 # Fetches qosmate distribution for specified component
-# assigns path to extracted distribution directory to $1
 # 1 - component (BACKEND|FRONTEND)
 # 2 - tarball url
 # 3 - github ref
@@ -582,7 +581,7 @@ update() {
 install_qosmate_files() {
 	inst_failed() {
 		[ -n "$1" ] && error_out "$1"
-		error_out "install_qosmate_files: Failed to install new $component files."
+		error_out "Failed to install new $component files."
 	}
 
 	local file prefix preinst_path curr_files new_file_list new_file_list exec_files='' \
@@ -695,7 +694,6 @@ install_qosmate_files() {
 		set -- $(printf '%s\n' "$new_file_list" | sed "/^$/d;s~^\s*~${dist_dir}~")
 		md5sums="$(md5sum "$@")" && [ -n "$md5sums" ] || { inst_failed "failed to get md5sums for new files."; return 1; }
 		IFS="$DEFAULT_IFS"
-		printf '%s\n' "$md5sums" | sed "s~\s${dist_dir}~ ~" > "${dist_dir}/new_files.md5" || { inst_failed; return 1; }
 
 		# Copy changed files
 		for file in $changed_files
@@ -725,15 +723,16 @@ install_qosmate_files() {
 			esac
 		done
 
-		for file in $exec_files; do
-			[ -n "$file" ] || continue
-			chmod +x "$file" || { inst_failed "Failed to make file '$file' executable."; return 1; }
-		done
+		set -- $exec_files # relying on IFS=\n
+		chmod +x "$@" || { inst_failed "Failed to make files executable."; return 1; }
 		IFS="$DEFAULT_IFS"
 
-		# save the md5sum registry file
-		try_mkdir -p "${curr_reg_file%/*}" && mv "${dist_dir}/new_files.md5" "$curr_reg_file" ||
-			{ inst_failed "Failed to move file '${dist_dir}/new_files.md5' to '$curr_reg_file'."; return 1; }
+		# save the md5sum registry file if needed
+		if [ -n "$changed_files" ]; then
+			try_mkdir -p "${curr_reg_file%/*}" &&
+			printf '%s\n' "$md5sums" | sed "s~\s${dist_dir}~ ~" > "$curr_reg_file" ||
+				{ inst_failed "Failed to write to file '$curr_reg_file'."; return 1; }
+		fi
 	done
 
     # Restart rpcd only if any frontend files were updated
