@@ -691,16 +691,9 @@ install_qosmate_files() {
 			fi
 		done
 
-		# make md5sum registry of new files
-		# shellcheck disable=SC2046
-		set -- $(printf '%s\n' "$new_file_list" | sed "/^$/d;s~^\s*~${dist_dir}~")
-		md5sums="$(md5sum "$@")" && [ -n "$md5sums" ] || { inst_failed "failed to get md5sums for new files."; return 1; }
-		IFS="$DEFAULT_IFS"
-
 		# Copy changed files
 		for file in $changed_files
 		do
-			IFS="$DEFAULT_IFS"
 			preinst_path="${dist_dir}${file}"
 
 			log_msg "Copying file '${file}'."
@@ -710,7 +703,6 @@ install_qosmate_files() {
 		done
 
 		# delete obsolete files
-		IFS="$_NL_"
 		for file in ${curr_files}
 		do
 			[ -f "$file" ] || continue
@@ -725,16 +717,21 @@ install_qosmate_files() {
 			esac
 		done
 
+		# make files executable
 		set -- $exec_files # relying on IFS=\n
 		chmod +x "$@" || { inst_failed "Failed to make files executable."; return 1; }
-		IFS="$DEFAULT_IFS"
 
 		# save the md5sum registry file if needed
-		if [ -n "$changed_files" ]; then
+		if [ -n "$changed_files" ] || [ ! -s "$curr_reg_file" ]; then
+			# make md5sum registry of new files
+			# shellcheck disable=SC2046
+			set -- $(printf '%s\n' "$new_file_list" | sed "/^$/d;s~^\s*~${dist_dir}~") # relying on IFS=\n
+			md5sums="$(md5sum "$@")" && [ -n "$md5sums" ] &&
 			try_mkdir -p "${curr_reg_file%/*}" &&
 			printf '%s\n' "$md5sums" | sed "s~\s${dist_dir}~ ~" > "$curr_reg_file" ||
-				{ inst_failed "Failed to write to file '$curr_reg_file'."; return 1; }
+				{ inst_failed "Failed to register new files."; return 1; }
 		fi
+		IFS="$DEFAULT_IFS"
 	done
 
     # Restart rpcd only if any frontend files were updated
