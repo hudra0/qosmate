@@ -75,7 +75,7 @@ QOSMATE_EXTRA_FILES_BACKEND="" # might be useful in the future?
 
 ### Frontend files
 ### !!! When adding or removing frontend (or other) files which need path fixups,
-###       remember to update appropriate fixup files in the frontend
+###       remember to update appropriate fixup files
 
 QOSMATE_FRONTEND_DIR_JS=/www/luci-static/resources/view/qosmate
 
@@ -390,7 +390,7 @@ update() {
 
 		while IFS='' read -r fixup_line; do
 			case "$fixup_line" in
-				"#"*) continue ;;
+				"#"*) continue ;; # skip comments
 				*=*)
 					fetched_path="${fixup_line%%=*}"
 					fetched_path="${fetched_path%/}"
@@ -398,15 +398,18 @@ update() {
 					dest_path="${dest_path%/}"
 					[ -n "$fetched_path" ] && [ "$fetched_path" != "/" ] && [ -n "$dest_path" ] ||
 						{ error_out "$me: invalid line in fixup file: '$fixup_line'."; return 1; }
+					# warn about and skip non-existing files and directories
+					[ -e "${dist_dir:-???}${fetched_path:-???}" ] ||
+						{ log_msg -warn "$me: path '${dist_dir}${fetched_path}' does not exist."; continue; }
 					case "$fixup_type" in
 						dir)
 							try_mkdir -p "${dist_dir}${dest_path}" &&
-							mv "${dist_dir}${fetched_path}"/* "${dist_dir}${dest_path}/" || return 1 ;;
+							mv "${dist_dir:-???}${fetched_path:-???}"/* "${dist_dir:-???}${dest_path:-???}/" ;;
 						file)
 							try_mkdir -p "${dist_dir}${dest_path%/*}" &&
-							mv "${dist_dir}${fetched_path}" "${dist_dir}${dest_path}" || return 1 ;;
+							mv "${dist_dir:-???}${fetched_path:-???}" "${dist_dir}${dest_path}" ;;
 						*) error_out "fixup_paths: invalid fixup type '$fixup_type'."; return 1
-					esac
+					esac || { error_out "Failed to move '${dist_dir}${fetched_path}' to '${dist_dir}${dest_path}'."; return 1; }
 					;;
 				*) continue
 			esac
