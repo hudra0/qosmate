@@ -74,6 +74,9 @@ QOSMATE_EXTRA_FILES_BACKEND="" # might be useful in the future?
 
 
 ### Frontend files
+### !!! When adding or removing frontend (or other) files which need path fixups,
+###       remember to update appropriate fixup files in the frontend
+
 QOSMATE_FRONTEND_DIR_JS=/www/luci-static/resources/view/qosmate
 
 # stores the version and update channel
@@ -377,28 +380,43 @@ update() {
 		upd_failed "Update channel 'package' not implemented."
 	}
 
-	unexp_arg() { upd_failed "update: unexpected argument '$1'."; }
+	# 1 - fixup type: <file|dir>
+	# 2 - path to fixup file
+	# 3 - distribution dir
+	fixup_paths() {
+		local fixup_line fetched_path dest_path me=fixup_paths \
+			fixup_type="$1" fixup_file="$2" dist_dir="$3"
+		[ -n "$1" ] && [ -n "$2" ] && [ -n "$3" ] || { error_out "$me: missing args."; return 1; }
 
-	# frontend path fixups
-	# 1 - var name to output fixed up path
-	# 2 - destination file path
-	fixup_frontend_path() {
-		are_var_names_safe "$1" || return 1
-		eval "$1="
-		local fixup_preinst_dir fixup_filename fixup_prinst_dir fixup_preinst_path
-		case "$2" in
-			/usr/*) fixup_preinst_path="/root${2}" ;;
-			/www/*)
-				fixup_preinst_path="/htdocs${2#/www}"
-				fixup_filename="${fixup_preinst_path##*/}"
-				fixup_preinst_dir="${fixup_preinst_path%"$fixup_filename"}"
-				fixup_preinst_path="${fixup_preinst_dir%"qosmate/"}${fixup_filename}" ;;
-			*) fixup_preinst_path="${file}"
-		esac
-		eval "$1"='$fixup_preinst_path'
+		while IFS='' read -r fixup_line; do
+			case "$fixup_line" in
+				"#"*) continue ;;
+				*=*)
+					fetched_path="${fixup_line%%=*}"
+					fetched_path="${fetched_path%/}"
+					dest_path="${fixup_line#*=}"
+					dest_path="${dest_path%/}"
+					[ -n "$fetched_path" ] && [ "$fetched_path" != "/" ] && [ -n "$dest_path" ] ||
+						{ error_out "$me: invalid line in fixup file: '$fixup_line'."; return 1; }
+					case "$fixup_type" in
+						dir)
+							try_mkdir -p "${dist_dir}${dest_path}" &&
+							mv "${dist_dir}${fetched_path}"/* "${dist_dir}${dest_path}/" || return 1 ;;
+						file)
+							try_mkdir -p "${dist_dir}${dest_path%/*}" &&
+							mv "${dist_dir}${fetched_path}" "${dist_dir}${dest_path}" || return 1 ;;
+						*) error_out "fixup_paths: invalid fixup type '$fixup_type'."; return 1
+					esac
+					;;
+				*) continue
+			esac
+		done < "$fixup_file" || return 1
+		:
 	}
 
-	local file fixed_path origin new_file_list exec_files sim_path='' version='' ver_str_arg='' def_ver_str='' \
+	unexp_arg() { upd_failed "update: unexpected argument '$1'."; }
+
+	local file origin new_file_list exec_files sim_path='' version='' ver_str_arg='' def_ver_str='' \
 		extract_dir='' norestart='' dist_dir='' ref='' tarball_url='' file_list_query_path \
 		backend_upd_req='' multi_upd_req='' upd_component='' upd_components='' \
 		req_upd_channel upd_channel='' def_upd_channel=''
@@ -531,21 +549,22 @@ update() {
 					return 1
 				}
 
-				# fix frontend paths
-				if [ "$component" = FRONTEND ]; then
-					local IFS="$_NL_"
-					for file in $new_file_list; do
-						fixup_frontend_path fixed_path "${file}" &&
-						try_mkdir -p "${dist_dir}${file%/*}" &&
-						mv "$dist_dir$fixed_path" "$dist_dir$file" || { upd_failed; return 1; }
-					done
-					IFS="$DEFAULT_IFS"
-				fi
-
 				exec_files="$(/bin/sh "$file_list_query_path" print_file_list "$component" EXEC)" &&
 				write_str_to_file "$exec_files" "${dist_dir}/exec_files" || { upd_failed; return 1; }
 				eval "ref_${component}"='$ref'
 				eval "upd_channel_${component}"='$upd_channel'
+
+				# fix-up paths if needed
+				local dir_fixup_file="${dist_dir}/dir_fixups.txt"
+				local path_fixup_file="${dist_dir}/file_fixups.txt"
+
+				if [ -s "$dir_fixup_file" ]; then
+					fixup_paths "dir" "$dir_fixup_file" "$dist_dir" || { upd_failed "Failed to fix-up paths."; return 1; }
+				fi
+
+				if [ -s "$path_fixup_file" ]; then
+					fixup_paths "dir" "$path_fixup_file" "$dist_dir" || { upd_failed "Failed to fix-up paths."; return 1; }
+				fi
 		esac
 	done
 
