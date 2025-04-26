@@ -649,6 +649,7 @@ install_qosmate_files() {
 			sed -E "/^$/d;s~([^ 	]+$)~${dist_dir}\\1~" "$curr_reg_file" > "$prefixed_curr_reg_file"
 			unchanged_files="$(md5sum -c "$prefixed_curr_reg_file" 2>/dev/null |
 				sed -n "/:\s*OK\s*$/{s/\s*:\s*OK\s*$//;s~^\s*${dist_dir}~~;p;}")"
+			rm -f "$prefixed_curr_reg_file"
 
 			# remove unchanged files from $new_file_list to reliably get a list of files to copy
 			changed_files="$(
@@ -670,9 +671,8 @@ install_qosmate_files() {
 				changed_files="$(printf '%s\n' "${changed_files}${_NL_}${man_changed_files}" | sort -u | sed '/^$/d')"
 			fi
 		else
-			changed_files="$(sed 's/^\s*[^ 	]*\s*//;/^$/d' "${dist_dir}/new_file_list")"
+			changed_files="$new_file_list"
 		fi
-		rm -f "$prefixed_curr_reg_file"
 
 		local IFS="$_NL_"
 		for file in $unchanged_files; do
