@@ -408,9 +408,11 @@ update() {
 						file)
 							try_mkdir -p "${dist_dir}${dest_path%/*}" &&
 							mv "${dist_dir:-???}${fetched_path:-???}" "${dist_dir}${dest_path}" ;;
-						*) error_out "fixup_paths: invalid fixup type '$fixup_type'."; return 1
-					esac || { error_out "Failed to move '${dist_dir}${fetched_path}' to '${dist_dir}${dest_path}'."; return 1; }
-					;;
+						*) error_out "$me: invalid fixup type '$fixup_type'."; return 1
+					esac || {
+						error_out "Failed to move $fixup_type '${dist_dir}${fetched_path}' to '${dist_dir}${dest_path}'."
+						return 1
+					} ;;
 				*) continue
 			esac
 		done < "$fixup_file" || return 1
@@ -562,11 +564,11 @@ update() {
 				local path_fixup_file="${dist_dir}/file_fixups.txt"
 
 				if [ -s "$dir_fixup_file" ]; then
-					fixup_paths "dir" "$dir_fixup_file" "$dist_dir" || { upd_failed "Failed to fix-up paths."; return 1; }
+					fixup_paths "dir" "$dir_fixup_file" "$dist_dir" || { upd_failed "Failed to fix-up dir paths."; return 1; }
 				fi
 
 				if [ -s "$path_fixup_file" ]; then
-					fixup_paths "dir" "$path_fixup_file" "$dist_dir" || { upd_failed "Failed to fix-up paths."; return 1; }
+					fixup_paths "file" "$path_fixup_file" "$dist_dir" || { upd_failed "Failed to fix-up file paths."; return 1; }
 				fi
 		esac
 	done
@@ -1010,14 +1012,14 @@ manage_custom_rules_file() {
 }
 
 start_service() {
-	check_files_integrity BACKEND
-	case $? in
-		0) ;; # integrity OK
-		1) return 1 ;;
-		2) # missing files
-			update -n -v "$UPD_CHANNEL" -c BACKEND || return 1 ;;
-		3) ;; # non-matching md5sums
-	esac
+    check_files_integrity BACKEND
+    case $? in
+        0) ;; # integrity OK
+        1) return 1 ;;
+        2) # missing files
+            update -n -v "$UPD_CHANNEL" -c BACKEND || return 1 ;;
+        3) ;; # non-matching md5sums
+    esac
     install_packages
     create_hotplug_script  # Create the hotplug script instead of downloading it
     check_and_download_config || return 1
