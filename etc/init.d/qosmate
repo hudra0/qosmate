@@ -291,7 +291,7 @@ fetch_qosmate_component() {
 # Output via variables:
 #   $4 - github ref, $5 - tarball url
 get_gh_ref_data() {
-	local me=get_gh_ref_data ref_fetch_url jsonfilter_ptrn commit main_branch \
+	local me=get_gh_ref_data jsonfilter_ptrn commit branch branches='' main_branch grep_ptrn='' \
 		gh_ref='' gh_url_api ref_fetch_tmp_dir="/tmp/qosmate-gh" ref_fetch_rv=0 \
 		component="$1" gh_channel="$2" version="$3"
 
@@ -301,68 +301,70 @@ get_gh_ref_data() {
 	eval "$4='' $5='' gh_url_api=\"\${QOSMATE_GH_API_URL_${component}}\""
 
 	eval "main_branch=\"\${MAIN_BRANCH_${component}}\""
-
 	case "$gh_channel" in
 		release)
-			if [ -n "$version" ]; then
-				gh_ref="v${version}"
-			else
-				ref_fetch_url="${gh_url_api}/releases"
-				jsonfilter_ptrn='@[@.prerelease=false]' # ignore pre-releases
-			fi ;;
+			[ -n "$version" ] && grep_ptrn="^v${version#v}$" ;;
 		snapshot)
+			branches="$main_branch"
 			if [ -n "$version" ]; then
-				gh_ref="$version"
-			else
-				ref_fetch_url="${gh_url_api}/commits/${main_branch}"
-				jsonfilter_ptrn='@.sha' # latest commit is first on the list
+				grep_ptrn="^${version}$"
 			fi ;;
 		branch=*)
+			branches="${gh_channel#*=}"
 			if [ -n "$version" ]; then
-				gh_ref="$version"
-			else
-				ref_fetch_url="${gh_url_api}/commits/${gh_channel#*=}"
-				jsonfilter_ptrn='@.sha' # latest commit is first on the list
+				grep_ptrn="^${version}$"
 			fi ;;
 		commit=*)
+			branches="$(uclient-fetch "${gh_url_api}/branches" -O- | { jsonfilter -e '@[@]["name"]'; cat 1>/dev/null; })"
+			[ -n "$branches" ] || { error_out "Failed to get branches via GH API (url: '${gh_url_api}/branches')."; return 1; }
 			commit="${gh_channel#*=}"
-			gh_ref="${commit%"${commit#???????}"}" ;; # trim commit hash to 7 characters
+			grep_ptrn="^${commit}" ;;
 		*)
 			error_out "${me}: invalid update channel '$gh_channel'."
 			return 1
 	esac
 
-	if [ -n "$ref_fetch_url" ]
-	then
-		try_mkdir -p "$ref_fetch_tmp_dir" || return 1
-		# Get ref for release/snapshot
-		gh_ref="$(
-			uclient-fetch "$ref_fetch_url" -O- 2> "$ref_ucl_err_file" |
-			jsonfilter -e "$jsonfilter_ptrn" |
-			{
-				case "$gh_channel" in
-					snapshot|branch=*)
-						head -c7 # trim commit hash to 7 characters
-						;;
-					release)
-						# get latest tag for ${main_branch}
-						jsonfilter -a -e "@[@.target_commitish=\"${main_branch}\"].tag_name" | head -n1
-						;;
-				esac
-				cat 1>/dev/null
-			}
-		)"
-		if [ -f "$ref_ucl_err_file" ] && ! grep -q "Download completed" "$ref_ucl_err_file"; then
-			error_out "${me}: Failed to fetch GitHub ref.${_NL_}uclient-fetch log:${_NL_}$(cat "$ref_ucl_err_file")"
-			log_msg "ref fetch command: 'uclient-fetch \"$ref_fetch_url\" -O-'"
-			ref_fetch_rv=1
-		fi
-		rm -rf "${ref_fetch_tmp_dir:-?}"
-		[ "$ref_fetch_rv" = 0 ] || return 1
+	try_mkdir -p "$ref_fetch_tmp_dir" || return 1
+	# Get ref for release/snapshot
+	gh_ref="$(
+		case "$gh_channel" in
+			release)
+				uclient-fetch "${gh_url_api}/releases" -O- 2> "$ref_ucl_err_file" |
+				jsonfilter -e '@[@.prerelease=false]' |
+				jsonfilter -a -e "@[@.target_commitish=\"${main_branch}\"].tag_name" ;;
+			snapshot|branch=*|commit=*)
+				for branch in $branches; do
+					ref_fetch_url="${gh_url_api}/commits?sha=${branch}"
+					uclient-fetch "${ref_fetch_url}" -O- 2> "$ref_ucl_err_file" | {
+						jsonfilter -e '@[@.commit]["url"]' |
+						sed 's/.*\///' # only leave the commit hash
+						cat 1>/dev/null
+					}
+				done
+		esac |
+		{
+			if [ -n "$grep_ptrn" ]; then
+				grep "$grep_ptrn"
+			else
+				head -n1 # get latest version or commit
+			fi
+			cat 1>/dev/null
+		}
+	)"
+
+	if [ -z "$gh_ref" ] && [ -f "$ref_ucl_err_file" ] && ! grep -q "Download completed" "$ref_ucl_err_file"; then
+		error_out "${me}: Failed to fetch GitHub ref.${_NL_}uclient-fetch log:${_NL_}$(cat "$ref_ucl_err_file")"
+		ref_fetch_rv=1
 	fi
+	rm -rf "${ref_fetch_tmp_dir:-?}"
+	[ "$ref_fetch_rv" = 0 ] || return 1
 
 	# validate resulting ref
 	case "$gh_ref" in
+		*[^"$_NL_"]*"${_NL_}"*[^"${_NL_}"]*)
+			error_out "${me}: got multiple download URLs for version '$version'." \
+				"If using commit hash, please specify the complete commit hash string."
+			return 1 ;;
 		''|*[!a-zA-Z0-9._-]*)
 			error_out "${me}: failed to get GitHub ref for $gh_channel '$version'."
 			return 1
