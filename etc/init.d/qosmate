@@ -287,7 +287,7 @@ fetch_qosmate_component() {
 # Get GitHub ref and tarball url for specified component, update channel, branch and version
 # 1 - component (BACKEND|FRONTEND)
 # 2 - update channel: release|snapshot|branch=<github_branch>|commit=<commit_hash>
-# 3 - version (relevant to upd. channel release): <qosmate_version>
+# 3 - version (optional except for upd. channel 'release'): [qosmate_version|commit_hash]
 # Output via variables:
 #   $4 - github ref, $5 - tarball url
 get_gh_ref_data() {
@@ -311,11 +311,19 @@ get_gh_ref_data() {
 				jsonfilter_ptrn='@[@.prerelease=false]' # ignore pre-releases
 			fi ;;
 		snapshot)
+			if [ -n "$version" ]; then
+				gh_ref="$version"
+			else
 				ref_fetch_url="${gh_url_api}/commits/${main_branch}"
-				jsonfilter_ptrn='@.sha' ;; # latest commit is first on the list
+				jsonfilter_ptrn='@.sha' # latest commit is first on the list
+			fi ;;
 		branch=*)
+			if [ -n "$version" ]; then
+				gh_ref="$version"
+			else
 				ref_fetch_url="${gh_url_api}/commits/${gh_channel#*=}"
-				jsonfilter_ptrn='@.sha' ;; # latest commit is first on the list
+				jsonfilter_ptrn='@.sha' # latest commit is first on the list
+			fi ;;
 		commit=*)
 			commit="${gh_channel#*=}"
 			gh_ref="${commit%"${commit#???????}"}" ;; # trim commit hash to 7 characters
@@ -365,10 +373,13 @@ get_gh_ref_data() {
 	:
 }
 
-# optional: '-s <path>' to simulate update (intended for testing: service qosmate update -s <path_to_new_ver> -v <version>)
-# optional: '-c <frontend|backend>' to only update specified component
-# optional: -v [<version>|package[=<version>]|release|snapshot|branch=<branch>|commit=<commit_hash>]
-# optional: '-n' to skip restarting the service
+# Optional args:
+# -s <path> : simulate update (intended for testing: service qosmate update -s <path_to_new_ver> -v <version>)
+# -c <frontend|backend> : only update specified component
+# -v [<version>|package[=<version>]|release|snapshot|branch=<branch>|commit=<commit_hash>] : version string
+# -U <update_channel> : force this update channel (overrides the upd. channel derived from '-v' option)
+# -W <version> : force this version (overrides the version derived from '-v' option)
+# -n : to skip restarting the service
 update() {
 	upd_failed() {
 		rm -rf "${QOSMATE_UPD_DIR:-?}"
@@ -424,13 +435,15 @@ update() {
 	local file origin new_file_list exec_files sim_path='' version='' ver_str_arg='' def_ver_str='' \
 		extract_dir='' norestart='' dist_dir='' ref='' tarball_url='' file_list_query_path \
 		backend_upd_req='' multi_upd_req='' upd_component='' upd_components='' \
-		req_upd_channel upd_channel='' def_upd_channel=''
+		req_upd_channel upd_channel='' def_upd_channel='' force_upd_channel='' force_ver=''
 
-	while getopts ":s:v:c:n" opt; do
+	while getopts ":s:v:c:U:W:n" opt; do
 		case ${opt} in
 			c) upd_component=$OPTARG ;;
 			s) sim_path=$OPTARG ;;
 			v) ver_str_arg=$OPTARG ;;
+			U) force_upd_channel=$OPTARG ;;
+			W) force_ver=$OPTARG ;;
 			n) norestart=1 ;;
 			*) unexp_arg "$OPTARG"; return 1
 		esac
@@ -524,6 +537,9 @@ update() {
 		esac
 
 		upd_channel="${req_upd_channel:-"${def_upd_channel}"}"
+
+		upd_channel="${force_upd_channel:-"$upd_channel"}"
+		version="${force_ver:-"$version"}"
 
 		dist_dir="${QOSMATE_UPD_DIR}/${component}"
 		case "$upd_channel" in
@@ -1017,7 +1033,11 @@ start_service() {
         0) ;; # integrity OK
         1) return 1 ;;
         2) # missing files
-            update -n -v "$UPD_CHANNEL" -c BACKEND || return 1 ;;
+			case "$VERSION" in
+				dev|''|"1.1.0"|"v1.1.0") ;;
+				*) force_version="-W $VERSION"
+			esac
+            update -n -U "$UPD_CHANNEL" $force_version -c BACKEND || return 1 ;;
         3) ;; # non-matching md5sums
     esac
     install_packages
