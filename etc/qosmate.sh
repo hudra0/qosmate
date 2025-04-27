@@ -1,7 +1,7 @@
 #!/bin/sh
 # shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317
 
-VERSION="1.1.0"
+VERSION="1.2.0" # will become obsolete in future releases as version string is now in the init script
 
 . /lib/functions.sh
 config_load 'qosmate'
