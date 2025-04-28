@@ -1049,6 +1049,14 @@ manage_custom_rules_file() {
 }
 
 start_service() {
+	# handle first run after update from older versions
+	if [ "$VERSION" = dev ]; then
+		log_msg "" "Completing the upgrade of the update mechanism..."
+		update -n || return 1
+		# shellcheck disable=SC1090
+		. "${QOSMATE_SERVICE_PATH}" # source updated init script 
+	fi
+
     check_files_integrity BACKEND
     case $? in
         0) ;; # integrity OK
