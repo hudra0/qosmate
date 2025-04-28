@@ -289,22 +289,27 @@ fetch_qosmate_component() {
 # 2 - update channel: release|snapshot|branch=<github_branch>|commit=<commit_hash>
 # 3 - version (optional except for upd. channel 'release'): [qosmate_version|commit_hash]
 # Output via variables:
-#   $4 - github ref, $5 - tarball url
+#   $4 - github ref, $5 - tarball url, $6 - 'version' type ('version' or 'commit')
 get_gh_ref_data() {
 	local me=get_gh_ref_data jsonfilter_ptrn commit branch branches='' main_branch grep_ptrn='' \
-		gh_ref='' gh_url_api ref_fetch_tmp_dir="/tmp/qosmate-gh" ref_fetch_rv=0 \
+		gh_ref='' gh_ver_type='' gh_url_api ref_fetch_tmp_dir="/tmp/qosmate-gh" ref_fetch_rv=0 \
 		component="$1" gh_channel="$2" version="$3"
 
 	local ref_ucl_err_file="${ref_fetch_tmp_dir}/ucl_err"
 
-	are_var_names_safe "$4" "$5" || return 1
+	are_var_names_safe "$4" "$5" "$6" || return 1
 	eval "$4='' $5='' gh_url_api=\"\${QOSMATE_GH_API_URL_${component}}\""
+
+	try_mkdir -p "$ref_fetch_tmp_dir" || return 1
+	rm -f "$ref_ucl_err_file"
 
 	eval "main_branch=\"\${MAIN_BRANCH_${component}}\""
 	case "$gh_channel" in
 		release)
+			gh_ver_type=version
 			[ -n "$version" ] && grep_ptrn="^v${version#v}$" ;;
 		snapshot)
+			gh_ver_type=commit
 			branches="$main_branch"
 			if [ -n "$version" ]; then
 				grep_ptrn="^${version}$"
@@ -315,8 +320,19 @@ get_gh_ref_data() {
 				grep_ptrn="^${version}$"
 			fi ;;
 		commit=*)
-			branches="$(uclient-fetch "${gh_url_api}/branches" -O- | { jsonfilter -e '@[@]["name"]'; cat 1>/dev/null; })"
-			[ -n "$branches" ] || { error_out "Failed to get branches via GH API (url: '${gh_url_api}/branches')."; return 1; }
+			gh_ver_type=commit
+			branches="$(
+				uclient-fetch "${gh_url_api}/branches" -O-  2> "$ref_ucl_err_file" |
+					{ jsonfilter -e '@[@]["name"]'; cat 1>/dev/null; }
+			)"
+			[ -n "$branches" ] || {
+				error_out "$me: Failed to get $component branches via GH API (url: '${gh_url_api}/branches')."
+				[ -f "$ref_ucl_err_file" ] &&
+					log_msg "${me}: uclient-fetch log:${_NL_}$(cat "$ref_ucl_err_file")"
+					rm -f "$ref_ucl_err_file"
+				return 1
+			}
+			rm -f "$ref_ucl_err_file"
 			commit="${gh_channel#*=}"
 			grep_ptrn="^${commit}" ;;
 		*)
@@ -324,7 +340,6 @@ get_gh_ref_data() {
 			return 1
 	esac
 
-	try_mkdir -p "$ref_fetch_tmp_dir" || return 1
 	# Get ref for release/snapshot
 	gh_ref="$(
 		case "$gh_channel" in
@@ -353,7 +368,8 @@ get_gh_ref_data() {
 	)"
 
 	if [ -z "$gh_ref" ] && [ -f "$ref_ucl_err_file" ] && ! grep -q "Download completed" "$ref_ucl_err_file"; then
-		error_out "${me}: Failed to fetch GitHub ref.${_NL_}uclient-fetch log:${_NL_}$(cat "$ref_ucl_err_file")"
+		error_out "${me}: Failed to get $component GitHub download URL for $gh_ver_type '$version'." \
+			"uclient-fetch log:${_NL_}$(cat "$ref_ucl_err_file")"
 		ref_fetch_rv=1
 	fi
 	rm -rf "${ref_fetch_tmp_dir:-?}"
@@ -362,15 +378,15 @@ get_gh_ref_data() {
 	# validate resulting ref
 	case "$gh_ref" in
 		*[^"$_NL_"]*"${_NL_}"*[^"${_NL_}"]*)
-			error_out "${me}: got multiple download URLs for version '$version'." \
+			error_out "${me}: got multiple $component download URLs for version '$version'." \
 				"If using commit hash, please specify the complete commit hash string."
 			return 1 ;;
 		''|*[!a-zA-Z0-9._-]*)
-			error_out "${me}: failed to get GitHub ref for $gh_channel '$version'."
+			error_out "${me}: Failed to get $component GitHub download URL for $gh_ver_type '$version'."
 			return 1
 	esac
 
-	eval "$4"='$gh_ref' "$5"='${gh_url_api}/tarball/${gh_ref}'
+	eval "$4"='$gh_ref' "$5"='${gh_url_api}/tarball/${gh_ref}' "$6"='$gh_ver_type'
 
 	:
 }
@@ -434,7 +450,7 @@ update() {
 
 	unexp_arg() { upd_failed "update: unexpected argument '$1'."; }
 
-	local file origin new_file_list exec_files sim_path='' version='' ver_str_arg='' def_ver_str='' \
+	local file origin new_file_list exec_files sim_path='' version='' ver_type ver_str_arg='' def_ver_str='' \
 		extract_dir='' norestart='' dist_dir='' ref='' tarball_url='' file_list_query_path \
 		backend_upd_req='' multi_upd_req='' upd_component='' upd_components='' \
 		req_upd_channel upd_channel='' def_upd_channel='' force_upd_channel='' force_ver=''
@@ -469,7 +485,9 @@ update() {
 		package*)
 			pkg_update_not_impl
 			return 1 ;;
-		release|snapshot)
+		release)
+			req_upd_channel="${ver_str_arg}" version='' ;;
+		snapshot)
 			req_upd_channel="${ver_str_arg}" version='' ;;
 		commit=*)
 			req_upd_channel="${ver_str_arg}" version="${ver_str_arg#*=}" ;;
@@ -478,7 +496,8 @@ update() {
 		[0-9]*|v[0-9]*)
 			req_upd_channel=release
 			version="${ver_str_arg#*=}"
-			version="${version#v}" ;;
+			version="${version#v}"
+			;;
 		*)
 			upd_failed "Invalid version string '$ver_str_arg'."
 			return 1
@@ -553,8 +572,8 @@ update() {
 				then
 					log_msg "" "Updating $component to version '$ref' (update channel: '$upd_channel')."
 				else
-					get_gh_ref_data "$component" "$upd_channel" "$version" ref tarball_url || return 1
-					log_msg "" "Downloading $component, version '$ref' (update channel: '$upd_channel')."
+					get_gh_ref_data "$component" "$upd_channel" "$version" ref tarball_url ver_type || return 1
+					log_msg "" "Downloading $component, $ver_type '$ref' (update channel: '$upd_channel')."
 					fetch_qosmate_component "$component" "$tarball_url" || { upd_failed; return 1; }
 				fi
 
