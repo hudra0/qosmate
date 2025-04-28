@@ -291,7 +291,7 @@ fetch_qosmate_component() {
 # Output via variables:
 #   $4 - github ref, $5 - tarball url, $6 - 'version' type ('version' or 'commit')
 get_gh_ref_data() {
-	local me=get_gh_ref_data jsonfilter_ptrn commit branch branches='' main_branch grep_ptrn='' \
+	local jsonfilter_ptrn commit branch branches='' main_branch grep_ptrn='' \
 		gh_ref='' gh_ver_type='' gh_url_api ref_fetch_tmp_dir="/tmp/qosmate-gh" ref_fetch_rv=0 \
 		component="$1" gh_channel="$2" version="$3"
 
@@ -326,9 +326,9 @@ get_gh_ref_data() {
 					{ jsonfilter -e '@[@]["name"]'; cat 1>/dev/null; }
 			)"
 			[ -n "$branches" ] || {
-				error_out "$me: Failed to get $component branches via GH API (url: '${gh_url_api}/branches')."
+				error_out "Failed to get $component branches via GH API (url: '${gh_url_api}/branches')."
 				[ -f "$ref_ucl_err_file" ] &&
-					log_msg "${me}: uclient-fetch log:${_NL_}$(cat "$ref_ucl_err_file")"
+					log_msg "uclient-fetch log:${_NL_}$(cat "$ref_ucl_err_file")"
 					rm -f "$ref_ucl_err_file"
 				return 1
 			}
@@ -336,7 +336,7 @@ get_gh_ref_data() {
 			commit="${gh_channel#*=}"
 			grep_ptrn="^${commit}" ;;
 		*)
-			error_out "${me}: invalid update channel '$gh_channel'."
+			error_out "Invalid update channel '$gh_channel'."
 			return 1
 	esac
 
@@ -368,7 +368,7 @@ get_gh_ref_data() {
 	)"
 
 	if [ -z "$gh_ref" ] && [ -f "$ref_ucl_err_file" ] && ! grep -q "Download completed" "$ref_ucl_err_file"; then
-		error_out "${me}: Failed to get $component GitHub download URL for $gh_ver_type '$version'." \
+		error_out "Failed to get $component GitHub download URL for $gh_ver_type '$version'." \
 			"uclient-fetch log:${_NL_}$(cat "$ref_ucl_err_file")"
 		ref_fetch_rv=1
 	fi
@@ -378,11 +378,11 @@ get_gh_ref_data() {
 	# validate resulting ref
 	case "$gh_ref" in
 		*[^"$_NL_"]*"${_NL_}"*[^"${_NL_}"]*)
-			error_out "${me}: got multiple $component download URLs for version '$version'." \
+			error_out "Got multiple $component download URLs for version '$version'." \
 				"If using commit hash, please specify the complete commit hash string."
 			return 1 ;;
 		''|*[!a-zA-Z0-9._-]*)
-			error_out "${me}: Failed to get $component GitHub download URL for $gh_ver_type '$version'."
+			error_out "Failed to get $component GitHub download URL for $gh_ver_type '$version'."
 			return 1
 	esac
 
