@@ -315,6 +315,7 @@ get_gh_ref_data() {
 				grep_ptrn="^${version}$"
 			fi ;;
 		branch=*)
+			gh_ver_type=commit
 			branches="${gh_channel#*=}"
 			if [ -n "$version" ]; then
 				grep_ptrn="^${version}$"
