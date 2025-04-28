@@ -368,7 +368,7 @@ get_gh_ref_data() {
 	)"
 
 	if [ -z "$gh_ref" ] && [ -f "$ref_ucl_err_file" ] && ! grep -q "Download completed" "$ref_ucl_err_file"; then
-		error_out "Failed to get $component GitHub download URL for $gh_ver_type '$version'." \
+		error_out "Failed to get $component GitHub download URL for $gh_ver_type '$version' (update channel: '$gh_channel')." \
 			"uclient-fetch log:${_NL_}$(cat "$ref_ucl_err_file")"
 		ref_fetch_rv=1
 	fi
@@ -382,7 +382,7 @@ get_gh_ref_data() {
 				"If using commit hash, please specify the complete commit hash string."
 			return 1 ;;
 		''|*[!a-zA-Z0-9._-]*)
-			error_out "Failed to get $component GitHub download URL for $gh_ver_type '$version'."
+			error_out "Failed to get $component GitHub download URL for $gh_ver_type '$version' (update channel: '$gh_channel')."
 			return 1
 	esac
 
