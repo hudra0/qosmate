@@ -1199,18 +1199,26 @@ start_service() {
 		. "${QOSMATE_SERVICE_PATH}" # source updated init script 
 	fi
 
-    check_files_integrity BACKEND
-    case $? in
-        0) ;; # integrity OK
-        1) return 1 ;;
-        2) # missing files
-			case "$VERSION" in
-				dev|''|"1.1.0"|"v1.1.0") ;;
-				*) force_version="-W $VERSION"
-			esac
-            update -n -U "$UPD_CHANNEL" $force_version -c BACKEND || return 1 ;;
-        3) ;; # non-matching md5sums
-    esac
+	for component in $QOSMATE_COMPONENTS; do
+		check_files_integrity "$component"
+		case $? in
+			0) ;; # integrity OK
+			1) return 1 ;;
+			2) # missing files
+				local fix_upd_channel='' fix_version='' force_version=''
+				case "$component" in
+					BACKEND) fix_version="$VERSION" fix_upd_channel="$UPD_CHANNEL" ;;
+					FRONTEND) get_component_spec fix_version fix_upd_channel FRONTEND local 2>/dev/null
+				esac
+				case "$fix_version" in
+					dev|''|"1.1.0"|"v1.1.0") ;;
+					*) force_version="-W $fix_version"
+				esac
+				: "${fix_upd_channel:=release}"
+				update -n -U "$fix_upd_channel" $force_version -c "$component" || return 1 ;;
+			3) ;; # non-matching md5sums
+		esac
+	done
     install_packages
     create_hotplug_script  # Create the hotplug script instead of downloading it
     check_and_download_config || return 1
