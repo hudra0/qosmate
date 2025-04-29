@@ -21,6 +21,13 @@ EXTRA_HELP="
 
 REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake kmod-sched-red luci-lib-jsonc lua jq"
 
+### Utility vars
+_NL_='
+'
+DEFAULT_IFS=" 	${_NL_}"
+IFS="$DEFAULT_IFS"
+
+
 ### repo-related vars
 
 # GH repo author (can be overriden for testing)
@@ -29,23 +36,19 @@ REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ct
 MAIN_BRANCH_BACKEND=main
 MAIN_BRANCH_FRONTEND=main
 
-# Base URL (raw) for repositories (can be overridden for different branches/commits)
-QOSMATE_BASE_URL="${QOSMATE_BASE_URL:-https://raw.githubusercontent.com/${QOSMATE_REPO_AUTHOR}/qosmate/${MAIN_BRANCH_BACKEND}}"
+# GH API URLs (can be overridden)
+: "${QOSMATE_GH_API_URL:="https://api.github.com/repos/${QOSMATE_REPO_AUTHOR}"}"
+: "${QOSMATE_GH_API_URL_BACKEND:="${QOSMATE_GH_API_URL}/qosmate"}"
+: "${QOSMATE_GH_API_URL_FRONTEND:="${QOSMATE_GH_API_URL}/luci-app-qosmate"}"
 
-# Base GH API URLs for repositories (can be overridden)
-: "${QOSMATE_AUTHOR_GH_API_URL:="https://api.github.com/repos/${QOSMATE_REPO_AUTHOR}"}"
-: "${QOSMATE_GH_API_URL_BACKEND:="${QOSMATE_AUTHOR_GH_API_URL}/qosmate"}"
-: "${QOSMATE_GH_API_URL_FRONTEND:="${QOSMATE_AUTHOR_GH_API_URL}/luci-app-qosmate"}"
+# GH raw backend URL (can be overridden)
+: "${QOSMATE_GH_RAW_URL_BACKEND_MAIN:="https://raw.githubusercontent.com/${QOSMATE_REPO_AUTHOR}/qosmate/${MAIN_BRANCH_BACKEND}"}"
 
+
+### Local paths
+
+# Local path of JS files
 QOSMATE_UPD_DIR=/var/run/qosmate-update
-
-
-### Utility vars
-_NL_='
-'
-DEFAULT_IFS=" 	${_NL_}"
-IFS="$DEFAULT_IFS"
-
 
 ### Components
 QOSMATE_COMPONENTS="BACKEND FRONTEND"
@@ -188,6 +191,7 @@ check_files_integrity() {
 	
 	local IFS="$_NL_"
 	for file in ${reg_file}${_NL_}${files}; do
+		[ -n "$file" ] || continue
 		[ -f "$file" ] || { error_out "Missing file: '$file'."; return 2; }
 	done
 
@@ -246,12 +250,13 @@ post_update_2() {
 # 1 - component (BACKEND|FRONTEND)
 # 2 - tarball url
 fetch_qosmate_component() {
-	local arg repo_name me=fetch_qosmate_component
 	[ -n "$1" ] && [ -n "$2" ] || { error_out "$me: missing arguments."; return 1; }
 
-	local component="$1" fetch_tarball_url="$2" upd_dir extract_dir fetch_rv
-	local upd_dir="${QOSMATE_UPD_DIR}/${component}"
-	local tarball="${upd_dir}/remote_qosmate.tar.gz" ucl_err_file="${upd_dir}/ucl_err"
+	local upd_dir="${QOSMATE_UPD_DIR}/${component}" \
+		component="$1" fetch_tarball_url="$2"
+
+	local extract_dir fetch_rv arg repo_name me=fetch_qosmate_component \
+		tarball="${upd_dir}/remote_qosmate.tar.gz" ucl_err_file="${upd_dir}/ucl_err" \
 
 	case "$component" in
 		BACKEND) repo_name=qosmate ;;
@@ -289,7 +294,7 @@ fetch_qosmate_component() {
 # 2 - update channel: release|snapshot|branch=<github_branch>|commit=<commit_hash>
 # 3 - version (optional except for upd. channel 'release'): [qosmate_version|commit_hash]
 # Output via variables:
-#   $4 - github ref, $5 - tarball url, $6 - 'version' type ('version' or 'commit')
+#   $4 - github ref (version/commit hash), $5 - tarball url, $6 - 'version' type ('version' or 'commit')
 get_gh_ref_data() {
 	local jsonfilter_ptrn commit branch branches='' main_branch grep_ptrn='' \
 		gh_ref='' gh_ver_type='' gh_url_api ref_fetch_tmp_dir="/tmp/qosmate-gh" ref_fetch_rv=0 \
@@ -345,9 +350,11 @@ get_gh_ref_data() {
 	gh_ref="$(
 		case "$gh_channel" in
 			release)
-				uclient-fetch "${gh_url_api}/releases" -O- 2> "$ref_ucl_err_file" |
-				jsonfilter -e '@[@.prerelease=false]' |
-				jsonfilter -a -e "@[@.target_commitish=\"${main_branch}\"].tag_name" ;;
+				uclient-fetch "${gh_url_api}/releases" -O- 2> "$ref_ucl_err_file" | {
+					jsonfilter -e '@[@.prerelease=false]' |
+					jsonfilter -a -e "@[@.target_commitish=\"${main_branch}\"].tag_name"
+					cat 1>/dev/null
+				} ;;
 			snapshot|branch=*|commit=*)
 				for branch in $branches; do
 					ref_fetch_url="${gh_url_api}/commits?sha=${branch}"
@@ -389,6 +396,149 @@ get_gh_ref_data() {
 
 	eval "$4"='$gh_ref' "$5"='${gh_url_api}/tarball/${gh_ref}' "$6"='$gh_ver_type'
 
+	:
+}
+
+# get update channel and version from local frontend file
+# 1 - var name for version output
+# 2 - var name for upd. channel output
+# 3 - path to file
+get_frontend_spec() {
+	local me=get_frontend_spec spec_ptrn_1='' spec_ptrn_2='' spec_FS='' rv=0 failed_spec='' spec_res='' spec_line
+		spec_path="$3"
+
+	are_var_names_safe "$1" "$2" || return 1
+	[ -n "$3" ] || { error_out "$me: missing args."; return 1; }
+
+	# assumes string enclosed in FS and no prior FS present in the line
+	spec_res="$(
+		awk -v v_ptrn_1="^[ 	]*const UI_VERSION[ 	]*=" -v v_ptrn_2="^[-a-zA-Z0-9_.]+$" \
+			-v u_ptrn_1="^[ 	]*const UI_UPD_CHANNEL[ 	]*=" -v u_ptrn_2="^[-a-zA-Z0-9_.=]+$" \
+			-F "'" '
+				BEGIN{rv=1}
+				{
+					if (v_match_res != "" && u_match_res != "") {rv = v_match_res + u_match_res; exit}
+				}
+				$0~v_ptrn_1 {
+					v_match_res=2
+					if ( $2~v_ptrn_2 ) {print "version:" $2; v_match_res=0}
+					next
+				}
+				$0~u_ptrn_1 {
+					u_match_res=3
+					if ( $2~u_ptrn_2 ) {print "upd_channel:" $2; u_match_res=0}
+					next
+				}
+				END{exit rv}
+			' "$spec_path"
+		)" || {
+			rv=$?
+			case $rv in
+				2) failed_spec=version ;;
+				3) failed_spec="update channel" ;;
+				*) failed_spec="version and update channel" ;;
+			esac
+			error_out "$me: Failed to get frontend $failed_spec from file '$spec_path'."
+		}
+
+		local IFS="$_NL_"
+		for spec_line in $spec_res; do
+			case "$spec_line" in
+				'') continue ;;
+				version:*) eval "$1"='${spec_line#*:}' ;;
+				upd_channel:*) eval "$2"='${spec_line#*:}' ;;
+				*) error_out "$me: got unexpected string when parsing file '$spec_path'."; return 1
+			esac
+		done
+		return $rv
+}
+
+# Get version and update channel from local file or from repo
+# 1 - var name for version output
+# 2 - var name for update channel output
+# 3 - component (BACKEND|FRONTEND)
+# 4 - origin (local|remote)
+# Error codes: 1 - failed to get version, 2 - got invalid version
+get_component_spec() {
+	local gv_version='' gv_upd_channel='' me=get_component_spec \
+		gv_component="$3" gv_origin="$4"
+
+	are_var_names_safe "$1" "$2" || return 1
+
+	# get update channel
+	case "$gv_component" in
+		BACKEND) gv_upd_channel="$UPD_CHANNEL" ;;
+		FRONTEND) get_frontend_spec gv_version gv_upd_channel "$QOSMATE_MAIN_FILE_FRONTEND" || return 1 ;;
+		*) error_out "$me: invalid component '$gv_component'."; return 1
+	esac
+
+	# get version
+	case "$gv_origin" in
+		local) [ "$gv_component" = BACKEND ] && gv_version="$VERSION" ;;
+		remote) get_gh_ref_data "$gv_component" "$gv_upd_channel" "" gv_version _ _ || return 1 ;;
+		*) error_out "$me: invalid origin '$gv_origin'."; return 1
+	esac
+
+	eval "$1"='$gv_version'
+	eval "$2"='$gv_upd_channel'
+
+	:
+}
+
+# Check and print versions for local and remote backend and frontend
+# sets global variables: $BACKEND_upd_avail, $FRONTEND_upd_avail
+# 1 - (optional) '-n' to not print update tip
+# Return codes:
+# 0 - no update
+# 1 - error
+# 254 - update available
+check_version() {
+	local origin notify_origin component notify_component cv_version cv_upd_channel local_version upd_avail=''
+	local no_print_tip="$1"
+
+	for component in BACKEND FRONTEND; do
+		case "$component" in
+			BACKEND) notify_component=Backend ;;
+			FRONTEND) notify_component=Frontend
+		esac
+
+		echo "$notify_component versions:"
+
+		local upd_ch_printed=
+		for origin in local remote; do
+			case "$origin" in
+				local) notify_origin=Current ;;
+				remote) notify_origin=Latest
+			esac
+
+			get_component_spec cv_version cv_upd_channel "$component" "$origin" || {
+				error_out "Failed to get $origin $component version."
+				return 1
+			}
+
+			[ -z "$upd_ch_printed" ] && { echo "  Update channel: $cv_upd_channel"; upd_ch_printed=1; }
+
+			case "$origin" in
+				local) local_version="$cv_version" ;;
+				remote)
+					if [ "$cv_version" = "$local_version" ]; then
+						unset "${component}_upd_avail"
+					else
+						upd_avail=1
+						eval "${component}_upd_avail=1"
+					fi
+			esac
+			printf '%s\n' "  $notify_origin version: $cv_version"
+		done
+	done
+
+	if [ -n "$upd_avail" ]; then
+		[ "$no_print_tip" != '-n' ] && printf '\n%s\n%s\n' "A new version of QoSmate is available." \
+			"To update, run: /etc/init.d/qosmate update"
+		return 254
+	else
+		printf '\n%s\n' "QoSmate is up to date."
+	fi
 	:
 }
 
@@ -539,19 +689,10 @@ update() {
 				elif [ ! -f "$QOSMATE_MAIN_FILE_FRONTEND" ]; then
 					def_upd_channel=release
 				else
-					local pattern="^const UI_UPD_CHANNEL"
+					local upd_ch_ptrn="^const UI_UPD_CHANNEL"
 					# assumes version string enclosed in ' and no prior ' present in the version line
-					def_upd_channel="$(
-						awk -F "'" "
-							BEGIN{rv=1}
-							\$0~/$pattern/ {
-								rv=2
-								print \$2
-								if (\$2~/^[ 	]*(branch[ 	]*=[ 	]*){0,1}[-a-zA-Z0-9_]/ ) {rv=0}
-								exit
-							}
-							END{exit rv}" "$QOSMATE_MAIN_FILE_FRONTEND"
-					)" || {
+
+					get_frontend_spec _ def_upd_channel "$QOSMATE_MAIN_FILE_FRONTEND" || {
 						error_out "Failed to get current FRONTEND update channel. Defaulting to 'release'."
 						def_upd_channel=release
 					}
@@ -981,7 +1122,7 @@ check_and_download_config() {
     local config_path="/etc/config/qosmate"
     if [ ! -f "$config_path" ]; then
         echo "Configuration file not found, downloading the latest version..."
-        wget -O $config_path "$QOSMATE_BASE_URL/etc/config/qosmate" || {
+        wget -O $config_path "${QOSMATE_GH_RAW_URL_BACKEND_MAIN}/etc/config/qosmate" || {
             echo "Error downloading configuration. Please check your internet connection and try again."
             return 1
         }
@@ -1050,7 +1191,7 @@ manage_custom_rules_file() {
 }
 
 start_service() {
-	# handle first run after update from older versions
+	# handle first run after installation or update from older versions
 	if [ "$VERSION" = dev ]; then
 		log_msg "" "Completing the upgrade of the update mechanism..."
 		update -n || return 1
