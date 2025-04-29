@@ -715,6 +715,11 @@ update() {
 					log_msg "" "Updating $component to version '$ref' (update channel: '$upd_channel')."
 				else
 					get_gh_ref_data "$component" "$upd_channel" "$version" ref tarball_url ver_type || return 1
+					case "$upd_channel" in
+						commit=*)
+							# set update channel to 'commit=<full_commit_hash>'
+							upd_channel="${upd_channel%=*}=${ref}"
+					esac
 					log_msg "" "Downloading $component, $ver_type '$ref' (update channel: '$upd_channel')."
 					fetch_qosmate_component "$component" "$tarball_url" || { upd_failed; return 1; }
 				fi
