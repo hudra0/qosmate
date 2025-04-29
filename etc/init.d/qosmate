@@ -308,6 +308,12 @@ get_gh_ref_data() {
 	try_mkdir -p "$ref_fetch_tmp_dir" || return 1
 	rm -f "$ref_ucl_err_file"
 
+	# if version is specified and it's 40-char long, use it directly without API query
+	case "$gh_channel" in
+		snapshot|branch=*|commit=*)
+			[ "${#version}" = 40 ] && gh_ref="$version"
+	esac
+
 	eval "main_branch=\"\${MAIN_BRANCH_${component}}\""
 	case "$gh_channel" in
 		release)
@@ -327,27 +333,36 @@ get_gh_ref_data() {
 			fi ;;
 		commit=*)
 			gh_ver_type=commit
-			branches="$(
-				uclient-fetch "${gh_url_api}/branches" -O-  2> "$ref_ucl_err_file" |
-					{ jsonfilter -e '@[@]["name"]'; cat 1>/dev/null; }
-			)"
-			[ -n "$branches" ] || {
-				error_out "Failed to get $component branches via GH API (url: '${gh_url_api}/branches')."
-				[ -f "$ref_ucl_err_file" ] &&
-					log_msg "uclient-fetch log:${_NL_}$(cat "$ref_ucl_err_file")"
-					rm -f "$ref_ucl_err_file"
-				return 1
-			}
-			rm -f "$ref_ucl_err_file"
-			commit="${gh_channel#*=}"
-			grep_ptrn="^${commit}" ;;
+			local gh_hash="${gh_channel#*=}"
+
+			if [ -n "$gh_ref" ]; then
+				:
+			elif [ "${#gh_hash}" = 40 ]; then
+				# if upd. ch. is 'commit', the upd. ch. string includes commit hash -
+				#    if it's 40-char long, use it directly without API query
+				gh_ref="$gh_hash"
+			else
+				branches="$(
+					uclient-fetch "${gh_url_api}/branches" -O-  2> "$ref_ucl_err_file" |
+						{ jsonfilter -e '@[@]["name"]'; cat 1>/dev/null; }
+				)"
+				[ -n "$branches" ] || {
+					error_out "Failed to get $component branches via GH API (url: '${gh_url_api}/branches')."
+					[ -f "$ref_ucl_err_file" ] &&
+						log_msg "uclient-fetch log:${_NL_}$(cat "$ref_ucl_err_file")"
+						rm -f "$ref_ucl_err_file"
+					return 1
+				}
+				rm -f "$ref_ucl_err_file"
+				grep_ptrn="^${gh_hash}"
+			fi ;;
 		*)
 			error_out "Invalid update channel '$gh_channel'."
 			return 1
 	esac
 
 	# Get ref for release/snapshot
-	gh_ref="$(
+	[ -z "$gh_ref" ] && gh_ref="$(
 		case "$gh_channel" in
 			release)
 				uclient-fetch "${gh_url_api}/releases" -O- 2> "$ref_ucl_err_file" | {
