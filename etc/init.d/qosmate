@@ -502,19 +502,23 @@ get_component_spec() {
 
 # Check and print versions for local and remote backend and frontend
 # sets global variables: $BACKEND_upd_avail, $FRONTEND_upd_avail
-# 1 - (optional) '-n' to not print update tip
+# 0 - (optional) '-n' to not print update tip
+# 1 - (optional) <BACKEND|FRONTEND>
 # Return codes:
 # 0 - no update
 # 1 - error
 # 254 - update available
 check_version() {
-	local origin notify_origin component notify_component cv_version cv_upd_channel local_version upd_avail=''
-	local no_print_tip="$1"
+	local origin notify_origin components component notify_component cv_version cv_upd_channel local_version upd_avail='' \
+		no_print_tip=
+	[ "$1" = '-n' ] && { no_print_tip=1; shift; }
+	components="${1:-"$QOSMATE_COMPONENTS"}"
 
-	for component in BACKEND FRONTEND; do
+	for component in $components; do
 		case "$component" in
 			BACKEND) notify_component=Backend ;;
-			FRONTEND) notify_component=Frontend
+			FRONTEND) notify_component=Frontend ;;
+			*) error_out "check_version: invalid component '$component'."; return 1
 		esac
 
 		echo "$notify_component versions:"
@@ -548,11 +552,11 @@ check_version() {
 	done
 
 	if [ -n "$upd_avail" ]; then
-		[ "$no_print_tip" != '-n' ] && printf '\n%s\n%s\n' "A new version of QoSmate is available." \
+		[ -z "$no_print_tip" ] && printf '\n%s\n%s\n' "A new version of QoSmate is available." \
 			"To update, run: /etc/init.d/qosmate update"
 		return 254
 	else
-		printf '\n%s\n' "QoSmate is up to date."
+		printf '\n%s\n' "QoSmate components '$components' are up to date."
 	fi
 	:
 }
@@ -563,6 +567,7 @@ check_version() {
 # -v [<version>|package[=<version>]|release|snapshot|branch=<branch>|commit=<commit_hash>] : version string
 # -U <update_channel> : force this update channel (overrides the upd. channel derived from '-v' option)
 # -W <version> : force this version (overrides the version derived from '-v' option)
+# -f : force update
 # -n : to skip restarting the service
 update() {
 	upd_failed() {
@@ -618,30 +623,53 @@ update() {
 
 	local file origin new_file_list exec_files sim_path='' version='' ver_type ver_str_arg='' def_ver_str='' \
 		extract_dir='' norestart='' dist_dir='' ref='' tarball_url='' file_list_query_path \
-		backend_upd_req='' multi_upd_req='' upd_component='' upd_components='' \
-		req_upd_channel upd_channel='' def_upd_channel='' force_upd_channel='' force_ver=''
+		backend_upd_req='' multi_upd_req='' upd_component_arg='' upd_components='' req_upd_components='' \
+		req_upd_channel upd_channel='' def_upd_channel='' force_upd_channel='' force_ver='' force_update=''
 
-	while getopts ":s:v:c:U:W:n" opt; do
+	while getopts ":s:v:c:U:W:nf" opt; do
 		case ${opt} in
-			c) upd_component=$OPTARG ;;
+			c) upd_component_arg=$OPTARG ;;
 			s) sim_path=$OPTARG ;;
-			v) ver_str_arg=$OPTARG ;;
-			U) force_upd_channel=$OPTARG ;;
-			W) force_ver=$OPTARG ;;
+			v) ver_str_arg=$OPTARG force_update=1 ;;
+			U) force_upd_channel=$OPTARG force_update=1 ;;
+			W) force_ver=$OPTARG force_update=1 ;;
 			n) norestart=1 ;;
+			f) force_update=1 ;;
 			*) unexp_arg "$OPTARG"; return 1
 		esac
 	done
 	shift $((OPTIND-1))
 	[ -z "${*}" ] || { unexp_arg "${*}"; return 1; }
 
-	case "$upd_component" in
+	case "$upd_component_arg" in
 		'') ;;
-		backend|BACKEND) upd_component=BACKEND ;;
-		frontend|FRONTEND) upd_component=FRONTEND ;;
-		*) upd_failed "Unexpected component '$upd_component'"; return 1
+		backend|BACKEND) upd_component_arg=BACKEND ;;
+		frontend|FRONTEND) upd_component_arg=FRONTEND ;;
+		*) upd_failed "Unexpected component '$upd_component_arg'"; return 1
 	esac
-	upd_components="${upd_component:-"$QOSMATE_COMPONENTS"}"
+	req_upd_components="${upd_component_arg:-"$QOSMATE_COMPONENTS"}"
+
+	if [ -n "$force_update" ]; then
+		upd_components="$req_upd_components"
+	else
+		check_version -n "$req_upd_components"
+		case $? in
+			0) return 0 ;;
+			1) return 1 ;;
+			254)
+				echo "Updates available. Do you want to update? [y/N] "
+				read -r answer
+				case "$answer" in
+					y|Y) ;;
+					*)
+						echo "Update cancelled."
+						return 0
+				esac
+		esac
+		for component in $req_upd_components; do
+			eval "[ -n \"\${${component}_upd_avail}\" ]" && upd_components="${upd_components}${component} "
+		done
+	fi
 
 	log_msg "Updating QoSmate components '$upd_components'..."
 
@@ -1214,7 +1242,7 @@ start_service() {
 	# handle first run after installation or update from older versions
 	if [ "$VERSION" = dev ]; then
 		log_msg "" "Completing the upgrade of the update mechanism..."
-		update -n || return 1
+		update -f -n || return 1
 		# shellcheck disable=SC1090
 		. "${QOSMATE_SERVICE_PATH}" # source updated init script 
 	fi
