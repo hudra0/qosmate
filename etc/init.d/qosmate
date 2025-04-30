@@ -308,7 +308,7 @@ get_gh_ref_data() {
 
 	gh_id="${component}_${version}"
 
-	# if previously saved data exists, use it without API call
+	# if previously stored data exists, use it without API call
 	eval "prev_ref=\"\${${gh_id}_ref}\"
 		prev_ver_type=\"\${${gh_id}_ver_type}\"
 		prev_upd_channel=\"\${${gh_id}_upd_channel}\""
@@ -316,6 +316,36 @@ get_gh_ref_data() {
 		eval "$4"='$prev_ref' "$5"='${gh_url_api}/tarball/${prev_ref}' "$6"='$prev_ver_type'
 		return 0
 	fi
+
+	# ref cache
+	local cache_file cache_filename="${gh_id}_${gh_channel}" ref_cache_dir="/tmp/qosmate_cache" cache_ttl=10
+	try_mkdir -p "$ref_cache_dir" || return 1
+
+	# clean up old cache
+	find "${ref_cache_dir:-?}" -maxdepth 1 -type f -mmin +"${cache_ttl}" -exec rm -f {} \; 2>/dev/null
+
+	# check if the query is cached
+	cache_file="$(find "${ref_cache_dir:-?}" -maxdepth 1 -type f -name "${cache_filename}" -print 2>/dev/null)"
+	case "$cache_file" in
+		'') ;; # found nothing
+		*[^"$_NL_"]*"${_NL_}"*[^"${_NL_}"]*)
+			# found multiple files - delete them
+			local file IFS="$_NL_"
+			for file in $cache_file; do
+				[ -n "$file" ] || continue
+				rm -f "$file"
+			done
+			IFS="$DEFAULT_IFS" ;;
+		*)
+			# found cached query
+			if [ -z "$IGNORE_CACHE" ] && [ -f "$cache_file" ] && read -r prev_ref prev_ver_type < "$cache_file" &&
+				[ -n "$prev_ref" ] && [ -n "$prev_ver_type" ]; then
+					eval "$4"='$prev_ref' "$5"='${gh_url_api}/tarball/${prev_ref}' "$6"='$prev_ver_type'
+					return 0
+			else
+				rm -f "${cache_file:-???}"
+			fi
+	esac
 
 	try_mkdir -p "$ref_fetch_tmp_dir" || return 1
 	rm -f "$ref_ucl_err_file"
@@ -420,6 +450,9 @@ get_gh_ref_data() {
 			error_out "Failed to get $component GitHub download URL for $gh_ver_type '$version' (update channel: '$gh_channel')."
 			return 1
 	esac
+
+	# write the query result to cache
+	printf '%s\n' "$gh_ref $gh_ver_type" > "${ref_cache_dir}/${cache_filename}"
 
 	eval "$4"='$gh_ref' "$5"='${gh_url_api}/tarball/${gh_ref}' "$6"='$gh_ver_type' \
 		"${gh_id}_ref"='$gh_ref' "${gh_id}_ver_type"='$gh_ver_type' "${gh_id}_upd_channel"='$gh_channel'
@@ -581,6 +614,7 @@ check_version() {
 # -U <update_channel> : force this update channel (overrides the upd. channel derived from '-v' option)
 # -W <version> : force this version (overrides the version derived from '-v' option)
 # -f : force update
+# -i : ignore previous cache results
 # -n : to skip restarting the service
 update() {
 	upd_failed() {
@@ -639,7 +673,8 @@ update() {
 		backend_upd_req='' multi_upd_req='' upd_component_arg='' upd_components='' req_upd_components='' \
 		req_upd_channel upd_channel='' def_upd_channel='' force_upd_channel='' force_ver='' force_update=''
 
-	while getopts ":s:v:c:U:W:nf" opt; do
+	IGNORE_CACHE=
+	while getopts ":s:v:c:U:W:nfi" opt; do
 		case ${opt} in
 			c) upd_component_arg=$OPTARG ;;
 			s) sim_path=$OPTARG ;;
@@ -648,6 +683,7 @@ update() {
 			W) force_ver=$OPTARG force_update=1 ;;
 			n) norestart=1 ;;
 			f) force_update=1 ;;
+			i) IGNORE_CACHE=1 ;; # global var
 			*) unexp_arg "$OPTARG"; return 1
 		esac
 	done
