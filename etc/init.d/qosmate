@@ -297,13 +297,25 @@ fetch_qosmate_component() {
 #   $4 - github ref (version/commit hash), $5 - tarball url, $6 - 'version' type ('version' or 'commit')
 get_gh_ref_data() {
 	local jsonfilter_ptrn commit branch branches='' main_branch grep_ptrn='' \
-		gh_ref='' gh_ver_type='' gh_url_api ref_fetch_tmp_dir="/tmp/qosmate-gh" ref_fetch_rv=0 \
+		gh_ref='' gh_id gh_ver_type='' gh_url_api ref_fetch_tmp_dir="/tmp/qosmate-gh" ref_fetch_rv=0 \
+		prev_ref prev_ver_type prev_upd_channel \
 		component="$1" gh_channel="$2" version="$3"
 
 	local ref_ucl_err_file="${ref_fetch_tmp_dir}/ucl_err"
 
 	are_var_names_safe "$4" "$5" "$6" || return 1
-	eval "$4='' $5='' gh_url_api=\"\${QOSMATE_GH_API_URL_${component}}\""
+	eval "$4='' $5='' $6='' gh_url_api=\"\${QOSMATE_GH_API_URL_${component}}\""
+
+	gh_id="${component}_${version}"
+
+	# if previously saved data exists, use it without API call
+	eval "prev_ref=\"\${${gh_id}_ref}\"
+		prev_ver_type=\"\${${gh_id}_ver_type}\"
+		prev_upd_channel=\"\${${gh_id}_upd_channel}\""
+	if [ -n "$prev_ref" ] && [ -n "$prev_ver_type" ] && [ "$prev_upd_channel" = "$gh_channel" ]; then
+		eval "$4"='$prev_ref' "$5"='${gh_url_api}/tarball/${prev_ref}' "$6"='$prev_ver_type'
+		return 0
+	fi
 
 	try_mkdir -p "$ref_fetch_tmp_dir" || return 1
 	rm -f "$ref_ucl_err_file"
@@ -409,8 +421,8 @@ get_gh_ref_data() {
 			return 1
 	esac
 
-	eval "$4"='$gh_ref' "$5"='${gh_url_api}/tarball/${gh_ref}' "$6"='$gh_ver_type'
-
+	eval "$4"='$gh_ref' "$5"='${gh_url_api}/tarball/${gh_ref}' "$6"='$gh_ver_type' \
+		"${gh_id}_ref"='$gh_ref' "${gh_id}_ver_type"='$gh_ver_type' "${gh_id}_upd_channel"='$gh_channel'
 	:
 }
 
