@@ -531,7 +531,8 @@ check_version() {
 			esac
 
 			get_component_spec cv_version cv_upd_channel "$component" "$origin" || {
-				error_out "Failed to get $origin $component version."
+				error_out "Failed to get $origin $component version." \
+					"To force re-installation of $component, use the command 'service qosmate update -f -c $component'."
 				return 1
 			}
 
