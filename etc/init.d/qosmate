@@ -332,7 +332,7 @@ get_gh_ref_data() {
 			local cache_file cache_filename="${component}_${version}_${gh_channel}" ref_cache_dir="/tmp/qosmate_cache" cache_ttl
 			case "$gh_channel" in
 				commit=*) cache_ttl=2880 ;; # 48 hours
-				*) chache_ttl=10 # 10 minutes
+				*) cache_ttl=10 # 10 minutes
 			esac
 			try_mkdir -p "$ref_cache_dir" || return 1
 
