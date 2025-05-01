@@ -571,18 +571,27 @@ get_component_spec() {
 
 # Check and print versions for local and remote backend and frontend
 # sets global variables: $BACKEND_upd_avail, $FRONTEND_upd_avail
-# 0 - (optional) '-n' to not print update tip
-# 1 - (optional) <BACKEND|FRONTEND>
+# (optional) '-n' to not print update tip
+# (optional) '-i' to ignore cache
+# (optional) '-c <BACKEND|FRONTEND>''
 # Return codes:
 # 0 - no update
 # 1 - error
 # 254 - update available
 check_version() {
-	local origin notify_origin components component notify_component cv_version cv_upd_channel local_version upd_avail='' \
-		no_print_tip=
-	[ "$1" = '-n' ] && { no_print_tip=1; shift; }
-	components="${1:-"$QOSMATE_COMPONENTS"}"
+	local origin notify_origin components='' components_arg='' component notify_component cv_version cv_upd_channel local_version \
+		upd_avail='' no_print_tip=
 
+	while getopts ":c:ni" opt; do
+		case ${opt} in
+			c) components_arg=$OPTARG ;;
+			n) no_print_tip=1 ;;
+			i) IGNORE_CACHE=1 ;; # global var
+			*) ;;
+		esac
+	done
+
+	components="${components_arg:-"$QOSMATE_COMPONENTS"}"
 	for component in $components; do
 		case "$component" in
 			BACKEND) notify_component=Backend ;;
@@ -723,7 +732,7 @@ update() {
 	if [ -n "$force_update" ]; then
 		upd_components="$req_upd_components"
 	else
-		check_version -n "$req_upd_components"
+		check_version -n -c "$req_upd_components"
 		case $? in
 			0) return 0 ;;
 			1) return 1 ;;
