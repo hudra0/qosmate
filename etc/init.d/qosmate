@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC3060
+# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC3060
 
 START=99
 STOP=99
@@ -112,6 +112,14 @@ done
 QOSMATE_EXEC_FILES_FRONTEND="
 	/usr/libexec/rpcd/luci.qosmate
 	/usr/libexec/rpcd/luci.qosmate_stats"
+
+
+# Silence shellcheck unused vars warnings
+: "$START" "$STOP" "$USE_PROCD" "$VERSION" "$UPD_CHANNEL" "$EXTRA_COMMANDS" "$EXTRA_HELP" "$REQUIRED_PACKAGES" \
+	"$MAIN_BRANCH_FRONTEND" "$QOSMATE_FILES_REG_PATH_BACKEND" "$QOSMATE_FILES_REG_PATH_FRONTEND" \
+	"$QOSMATE_MAIN_FILE_BACKEND" "$QOSMATE_FILE_TYPES_BACKEND" "$QOSMATE_GEN_FILES_BACKEND" \
+	"$QOSMATE_EXEC_FILES_BACKEND" "$QOSMATE_EXTRA_FILES_BACKEND" "$QOSMATE_FILE_TYPES_FRONTEND" \
+	"$QOSMATE_GEN_FILES_FRONTEND" "$QOSMATE_EXTRA_FILES_FRONTEND" "$QOSMATE_EXEC_FILES_FRONTEND"
 
 
 ### Utility functions
@@ -552,6 +560,8 @@ get_component_spec() {
 		remote) get_gh_ref_data "$gv_component" "$gv_upd_channel" "" gv_version _ _ || return 1 ;;
 		*) error_out "$me: invalid origin '$gv_origin'."; return 1
 	esac
+
+	: "$gv_version" # Silence shellcheck warning
 
 	eval "$1"='$gv_version'
 	eval "$2"='$gv_upd_channel'
