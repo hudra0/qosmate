@@ -300,9 +300,9 @@ fetch_qosmate_component() {
 # Get GitHub ref and tarball url for specified component, update channel, branch and version
 # 1 - component (BACKEND|FRONTEND)
 # 2 - update channel: release|snapshot|branch=<github_branch>|commit=<commit_hash>
-# 3 - version (optional except for upd. channel 'release'): [qosmate_version|commit_hash]
+# 3 - version (optional): [qosmate_version|commit_hash]
 # Output via variables:
-#   $4 - github ref (version/commit hash), $5 - tarball url, $6 - 'version' type ('version' or 'commit')
+#   $4 - github ref (version/commit hash), $5 - tarball url, $6 - version type ('version' or 'commit')
 get_gh_ref_data() {
 	set_res_vars() {
 		eval "$4"='$gh_ref' "$5"='${gh_url_api}/tarball/${gh_ref}' "$6"='$gh_ver_type' \
