@@ -342,7 +342,6 @@ get_gh_ref_data() {
 				commit=*) cache_ttl=2880 ;; # 48 hours
 				*) cache_ttl=10 # 10 minutes
 			esac
-			try_mkdir -p "$ref_cache_dir" || return 1
 
 			# clean up old cache
 			find "${ref_cache_dir:-?}" -maxdepth 1 -type f -mmin +"${cache_ttl}" -exec rm -f {} \; 2>/dev/null
@@ -475,6 +474,7 @@ get_gh_ref_data() {
 	esac
 
 	# write the query result to cache
+	try_mkdir -p "$ref_cache_dir" &&
 	printf '%s\n' "$gh_ref $gh_ver_type" > "${ref_cache_dir}/${cache_filename}"
 
 	set_res_vars "$@"
