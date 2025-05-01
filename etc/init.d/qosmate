@@ -255,7 +255,7 @@ fetch_qosmate_component() {
 	local upd_dir="${QOSMATE_UPD_DIR}/${component}" \
 		component="$1" fetch_tarball_url="$2"
 
-	local extract_dir fetch_rv arg repo_name me=fetch_qosmate_component \
+	local extract_dir fetch_rv repo_name me=fetch_qosmate_component \
 		tarball="${upd_dir}/remote_qosmate.tar.gz" ucl_err_file="${upd_dir}/ucl_err" \
 
 	case "$component" in
@@ -302,7 +302,7 @@ get_gh_ref_data() {
 			"${component}_prev_upd_channel"='$gh_channel' "${component}_prev_version"='$version'
 	}
 
-	local jsonfilter_ptrn commit branch branches='' main_branch grep_ptrn='' \
+	local branch branches='' main_branch grep_ptrn='' \
 		gh_ref='' gh_ver_type='' gh_url_api ref_fetch_tmp_dir="/tmp/qosmate-gh" ref_fetch_rv=0 \
 		prev_ref prev_ver_type prev_upd_channel prev_version \
 		component="$1" gh_channel="$2" version="$3"
@@ -478,7 +478,7 @@ get_gh_ref_data() {
 # 2 - var name for upd. channel output
 # 3 - path to file
 get_frontend_spec() {
-	local me=get_frontend_spec spec_ptrn_1='' spec_ptrn_2='' spec_FS='' rv=0 failed_spec='' spec_res='' spec_line
+	local me=get_frontend_spec rv=0 failed_spec='' spec_res='' spec_line
 		spec_path="$3"
 
 	are_var_names_safe "$1" "$2" || return 1
@@ -629,7 +629,6 @@ check_version() {
 # -W <version> : force this version (overrides the version derived from '-v' option)
 # -f : force update
 # -i : ignore previous cache results
-# -n : to skip restarting the service
 update() {
 	upd_failed() {
 		rm -rf "${QOSMATE_UPD_DIR:-?}"
@@ -682,20 +681,19 @@ update() {
 
 	unexp_arg() { upd_failed "update: unexpected argument '$1'."; }
 
-	local file origin new_file_list exec_files sim_path='' version='' ver_type ver_str_arg='' def_ver_str='' \
-		extract_dir='' norestart='' dist_dir='' ref='' tarball_url='' file_list_query_path \
-		backend_upd_req='' multi_upd_req='' upd_component_arg='' upd_components='' req_upd_components='' \
+	local file origin new_file_list exec_files sim_path='' version='' ver_type ver_str_arg='' \
+		extract_dir='' dist_dir='' ref='' tarball_url='' file_list_query_path \
+		backend_upd_req='' upd_component_arg='' upd_components='' req_upd_components='' \
 		req_upd_channel upd_channel='' def_upd_channel='' force_upd_channel='' force_ver='' force_update=''
 
 	IGNORE_CACHE=
-	while getopts ":s:v:c:U:W:nfi" opt; do
+	while getopts ":s:v:c:U:W:fi" opt; do
 		case ${opt} in
 			c) upd_component_arg=$OPTARG ;;
 			s) sim_path=$OPTARG ;;
 			v) ver_str_arg=$OPTARG force_update=1 ;;
 			U) force_upd_channel=$OPTARG force_update=1 ;;
 			W) force_ver=$OPTARG force_update=1 ;;
-			n) norestart=1 ;;
 			f) force_update=1 ;;
 			i) IGNORE_CACHE=1 ;; # global var
 			*) unexp_arg "$OPTARG"; return 1
@@ -795,9 +793,6 @@ update() {
 				elif [ ! -f "$QOSMATE_MAIN_FILE_FRONTEND" ]; then
 					def_upd_channel=release
 				else
-					local upd_ch_ptrn="^const UI_UPD_CHANNEL"
-					# assumes version string enclosed in ' and no prior ' present in the version line
-
 					get_frontend_spec _ def_upd_channel "$QOSMATE_MAIN_FILE_FRONTEND" || {
 						error_out "Failed to get current FRONTEND update channel. Defaulting to 'release'."
 						def_upd_channel=release
@@ -895,7 +890,7 @@ install_qosmate_files() {
 		error_out "Failed to install new $component files."
 	}
 
-	local file prefix preinst_path curr_files new_file_list new_file_list exec_files='' \
+	local file preinst_path curr_files new_file_list new_file_list exec_files='' \
 		dist_dir main_file_path frontend_updated='' \
 		upper_dist_dir="$1" components="$2" version upd_channel
 
@@ -935,11 +930,6 @@ install_qosmate_files() {
 				ver_repl_str="VERSION \= '$version'\;"
 				upd_ch_repl_str="UPD_CHANNEL \= '$upd_channel'\;" ;;
 		esac
-
-		# check if old component installation has the new update format
-		local old_install_has_new_format=''
-		[ -f "$main_file_path" ] && grep -q "^${ver_ptrn_prefix}${upd_ch_repl_str}" "$main_file_path" &&
-			old_install_has_new_format=1
 
 		# set version and update channel in component's main file
 		local preinst_main_file_path="${dist_dir}${main_file_path}"
@@ -1305,7 +1295,7 @@ start_service() {
 	# handle first run after installation or update from older versions
 	if [ "$VERSION" = dev ]; then
 		log_msg "" "Completing the upgrade of the update mechanism..."
-		update -f -n || return 1
+		update -f || return 1
 		# shellcheck disable=SC1090
 		. "${QOSMATE_SERVICE_PATH}" # source updated init script 
 	fi
@@ -1326,7 +1316,7 @@ start_service() {
 					*) force_version="-W $fix_version"
 				esac
 				: "${fix_upd_channel:=release}"
-				update -n -U "$fix_upd_channel" $force_version -c "$component" || return 1 ;;
+				update -U "$fix_upd_channel" $force_version -c "$component" || return 1 ;;
 			3) ;; # non-matching md5sums
 		esac
 	done
