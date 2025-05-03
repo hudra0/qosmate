@@ -282,8 +282,8 @@ fetch_qosmate_component() {
 	fetch_rv=${?}
 	rm -f "${tarball}"
 
-	[ "$fetch_rv" != 0 ] && [ -s "$ucl_err_file" ] && ! grep -q "Download completed" "$ucl_err_file" &&
-		error_out "uclient-fetch errors: '$(cat "$ucl_err_file")'."
+	[ "$fetch_rv" != 0 ] && [ -s "$ucl_err_file" ] &&
+		log_msg "uclient-fetch output: ${_NL_}$(cat "$ucl_err_file")."
 	rm -f "$ucl_err_file"
 
 	[ "$fetch_rv" = 0 ] && {
