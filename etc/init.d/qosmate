@@ -258,13 +258,11 @@ post_update_2() {
 # 1 - component (BACKEND|FRONTEND)
 # 2 - tarball url
 fetch_qosmate_component() {
-	[ -n "$1" ] && [ -n "$2" ] || { error_out "$me: missing arguments."; return 1; }
+	[ -n "$1" ] && [ -n "$2" ] || { error_out "fetch_qosmate_component: missing arguments."; return 1; }
 
-	local upd_dir="${QOSMATE_UPD_DIR}/${component}" \
-		component="$1" fetch_tarball_url="$2"
-
-	local extract_dir fetch_rv repo_name me=fetch_qosmate_component \
-		tarball="${upd_dir}/remote_qosmate.tar.gz" ucl_err_file="${upd_dir}/ucl_err" \
+	local component="$1" fetch_tarball_url="$2"
+	local fetch_rv extract_dir upd_dir="${QOSMATE_UPD_DIR}/${component}"
+	local tarball="${upd_dir}/remote_qosmate.tar.gz" ucl_err_file="${upd_dir}/ucl_err"
 
 	case "$component" in
 		BACKEND) repo_name=qosmate ;;
