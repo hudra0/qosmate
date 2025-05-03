@@ -188,7 +188,7 @@ are_var_names_safe() {
 # 2 - missing files
 # 3 - non-matching md5sums
 check_files_integrity() {
-	local reg_file file files file_types component component="$1"
+	local reg_file file files file_types component="$1"
 
 	files=
 	eval "file_types=\"\${QOSMATE_FILE_TYPES_${component}}\"
