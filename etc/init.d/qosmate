@@ -410,9 +410,7 @@ get_gh_ref_data() {
 			gh_ver_type=commit
 			local gh_hash="${gh_channel#*=}"
 
-			if [ -n "$gh_ref" ]; then
-				:
-			elif [ "${#gh_hash}" = 40 ]; then
+			if [ "${#gh_hash}" = 40 ]; then
 				# if upd. ch. is 'commit', the upd. ch. string includes commit hash -
 				#    if it's 40-char long, use it directly without API query
 				gh_ref="$gh_hash"
