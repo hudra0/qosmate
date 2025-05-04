@@ -1856,13 +1856,8 @@ expand_config() {
             UPRATE) option="DEFAULT_UPRATE" ;;
         esac
 
-        # First, try to find a direct assignment
+        # Try to find a direct assignment
         default_value=$(grep "^${option}=" "$main_script" | cut -d'=' -f2- | tr -d '"')
-
-        # If not found, look for it in the load_config function
-        if [ -z "$default_value" ]; then
-            default_value=$(sed -n "/load_config()/,/}/p" "$main_script" | grep "\<${option}=" | sed 's/.*|| echo "\(.*\)".*/\1/')
-        fi
 
         # Remove any remaining shell expansions and trim whitespace
         default_value=$(echo "$default_value" | sed -e 's/\$([^)]*)//g' -e 's/^ *//g' -e 's/ *$//g' -e 's/\${{.*}}//g')
