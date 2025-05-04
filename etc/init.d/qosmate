@@ -1095,8 +1095,8 @@ validate_custom_rules() {
 detect_package_manager() {
     local has_apk=0 has_opkg=0
     
-    command -v apk >/dev/null 2>&1 && has_apk=1
-    command -v opkg >/dev/null 2>&1 && has_opkg=1
+    check_util apk && has_apk=1
+    check_util opkg && has_opkg=1
     
     if [ $has_apk -eq 1 ] && [ $has_opkg -eq 1 ]; then
         echo "conflict"
@@ -1654,12 +1654,12 @@ auto_setup() {
 
     if [ -n "$speedtest_req" ]; then
         # Check for speedtest-go first
-        if command -v speedtest-go &> /dev/null; then
+        if check_util speedtest-go; then
             echo "speedtest-go is already installed. Using it for the speed test."
             SPEEDTEST_CMD="speedtest-go"
         else
             echo "speedtest-go is not found. Checking for python3-speedtest-cli..."
-            if command -v speedtest &> /dev/null; then
+            if check_util speedtest; then
                 echo "python3-speedtest-cli is already installed. Using it for the speed test."
                 SPEEDTEST_CMD="speedtest --simple"
             else
