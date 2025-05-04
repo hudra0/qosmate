@@ -316,7 +316,12 @@ fetch_qosmate_component() {
 #   $4 - github ref (version/commit hash), $5 - tarball url, $6 - version type ('version' or 'commit')
 get_gh_ref_data() {
 	set_res_vars() {
-		eval "$4"='$gh_ref' "$5"='${gh_url_api}/tarball/${gh_ref}' "$6"='$gh_ver_type' \
+		if [ "$gh_channel" = release ]; then
+			version="${gh_ref#v}"
+		else
+			version="$gh_ref"
+		fi
+		eval "$4"='$version' "$5"='${gh_url_api}/tarball/${gh_ref}' "$6"='$gh_ver_type' \
 			"${component}_prev_ref"='$gh_ref' "${component}_prev_ver_type"='$gh_ver_type' \
 			"${component}_prev_upd_channel"='$gh_channel' "${component}_prev_version"='$version'
 	}
@@ -325,6 +330,8 @@ get_gh_ref_data() {
 		gh_ref='' gh_ver_type='' gh_url_api ref_fetch_tmp_dir="/tmp/qosmate-gh" ref_fetch_rv=0 \
 		prev_ref prev_ver_type prev_upd_channel prev_version \
 		component="$1" gh_channel="$2" version="$3"
+	
+	[ "$gh_channel" = release ] && version="${version#v}"
 
 	local ref_ucl_err_file="${ref_fetch_tmp_dir}/ucl_err"
 
@@ -393,7 +400,7 @@ get_gh_ref_data() {
 	case "$gh_channel" in
 		release)
 			gh_ver_type=version
-			[ -n "$version" ] && grep_ptrn="^v${version#v}$" ;;
+			[ -n "$version" ] && grep_ptrn="^v${version}$" ;;
 		snapshot)
 			gh_ver_type=commit
 			branches="$main_branch"
@@ -434,7 +441,7 @@ get_gh_ref_data() {
 			return 1
 	esac
 
-	# Get ref for release/snapshot
+	# Get ref via GH API
 	[ -z "$gh_ref" ] && gh_ref="$(
 		case "$gh_channel" in
 			release)
