@@ -716,8 +716,8 @@ update() {
 
 	unexp_arg() { upd_failed "update: unexpected argument '$1'."; }
 
-	local file origin new_file_list exec_files sim_path='' version='' ver_type ver_str_arg='' \
-		extract_dir='' dist_dir='' ref='' tarball_url='' file_list_query_path \
+	local file origin new_file_list exec_files sim_path='' req_ver='' ver_type ver_str_arg='' \
+		extract_dir='' dist_dir='' upd_version='' tarball_url='' file_list_query_path \
 		backend_upd_req='' upd_component_arg='' upd_components='' req_upd_components='' \
 		req_upd_channel upd_channel='' def_upd_channel='' force_upd_channel='' force_ver='' force_update=''
 
@@ -769,24 +769,24 @@ update() {
 
 	log_msg "Updating QoSmate components '$upd_components'..."
 
-	# parse version string from arguments into $req_upd_channel, $version
+	# parse version string from arguments into $req_upd_channel, $req_ver
 	case "$ver_str_arg" in
 		'') ;;
 		package*)
 			pkg_update_not_impl
 			return 1 ;;
 		release)
-			req_upd_channel="${ver_str_arg}" version='' ;;
+			req_upd_channel="${ver_str_arg}" req_ver='' ;;
 		snapshot)
-			req_upd_channel="${ver_str_arg}" version='' ;;
+			req_upd_channel="${ver_str_arg}" req_ver='' ;;
 		commit=*)
-			req_upd_channel="${ver_str_arg}" version="${ver_str_arg#*=}" ;;
+			req_upd_channel="${ver_str_arg}" req_ver="${ver_str_arg#*=}" ;;
 		branch=*)
-			req_upd_channel="$ver_str_arg" version='' ;;
+			req_upd_channel="$ver_str_arg" req_ver='' ;;
 		[0-9]*|v[0-9]*)
 			req_upd_channel=release
-			version="${ver_str_arg#*=}"
-			version="${version#v}"
+			req_ver="${ver_str_arg#*=}"
+			req_ver="${req_ver#v}"
 			;;
 		*)
 			upd_failed "Invalid version string '$ver_str_arg'."
@@ -802,7 +802,7 @@ update() {
 		[ -d "$sim_path" ] || { upd_failed "Update simulation directory '$sim_path' does not exist."; return 1; }
 		[ -n "$ver_str_arg" ] || { upd_failed "Specify new version string."; return 1; }
 		def_upd_channel=release
-		ref="$ver_str_arg"
+		upd_version="$ver_str_arg"
 		: "${req_upd_channel:="${def_upd_channel}"}"
 
 		for component in $upd_components; do
@@ -838,7 +838,7 @@ update() {
 		upd_channel="${req_upd_channel:-"${def_upd_channel}"}"
 
 		upd_channel="${force_upd_channel:-"$upd_channel"}"
-		version="${force_ver:-"$version"}"
+		req_ver="${force_ver:-"$req_ver"}"
 
 		dist_dir="${QOSMATE_UPD_DIR}/${component}"
 		case "$upd_channel" in
@@ -848,15 +848,15 @@ update() {
 			*)
 				if [ -n "$sim_path" ]
 				then
-					log_msg "" "Updating $component to version '$ref' (update channel: '$upd_channel')."
+					log_msg "" "Updating $component to version '$upd_version' (update channel: '$upd_channel')."
 				else
-					get_gh_ref_data "$component" "$upd_channel" "$version" ref tarball_url ver_type || return 1
+					get_gh_ref_data "$component" "$upd_channel" "$req_ver" upd_version tarball_url ver_type || return 1
 					case "$upd_channel" in
 						commit=*)
 							# set update channel to 'commit=<full_commit_hash>'
-							upd_channel="${upd_channel%=*}=${ref}"
+							upd_channel="${upd_channel%=*}=${upd_version}"
 					esac
-					log_msg "" "Downloading $component, $ver_type '$ref' (update channel: '$upd_channel')."
+					log_msg "" "Downloading $component, $ver_type '$upd_version' (update channel: '$upd_channel')."
 					fetch_qosmate_component "$component" "$tarball_url" || { upd_failed; return 1; }
 				fi
 
@@ -876,7 +876,7 @@ update() {
 
 				exec_files="$(/bin/sh "$file_list_query_path" print_file_list "$component" EXEC)" &&
 				write_str_to_file "$exec_files" "${dist_dir}/exec_files" || { upd_failed; return 1; }
-				eval "ref_${component}"='$ref'
+				eval "ver_${component}"='$upd_version'
 				eval "upd_channel_${component}"='$upd_channel'
 
 				# fix-up paths if needed
@@ -932,7 +932,7 @@ install_qosmate_files() {
 	for component in $components; do
 		log_msg "" "Installing new $component files..."
 
-		eval "version=\"\${ref_${component}}\" upd_channel=\"\${upd_channel_${component}}\""
+		eval "version=\"\${ver_${component}}\" upd_channel=\"\${upd_channel_${component}}\""
 		[ -n "$version" ] && [ -n "$upd_channel" ] ||
 			{ inst_failed "Internal error: failed to get version and update channel for component '$component'."; return 1; }
 
