@@ -1120,7 +1120,7 @@ check_pkg_manager() {
             return 1
             ;;
         *)
-            error_out "Error: No supported package manager found."
+            error_out "No supported package manager found."
             return 1
             ;;
     esac
@@ -1241,7 +1241,7 @@ check_and_download_config() {
     if [ ! -f "$config_path" ]; then
         echo "Configuration file not found, downloading the latest version..."
         wget -O $config_path "${QOSMATE_GH_RAW_URL_BACKEND_MAIN}/etc/config/qosmate" || {
-            echo "Error downloading configuration. Please check your internet connection and try again."
+            error_out "Failed to download config. Please check your internet connection and try again."
             return 1
         }
         echo "Configuration file downloaded successfully."
@@ -1555,11 +1555,11 @@ parse_speedtest_output() {
             awk "BEGIN{rv=1} \$0~/$direction:/ {print \$2; rv=0; exit} END{exit rv}"
             ;;
         *)
-            echo "Unexpected speedtest command '$speedtest_cmd'." >&2
+            error_out "Unexpected speedtest command '$speedtest_cmd'."
             false
             ;;
     esac || {
-        echo "Failed to get the $direction speed." >&2
+        error_out "Failed to get the $direction speed."
         echo "0"
         return 1
     }
@@ -1591,7 +1591,7 @@ auto_setup() {
     L3_DEVICE=$(ifstatus wan | grep -e '"l3_device"' | cut -d'"' -f4)
 
     if [ -z "$WAN_INTERFACE" ] && [ -z "$L3_DEVICE" ]; then
-        echo "Error: Unable to detect WAN interface. Please set it manually in the configuration."
+        error_out "Unable to detect WAN interface. Please set it manually in the configuration."
         return 1
     fi
 
@@ -1682,15 +1682,15 @@ auto_setup() {
                     if [ $? -eq 0 ]; then
                         SPEEDTEST_CMD="speedtest-go"
                     else
-                        echo "Failed to install speedtest-go. Attempting to install python3-speedtest-cli instead..."
+                        error_out "Failed to install speedtest-go. Attempting to install python3-speedtest-cli instead..."
                     fi
                 fi
 
                 # If speedtest-go installation failed or there wasn't enough space, try python3-speedtest-cli
                 if [ -z "$SPEEDTEST_CMD" ]; then
                     if [ "$FREE_SPACE" -lt 1024 ]; then  # 1MB for python3-speedtest-cli
-                        echo "Error: Not enough free space to install any speedtest tool."
-                        echo "Auto-setup cannot continue. Please free up some space and try again."
+                        error_out "Error: Not enough free space to install any speedtest tool." \
+                            "Auto-setup cannot continue. Please free up some space and try again."
                         return 1
                     fi
                     case "$pkg_manager" in
@@ -1704,7 +1704,7 @@ auto_setup() {
                     if [ $? -eq 0 ]; then
                         SPEEDTEST_CMD="speedtest --simple"
                     else
-                        echo "Failed to install python3-speedtest-cli. Auto-setup cannot continue."
+                        error_out "Failed to install python3-speedtest-cli. Auto-setup cannot continue."
                         return 1
                     fi
                 fi
@@ -1759,7 +1759,7 @@ auto_setup() {
     if [ -f /etc/config/qosmate ]; then
         cp /etc/config/qosmate "$temp_config_file"
     else
-        echo "Error: config file '/etc/config/qosmate' not found."
+        error_out "config file '/etc/config/qosmate' not found."
         return 1
     fi
 
@@ -1796,7 +1796,7 @@ EOF
     fi &&
     mv "$temp_config_file" /etc/config/qosmate ||
     {
-        echo "Failed to modify the config. Please check the file /etc/config/qosmate" >&2
+        error_out "Failed to modify the config. Please check the file /etc/config/qosmate"
         return 1
     }
 
