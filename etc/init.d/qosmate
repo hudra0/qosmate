@@ -793,6 +793,20 @@ update() {
 			return 1
 	esac
 
+	req_upd_channel="${force_upd_channel:-"${req_upd_channel}"}"
+	req_ver="${force_ver:-"${req_ver}"}"
+
+	# updating multiple components to same commit hash makes no sense
+	case "$req_upd_channel" in
+		snapshot|branch=*|commit=*)
+			case "$upd_components" in BACKEND*FRONTEND|FRONTEND*BACKEND)
+				[ -n "$req_ver" ] && {
+					upd_failed "Can not update multiple components '$upd_components' to version '$req_ver'."
+					return 1
+				}
+			esac
+	esac
+
 	rm -rf "${QOSMATE_UPD_DIR:-?}"
 	try_mkdir -p "$QOSMATE_UPD_DIR" || { upd_failed; return 1; }
 
@@ -800,9 +814,9 @@ update() {
 	then
 		log_msg "Updating in simulation mode."
 		[ -d "$sim_path" ] || { upd_failed "Update simulation directory '$sim_path' does not exist."; return 1; }
-		[ -n "$ver_str_arg" ] || { upd_failed "Specify new version string."; return 1; }
+		[ -n "${req_ver}" ] || { upd_failed "Specify new version."; return 1; }
 		def_upd_channel=release
-		upd_version="$ver_str_arg"
+		upd_version="${req_ver}"
 		: "${req_upd_channel:="${def_upd_channel}"}"
 
 		for component in $upd_components; do
@@ -836,9 +850,6 @@ update() {
 		esac
 
 		upd_channel="${req_upd_channel:-"${def_upd_channel}"}"
-
-		upd_channel="${force_upd_channel:-"$upd_channel"}"
-		req_ver="${force_ver:-"$req_ver"}"
 
 		dist_dir="${QOSMATE_UPD_DIR}/${component}"
 		case "$upd_channel" in
