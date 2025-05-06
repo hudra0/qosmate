@@ -1913,16 +1913,6 @@ health_check() {
     local status=""
     local errors=0
 
-    # Check files existence and md5sums
-	for component in ${QOSMATE_COMPONENTS}; do
-		if check_files_integrity "$component"; then
-			status="${status}${component}_integrity:ok;"
-		else
-			status="${status}${component}_integrity:failed;"
-			errors=$((errors + 1))
-		fi
-	done
-
     load_config
     
     # Check if the service is enabled
@@ -1971,6 +1961,16 @@ health_check() {
         status="${status}packages:missing:${missing_packages};"
         errors=$((errors + 1))
     fi
+    
+    # Check files existence and md5sums
+	for component in ${QOSMATE_COMPONENTS}; do
+		if check_files_integrity "$component"; then
+			status="${status}${component}_integrity:ok;"
+		else
+			status="${status}${component}_integrity:failed;"
+			errors=$((errors + 1))
+		fi
+	done
     
     # Output status
     echo "status=$status;errors=$errors"
