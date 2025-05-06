@@ -638,9 +638,84 @@ Available commands:
         auto_setup_noninteractive   Automatically configure qosmate with no interaction
 ```
 ### Update QoSmate
-```
+QoSmate includes a flexible update system to keep your installation current with the latest features and improvements.
+
+#### Basic Update
+
+To update QoSmate to the latest release version:
+
+```bash
 /etc/init.d/qosmate update
 ```
+
+This command will:
+- Check for updates to both backend and frontend components
+- Download and install the latest release versions if available
+- Restart the service automatically if required
+
+QoSmate will preserve your existing configuration settings during updates.
+
+#### Advanced Update Options
+
+For more control over the update process, QoSmate supports several command-line options:
+
+```bash
+/etc/init.d/qosmate update [options]
+```
+
+| Option | Description | Example |
+| ------ | ----------- | ------- |
+| `-c COMPONENT` | Update only a specific component (BACKEND or FRONTEND) | `-c BACKEND` |
+| `-v VERSION_OR_CHANNEL` | Specify version or channel in various formats: <br>- Version number: `-v 1.2.0` <br>- Channel selection: `-v release`, `-v snapshot` <br>- Branch selection: `-v branch=dev` <br>- Commit hash: `-v commit=a1b2c3d4` | `-v 1.2.0` |
+| `-f` | Force update even if no newer version is available | `-f` |
+| `-i` | Ignore cache results | `-i` |
+| `-U CHANNEL` | Override update channel (takes precedence over -v) | `-U snapshot` |
+
+#### Update Channels
+
+- `release`: Stable versions (recommended for most users)
+- `snapshot`: Latest code from the main branch
+- `branch=NAME`: Code from a specific branch
+- `commit=HASH`: Specific commit version
+
+#### Usage Examples
+
+Check for available updates without installing them:
+```bash
+/etc/init.d/qosmate check_version
+```
+
+Update only the backend component:
+```bash
+/etc/init.d/qosmate update -c BACKEND
+```
+
+Update to a specific version:
+```bash
+/etc/init.d/qosmate update -v 1.2.0
+```
+
+Update to the latest release version:
+```bash
+/etc/init.d/qosmate update -v release
+```
+
+Update to the latest snapshot (development) version:
+```bash
+/etc/init.d/qosmate update -v snapshot
+```
+
+Update to a specific branch:
+```bash
+/etc/init.d/qosmate update -v branch=dev
+```
+
+Update to a specific commit hash:
+```bash
+/etc/init.d/qosmate update -v commit=a1b2c3d4e5f6...
+```
+
+> **Note**: The default update approach (using the release channel) is recommended for most users. Other update channels and options are primarily intended for testing and development purposes.
 
 ## Troubleshooting
 If you encounter issues with the script or want to verify that it's working correctly, follow these steps:
