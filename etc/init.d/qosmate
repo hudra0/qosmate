@@ -1,29 +1,1096 @@
 #!/bin/sh /etc/rc.common
-# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016
+# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC3060
 
 START=99
 STOP=99
 
 USE_PROCD=1
 
+VERSION="dev"
+UPD_CHANNEL="release"
+
 EXTRA_COMMANDS="check_version update auto_setup expand_config auto_setup_noninteractive validate_custom_rules health_check"
-EXTRA_HELP="        check_version   Check for updates
-        update          Update qosmate
-        auto_setup      Automatically configure qosmate
-        expand_config   Expand the configuration with all possible options
-        auto_setup_noninteractive   Automatically configure qosmate with no interaction
-        validate_custom_rules    Validate custom rules
-        health_check    Check if QoSmate is properly configured and running"
+EXTRA_HELP="
+        check_version              Check for updates
+        update                     Update qosmate
+        auto_setup                 Automatically configure qosmate
+        expand_config              Expand the configuration with all possible options
+        auto_setup_noninteractive  Automatically configure qosmate with no interaction
+        validate_custom_rules      Validate custom rules
+        health_check               Check if QoSmate is properly configured and running"
 
 REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake kmod-sched-red luci-lib-jsonc lua jq"
 
-# Base URL (raw) for repositories (can be overridden for different branches/commits)
-QOSMATE_BASE_URL="${QOSMATE_BASE_URL:-https://raw.githubusercontent.com/hudra0/qosmate/main}"
-QOSMATE_FRONTEND_BASE_URL="${QOSMATE_FRONTEND_BASE_URL:-https://raw.githubusercontent.com/hudra0/luci-app-qosmate/main}"
-QOSMATE_FRONTEND_URL_JS="$QOSMATE_FRONTEND_BASE_URL/htdocs/luci-static/resources/view"
-QOSMATE_FRONTEND_PATH_JS=/www/luci-static/resources/view/qosmate
+### Utility vars
+_NL_='
+'
+DEFAULT_IFS=" 	${_NL_}"
+IFS="$DEFAULT_IFS"
 
-QOSMATE_JS_FILES="settings hfsc cake advanced rules connections custom_rules ipsets statistics"
+
+### repo-related vars
+
+# GH repo author (can be overriden for testing)
+: "${QOSMATE_REPO_AUTHOR:=hudra0}"
+
+MAIN_BRANCH_BACKEND=main
+MAIN_BRANCH_FRONTEND=main
+
+# GH API URLs (can be overridden)
+: "${QOSMATE_GH_API_URL:="https://api.github.com/repos/${QOSMATE_REPO_AUTHOR}"}"
+: "${QOSMATE_GH_API_URL_BACKEND:="${QOSMATE_GH_API_URL}/qosmate"}"
+: "${QOSMATE_GH_API_URL_FRONTEND:="${QOSMATE_GH_API_URL}/luci-app-qosmate"}"
+
+# GH raw backend URL (can be overridden)
+: "${QOSMATE_GH_RAW_URL_BACKEND_MAIN:="https://raw.githubusercontent.com/${QOSMATE_REPO_AUTHOR}/qosmate/${MAIN_BRANCH_BACKEND}"}"
+
+
+### Local paths
+
+# Local path of JS files
+QOSMATE_UPD_DIR=/var/run/qosmate-update
+
+### Components
+QOSMATE_COMPONENTS="BACKEND FRONTEND"
+QOSMATE_FILES_REG_PATH_BACKEND=/etc/qosmate.d/backend_reg.md5
+QOSMATE_FILES_REG_PATH_FRONTEND=/etc/qosmate.d/frontend_reg.md5
+
+### Backend files
+QOSMATE_SERVICE_PATH=/etc/init.d/qosmate
+
+# stores the version and update channel
+QOSMATE_MAIN_FILE_BACKEND=$QOSMATE_SERVICE_PATH
+
+QOSMATE_FILE_TYPES_BACKEND="GEN EXTRA" # change the value if adding more types
+QOSMATE_GEN_FILES_BACKEND="
+	$QOSMATE_SERVICE_PATH
+	/etc/qosmate.sh
+	/usr/lib/tc/experimental.dist
+	/usr/lib/tc/normal.dist
+	/usr/lib/tc/normmix20-64.dist
+	/usr/lib/tc/pareto.dist
+	/usr/lib/tc/paretonormal.dist"
+QOSMATE_EXEC_FILES_BACKEND="
+	$QOSMATE_SERVICE_PATH
+	/etc/qosmate.sh"
+QOSMATE_EXTRA_FILES_BACKEND="" # might be useful in the future?
+
+
+### Frontend files
+### !!! When adding or removing frontend (or other) files which need path fixups,
+###       remember to update appropriate fixup files
+
+QOSMATE_FRONTEND_DIR_JS=/www/luci-static/resources/view/qosmate
+
+# stores the version and update channel
+QOSMATE_MAIN_FILE_FRONTEND="${QOSMATE_FRONTEND_DIR_JS}/settings.js" 
+
+QOSMATE_FILE_TYPES_FRONTEND="GEN EXTRA JS" # change the value if adding more types
+QOSMATE_GEN_FILES_FRONTEND="
+	/usr/share/luci/menu.d/luci-app-qosmate.json
+	/usr/share/rpcd/acl.d/luci-app-qosmate.json
+	/usr/libexec/rpcd/luci.qosmate
+	/usr/libexec/rpcd/luci.qosmate_stats"
+QOSMATE_EXTRA_FILES_FRONTEND="" # might be useful in the future?
+
+QOSMATE_JS_FILENAMES="
+	settings.js
+	hfsc.js
+	cake.js
+	advanced.js
+	rules.js
+	connections.js
+	custom_rules.js
+	ipsets.js
+	statistics.js"
+# generate js file list with paths
+QOSMATE_JS_FILES_FRONTEND=
+for js_file in ${QOSMATE_JS_FILENAMES}; do
+	QOSMATE_JS_FILES_FRONTEND="${QOSMATE_JS_FILES_FRONTEND}${QOSMATE_FRONTEND_DIR_JS}/${js_file}${_NL_}"
+done
+
+QOSMATE_EXEC_FILES_FRONTEND="
+	/usr/libexec/rpcd/luci.qosmate
+	/usr/libexec/rpcd/luci.qosmate_stats"
+
+
+# Silence shellcheck unused vars warnings
+: "$START" "$STOP" "$USE_PROCD" "$VERSION" "$UPD_CHANNEL" "$EXTRA_COMMANDS" "$EXTRA_HELP" "$REQUIRED_PACKAGES" \
+	"$MAIN_BRANCH_FRONTEND" "$QOSMATE_FILES_REG_PATH_BACKEND" "$QOSMATE_FILES_REG_PATH_FRONTEND" \
+	"$QOSMATE_MAIN_FILE_BACKEND" "$QOSMATE_FILE_TYPES_BACKEND" "$QOSMATE_GEN_FILES_BACKEND" \
+	"$QOSMATE_EXEC_FILES_BACKEND" "$QOSMATE_EXTRA_FILES_BACKEND" "$QOSMATE_FILE_TYPES_FRONTEND" \
+	"$QOSMATE_GEN_FILES_FRONTEND" "$QOSMATE_EXTRA_FILES_FRONTEND" "$QOSMATE_EXEC_FILES_FRONTEND"
+
+
+### Utility functions
+
+# 1 - string
+# 2 - path to file
+write_str_to_file() {
+	printf '%s\n' "$1" > "$2" || { error_out "Failed to write to file '$2'."; return 1; }
+	:
+}
+
+# 0 - (optional) '-p'
+# 1 - path
+try_mkdir() {
+	local IFS="$DEFAULT_IFS" p=
+	[ "$1" = '-p' ] && { p='-p'; shift; }
+	[ -d "$1" ] && return 0
+	mkdir ${p} "$1" || { error_out "Failed to create directory '$1'."; return 1; }
+	:
+}
+
+check_util() { command -v "$1" 1>/dev/null; }
+
+error_out() { log_msg -err "${@}"; }
+
+# prints each argument to a separate line
+print_msg() {
+	local _arg
+	for _arg in "$@"
+	do
+		case "${_arg}" in
+			'') printf '\n' ;; # print out empty lines
+			*) printf '%s\n' "${_arg}"
+		esac
+	done
+	:
+}
+
+# logs each argument separately and prints to a separate line
+# optional arguments: '-err', '-warn' to set logged error level
+log_msg() {
+	local msgs_prefix='' _arg err_l=info msgs_dest
+
+	local IFS="$DEFAULT_IFS"
+	for _arg in "$@"
+	do
+		case "${_arg}" in
+			"-err") err_l=err msgs_prefix="Error: " ;;
+			"-warn") err_l=warn msgs_prefix="Warning: " ;;
+			'') printf '\n' ;; # print out empty lines
+			*)
+				case "$err_l" in
+					err|warn) msgs_dest="/dev/stderr" ;;
+					*) msgs_dest="/dev/stdout"
+				esac
+				printf '%s\n' "${msgs_prefix}${_arg}" > "$msgs_dest"
+				logger -t qosmate -p user."$err_l" "${msgs_prefix}${_arg}"
+				msgs_prefix=''
+		esac
+	done
+	:
+}
+
+# check if var names are safe to use with eval
+are_var_names_safe() {
+	local var_name
+	for var_name in "$@"; do
+		case "$var_name" in *[!a-zA-Z_]*) error_out "Invalid var name '$var_name'."; return 1; esac
+	done
+	:
+}
+
+### Update-related functions
+
+# 1 - component: <BACKEND|FRONTEND>
+# return codes:
+# 0 - OK
+# 1 - general error
+# 2 - missing files
+# 3 - non-matching md5sums
+check_files_integrity() {
+	local reg_file file files file_types component="$1"
+
+	files=
+	eval "file_types=\"\${QOSMATE_FILE_TYPES_${component}}\"
+		reg_file=\"\${QOSMATE_FILES_REG_PATH_${component}}\""
+
+	files="$(print_file_list "$component" ALL)" && [ -n "$files" ] ||
+		{ error_out "Failed to get file list for component '$component'."; return 1; }
+	
+	local IFS="$_NL_"
+	for file in ${reg_file}${_NL_}${files}; do
+		[ -n "$file" ] || continue
+		[ -f "$file" ] || { error_out "Missing file: '$file'."; return 2; }
+	done
+
+	IFS="$DEFAULT_IFS"
+	md5sum -c "$reg_file" &>/dev/null || return 3
+	:
+}
+
+# 1 - component: BACKEND|FRONTEND
+# 2 - types: 'ALL' (doesn't print executable files) or any combination (space-separated) of 'GEN', 'EXTRA', 'JS', 'EXEC'
+print_file_list() {
+	local me=print_file_list file_type files='' \
+		component="$1" file_types="$2"
+
+	[ -n "$1" ] && [ -n "$2" ] || { error_out "$me: missing args."; return 1; }
+
+	case "$component" in
+		BACKEND|FRONTEND) ;;
+		*) error_out "$me: invalid component '$component'."; return 1
+	esac
+
+	if [ "$file_types" = ALL ]; then
+		eval "file_types=\"\${QOSMATE_FILE_TYPES_${component}}\""
+	fi
+
+	for file_type in ${file_types}; do
+		case "$file_type" in
+			GEN|EXTRA|JS|EXEC)
+				eval "files=\"${files}\${QOSMATE_${file_type}_FILES_${component}}${_NL_}\"" ;;
+			*) error_out "$me: invalid type '$file_type'"; return 1
+		esac
+	done
+
+	# remove extra newlines, leading and trailing whitespaces and tabs
+	printf '%s\n' "$files" | sed "s/^\s*//;s/\s*$//;/^$/d"
+	:
+}
+
+# When updating, old version of the script should call post_update_[X] functions from the new version
+#   post_update_1 should be called via '/bin/sh <qosmate_init_preinst_path> post_update_1' *before* new version is installed
+#   post_update_2 should be called via '/bin/sh "$QOSMATE_SERVICE_PATH" post_update_2' *after* new version is installed
+# This allows flexibility when adding new features etc.
+post_update_1() {
+	:
+	# <do something...>
+	return $?
+}
+
+post_update_2() {
+	# <do something...>
+    expand_config
+	return $?
+}
+
+# Fetches qosmate distribution for specified component
+# 1 - component (BACKEND|FRONTEND)
+# 2 - tarball url
+fetch_qosmate_component() {
+	[ -n "$1" ] && [ -n "$2" ] || { error_out "fetch_qosmate_component: missing arguments."; return 1; }
+
+	local component="$1" fetch_tarball_url="$2"
+	local fetch_rv extract_dir upd_dir="${QOSMATE_UPD_DIR}/${component}"
+	local tarball="${upd_dir}/remote_qosmate.tar.gz" ucl_err_file="${upd_dir}/ucl_err"
+
+	case "$component" in
+		BACKEND) repo_name=qosmate ;;
+		FRONTEND) repo_name=luci-app-qosmate ;;
+		*) error_out "$me: invalid component '$component'."; return 1
+	esac
+
+	rm -f "$ucl_err_file" "${tarball}"
+	rm -rf "${upd_dir}/${QOSMATE_REPO_AUTHOR}-${repo_name}-"*
+	try_mkdir -p "$upd_dir" || return 1
+
+	uclient-fetch "$fetch_tarball_url" -O "${tarball}" 2> "$ucl_err_file" &&
+	grep -q "Download completed" "$ucl_err_file" &&
+	tar -C "${upd_dir}" -xzf "${tarball}" &&
+	extract_dir="$(find "${upd_dir}/" -type d -name "${QOSMATE_REPO_AUTHOR}-${repo_name}-*")" &&
+		[ -n "$extract_dir" ] && [ "$extract_dir" != "/" ]
+	fetch_rv=${?}
+	rm -f "${tarball}"
+
+	[ "$fetch_rv" != 0 ] && [ -s "$ucl_err_file" ] &&
+		log_msg "uclient-fetch output: ${_NL_}$(cat "$ucl_err_file")."
+	rm -f "$ucl_err_file"
+
+	[ "$fetch_rv" = 0 ] && {
+		mv "${extract_dir:-?}"/* "${upd_dir:-?}/" ||
+			{ rm -rf "${extract_dir:-?}"; error_out "Failed to move files to dist dir."; return 1; }
+	}
+	rm -rf "${extract_dir:-?}"
+
+	return $fetch_rv
+}
+
+# Get GitHub ref and tarball url for specified component, update channel, branch and version
+# 1 - component (BACKEND|FRONTEND)
+# 2 - update channel: release|snapshot|branch=<github_branch>|commit=<commit_hash>
+# 3 - version (optional): [qosmate_version|commit_hash]
+# Output via variables:
+#   $4 - github ref (version/commit hash), $5 - tarball url, $6 - version type ('version' or 'commit')
+get_gh_ref_data() {
+	set_res_vars() {
+		if [ "$gh_channel" = release ]; then
+			version="${gh_ref#v}"
+		else
+			version="$gh_ref"
+		fi
+		eval "$4"='$version' "$5"='${gh_url_api}/tarball/${gh_ref}' "$6"='$gh_ver_type' \
+			"${component}_prev_ref"='$gh_ref' "${component}_prev_ver_type"='$gh_ver_type' \
+			"${component}_prev_upd_channel"='$gh_channel' "${component}_prev_version"='$version'
+	}
+
+	local branch branches='' main_branch grep_ptrn='' \
+		gh_ref='' gh_ver_type='' gh_url_api ref_fetch_tmp_dir="/tmp/qosmate-gh" ref_fetch_rv=0 \
+		prev_ref prev_ver_type prev_upd_channel prev_version \
+		component="$1" gh_channel="$2" version="$3"
+	
+	[ "$gh_channel" = release ] && version="${version#v}"
+
+	local ref_ucl_err_file="${ref_fetch_tmp_dir}/ucl_err"
+
+	are_var_names_safe "$4" "$5" "$6" || return 1
+	eval "$4='' $5='' $6='' gh_url_api=\"\${QOSMATE_GH_API_URL_${component}}\""
+
+	eval "prev_ref=\"\${${component}_prev_ref}\"
+		prev_ver_type=\"\${${component}_prev_ver_type}\"
+		prev_upd_channel=\"\${${component}_prev_upd_channel}\"
+		prev_version=\"\${${component}_prev_version}\""
+
+	# if previously stored data exists, use it without API query or cache check
+	if [ -n "$prev_ref" ] && [ -n "$prev_ver_type" ] && \
+		[ "$prev_upd_channel" = "$gh_channel" ] && [ "$version" = "$prev_version" ]; then
+			gh_ref="$prev_ref" gh_ver_type="$prev_ver_type"
+	else
+		# if commit hash is specified and it's 40-char long, use it directly without API query or cache check
+		case "$gh_channel" in
+			snapshot|branch=*|commit=*) [ "${#version}" = 40 ] && gh_ref="$version"
+		esac
+
+		if [ -z "$gh_ref" ]; then
+			# ref cache
+			local cache_file cache_filename="${component}_${version}_${gh_channel}" ref_cache_dir="/tmp/qosmate_cache" cache_ttl
+			case "$gh_channel" in
+				commit=*) cache_ttl=2880 ;; # 48 hours
+				*) cache_ttl=10 # 10 minutes
+			esac
+
+			# clean up old cache
+			find "${ref_cache_dir:-?}" -maxdepth 1 -type f -mmin +"${cache_ttl}" -exec rm -f {} \; 2>/dev/null
+
+			# check if the query is cached
+			cache_file="$(find "${ref_cache_dir:-?}" -maxdepth 1 -type f -name "${cache_filename}" -print 2>/dev/null)"
+			case "$cache_file" in
+				'') ;; # found nothing
+				*[^"$_NL_"]*"${_NL_}"*[^"${_NL_}"]*)
+					# found multiple files - delete them
+					local file IFS="$_NL_"
+					for file in $cache_file; do
+						[ -n "$file" ] || continue
+						rm -f "$file"
+					done
+					IFS="$DEFAULT_IFS" ;;
+				*)
+					# found cached query
+					if [ -z "$IGNORE_CACHE" ] && [ -f "$cache_file" ] && read -r prev_ref prev_ver_type < "$cache_file" &&
+						[ -n "$prev_ref" ] && [ -n "$prev_ver_type" ]; then
+							gh_ref="$prev_ref" gh_ver_type="$prev_ver_type"
+					else
+						rm -f "${cache_file:-???}"
+					fi
+			esac
+		fi
+	fi
+
+	if [ -n "$gh_ref" ]; then
+		set_res_vars "$@"
+		return 0
+	fi
+
+	try_mkdir -p "$ref_fetch_tmp_dir" || return 1
+	rm -f "$ref_ucl_err_file"
+
+	eval "main_branch=\"\${MAIN_BRANCH_${component}}\""
+	case "$gh_channel" in
+		release)
+			gh_ver_type=version
+			[ -n "$version" ] && grep_ptrn="^v${version}$" ;;
+		snapshot)
+			gh_ver_type=commit
+			branches="$main_branch"
+			if [ -n "$version" ]; then
+				grep_ptrn="^${version}$"
+			fi ;;
+		branch=*)
+			gh_ver_type=commit
+			branches="${gh_channel#*=}"
+			if [ -n "$version" ]; then
+				grep_ptrn="^${version}$"
+			fi ;;
+		commit=*)
+			gh_ver_type=commit
+			local gh_hash="${gh_channel#*=}"
+
+			if [ "${#gh_hash}" = 40 ]; then
+				# if upd. ch. is 'commit', the upd. ch. string includes commit hash -
+				#    if it's 40-char long, use it directly without API query
+				gh_ref="$gh_hash"
+			else
+				branches="$(
+					uclient-fetch "${gh_url_api}/branches" -O-  2> "$ref_ucl_err_file" |
+						{ jsonfilter -e '@[@]["name"]'; cat 1>/dev/null; }
+				)"
+				[ -n "$branches" ] || {
+					error_out "Failed to get $component branches via GH API (url: '${gh_url_api}/branches')."
+					[ -f "$ref_ucl_err_file" ] &&
+						log_msg "uclient-fetch log:${_NL_}$(cat "$ref_ucl_err_file")"
+						rm -f "$ref_ucl_err_file"
+					return 1
+				}
+				rm -f "$ref_ucl_err_file"
+				grep_ptrn="^${gh_hash}"
+			fi ;;
+		*)
+			error_out "Invalid update channel '$gh_channel'."
+			return 1
+	esac
+
+	# Get ref via GH API
+	[ -z "$gh_ref" ] && gh_ref="$(
+		case "$gh_channel" in
+			release)
+				uclient-fetch "${gh_url_api}/releases" -O- 2> "$ref_ucl_err_file" | {
+					jsonfilter -e '@[@.prerelease=false]' |
+					jsonfilter -a -e "@[@.target_commitish=\"${main_branch}\"].tag_name"
+					cat 1>/dev/null
+				} ;;
+			snapshot|branch=*|commit=*)
+				for branch in $branches; do
+					ref_fetch_url="${gh_url_api}/commits?sha=${branch}"
+					uclient-fetch "${ref_fetch_url}" -O- 2> "$ref_ucl_err_file" | {
+						jsonfilter -e '@[@.commit]["url"]' |
+						sed 's/.*\///' # only leave the commit hash
+						cat 1>/dev/null
+					}
+				done
+		esac |
+		{
+			if [ -n "$grep_ptrn" ]; then
+				grep "$grep_ptrn"
+			else
+				head -n1 # get latest version or commit
+			fi
+			cat 1>/dev/null
+		}
+	)"
+
+	if [ -z "$gh_ref" ] && [ -f "$ref_ucl_err_file" ] && ! grep -q "Download completed" "$ref_ucl_err_file"; then
+		error_out "Failed to get $component GitHub download URL for $gh_ver_type '$version' (update channel: '$gh_channel')." \
+			"uclient-fetch log:${_NL_}$(cat "$ref_ucl_err_file")"
+		ref_fetch_rv=1
+	fi
+	rm -rf "${ref_fetch_tmp_dir:-?}"
+	[ "$ref_fetch_rv" = 0 ] || return 1
+
+	# validate resulting ref
+	case "$gh_ref" in
+		*[^"$_NL_"]*"${_NL_}"*[^"${_NL_}"]*)
+			error_out "Got multiple $component download URLs for version '$version'." \
+				"If using commit hash, please specify the complete commit hash string."
+			return 1 ;;
+		''|*[!a-zA-Z0-9._-]*)
+			error_out "Failed to get $component GitHub download URL for $gh_ver_type '$version' (update channel: '$gh_channel')."
+			return 1
+	esac
+
+	# write the query result to cache
+	try_mkdir -p "$ref_cache_dir" &&
+	printf '%s\n' "$gh_ref $gh_ver_type" > "${ref_cache_dir}/${cache_filename}"
+
+	set_res_vars "$@"
+	:
+}
+
+# get update channel and version from local frontend file
+# 1 - var name for version output
+# 2 - var name for upd. channel output
+# 3 - path to file
+get_frontend_spec() {
+	local me=get_frontend_spec rv=0 failed_spec='' spec_res='' spec_line
+		spec_path="$3"
+
+	are_var_names_safe "$1" "$2" || return 1
+	[ -n "$3" ] || { error_out "$me: missing args."; return 1; }
+
+	# assumes string enclosed in FS and no prior FS present in the line
+	spec_res="$(
+		awk -v v_ptrn_1="^[ 	]*const UI_VERSION[ 	]*=" -v v_ptrn_2="^[-a-zA-Z0-9_.]+$" \
+			-v u_ptrn_1="^[ 	]*const UI_UPD_CHANNEL[ 	]*=" -v u_ptrn_2="^[-a-zA-Z0-9_.=]+$" \
+			-F "'" '
+				BEGIN{rv=1}
+				{
+					if (v_match_res != "" && u_match_res != "") {rv = v_match_res + u_match_res; exit}
+				}
+				$0~v_ptrn_1 {
+					v_match_res=2
+					if ( $2~v_ptrn_2 ) {print "version:" $2; v_match_res=0}
+					next
+				}
+				$0~u_ptrn_1 {
+					u_match_res=3
+					if ( $2~u_ptrn_2 ) {print "upd_channel:" $2; u_match_res=0}
+					next
+				}
+				END{exit rv}
+			' "$spec_path"
+		)" || {
+			rv=$?
+			case $rv in
+				2) failed_spec=version ;;
+				3) failed_spec="update channel" ;;
+				*) failed_spec="version and update channel" ;;
+			esac
+			error_out "$me: Failed to get frontend $failed_spec from file '$spec_path'."
+		}
+
+		local IFS="$_NL_"
+		for spec_line in $spec_res; do
+			case "$spec_line" in
+				'') continue ;;
+				version:*) eval "$1"='${spec_line#*:}' ;;
+				upd_channel:*) eval "$2"='${spec_line#*:}' ;;
+				*) error_out "$me: got unexpected string when parsing file '$spec_path'."; return 1
+			esac
+		done
+		return $rv
+}
+
+# Get version and update channel from local file or from repo
+# 1 - var name for version output
+# 2 - var name for update channel output
+# 3 - component (BACKEND|FRONTEND)
+# 4 - origin (local|remote)
+# Error codes: 1 - failed to get version, 2 - got invalid version
+get_component_spec() {
+	local gv_version='' gv_upd_channel='' me=get_component_spec \
+		gv_component="$3" gv_origin="$4"
+
+	are_var_names_safe "$1" "$2" || return 1
+
+	# get update channel
+	case "$gv_component" in
+		BACKEND) gv_upd_channel="$UPD_CHANNEL" ;;
+		FRONTEND) get_frontend_spec gv_version gv_upd_channel "$QOSMATE_MAIN_FILE_FRONTEND" || return 1 ;;
+		*) error_out "$me: invalid component '$gv_component'."; return 1
+	esac
+
+	# get version
+	case "$gv_origin" in
+		local) [ "$gv_component" = BACKEND ] && gv_version="$VERSION" ;;
+		remote) get_gh_ref_data "$gv_component" "$gv_upd_channel" "" gv_version _ _ || return 1 ;;
+		*) error_out "$me: invalid origin '$gv_origin'."; return 1
+	esac
+
+	: "$gv_version" # Silence shellcheck warning
+
+	eval "$1"='$gv_version'
+	eval "$2"='$gv_upd_channel'
+
+	:
+}
+
+# Check and print versions for local and remote backend and frontend
+# sets global variables: $BACKEND_upd_avail, $FRONTEND_upd_avail
+# (optional) '-n' to not print update tip
+# (optional) '-i' to ignore cache
+# (optional) '-c <BACKEND|FRONTEND>''
+# Return codes:
+# 0 - no update
+# 1 - error
+# 254 - update available
+check_version() {
+	local origin notify_origin components='' components_arg='' component notify_component cv_version cv_upd_channel local_version \
+		upd_avail='' no_print_tip=
+
+	while getopts ":c:ni" opt; do
+		case ${opt} in
+			c) components_arg=$OPTARG ;;
+			n) no_print_tip=1 ;;
+			i) IGNORE_CACHE=1 ;; # global var
+			*) ;;
+		esac
+	done
+
+	components="${components_arg:-"$QOSMATE_COMPONENTS"}"
+	for component in $components; do
+		case "$component" in
+			BACKEND) notify_component=Backend ;;
+			FRONTEND) notify_component=Frontend ;;
+			*) error_out "check_version: invalid component '$component'."; return 1
+		esac
+
+		print_msg "$notify_component versions:"
+
+		local upd_ch_printed=
+		for origin in local remote; do
+			case "$origin" in
+				local) notify_origin=Current ;;
+				remote) notify_origin=Latest
+			esac
+
+			get_component_spec cv_version cv_upd_channel "$component" "$origin" || {
+				error_out "Failed to get $origin $component version." \
+					"To force re-installation of $component, use the command 'service qosmate update -f -c $component'."
+				return 1
+			}
+
+			[ -z "$upd_ch_printed" ] && { print_msg "  Update channel: $cv_upd_channel"; upd_ch_printed=1; }
+
+			case "$origin" in
+				local) local_version="$cv_version" ;;
+				remote)
+					if [ "$cv_version" = "$local_version" ]; then
+						unset "${component}_upd_avail"
+					else
+						upd_avail=1
+						eval "${component}_upd_avail=1"
+					fi
+			esac
+			printf '%s\n' "  $notify_origin version: $cv_version"
+		done
+	done
+
+	if [ -n "$upd_avail" ]; then
+		[ -z "$no_print_tip" ] && printf '\n%s\n%s\n' "A new version of QoSmate is available." \
+			"To update, run: /etc/init.d/qosmate update"
+		return 254
+	else
+		printf '\n%s\n' "QoSmate components '$components' are up to date."
+	fi
+	:
+}
+
+# Optional args:
+# -s <path> : simulate update (intended for testing: service qosmate update -s <path_to_new_ver> -v <version>)
+# -c <frontend|backend> : only update specified component
+# -v [<version>|package[=<version>]|release|snapshot|branch=<branch>|commit=<commit_hash>] : version string
+# -U <update_channel> : force this update channel (overrides the upd. channel derived from '-v' option)
+# -W <version> : force this version (overrides the version derived from '-v' option)
+# -f : force update
+# -i : ignore previous cache results
+update() {
+	upd_failed() {
+		rm -rf "${QOSMATE_UPD_DIR:-?}"
+		[ -n "$*" ] && error_out "$@"
+		error_out "Failed to update QoSmate."
+	}
+
+	pkg_update_not_impl() {
+		upd_failed "Update channel 'package' not implemented."
+	}
+
+	# 1 - fixup type: <file|dir>
+	# 2 - path to fixup file
+	# 3 - distribution dir
+	fixup_paths() {
+		local fixup_line fetched_path dest_path me=fixup_paths \
+			fixup_type="$1" fixup_file="$2" dist_dir="$3"
+		[ -n "$1" ] && [ -n "$2" ] && [ -n "$3" ] || { error_out "$me: missing args."; return 1; }
+
+		while IFS='' read -r fixup_line; do
+			case "$fixup_line" in
+				"#"*) continue ;; # skip comments
+				*=*)
+					fetched_path="${fixup_line%%=*}"
+					fetched_path="${fetched_path%/}"
+					dest_path="${fixup_line#*=}"
+					dest_path="${dest_path%/}"
+					[ -n "$fetched_path" ] && [ "$fetched_path" != "/" ] && [ -n "$dest_path" ] ||
+						{ error_out "$me: invalid line in fixup file: '$fixup_line'."; return 1; }
+					# warn about and skip non-existing files and directories
+					[ -e "${dist_dir:-???}${fetched_path:-???}" ] ||
+						{ log_msg -warn "$me: path '${dist_dir}${fetched_path}' does not exist."; continue; }
+					case "$fixup_type" in
+						dir)
+							try_mkdir -p "${dist_dir}${dest_path}" &&
+							mv "${dist_dir:-???}${fetched_path:-???}"/* "${dist_dir:-???}${dest_path:-???}/" ;;
+						file)
+							try_mkdir -p "${dist_dir}${dest_path%/*}" &&
+							mv "${dist_dir:-???}${fetched_path:-???}" "${dist_dir}${dest_path}" ;;
+						*) error_out "$me: invalid fixup type '$fixup_type'."; return 1
+					esac || {
+						error_out "Failed to move $fixup_type '${dist_dir}${fetched_path}' to '${dist_dir}${dest_path}'."
+						return 1
+					} ;;
+				*) continue
+			esac
+		done < "$fixup_file" || return 1
+		:
+	}
+
+	unexp_arg() { upd_failed "update: unexpected argument '$1'."; }
+
+	local file origin new_file_list exec_files sim_path='' req_ver='' ver_type ver_str_arg='' \
+		extract_dir='' dist_dir='' upd_version='' tarball_url='' file_list_query_path \
+		backend_upd_req='' upd_component_arg='' upd_components='' req_upd_components='' \
+		req_upd_channel upd_channel='' def_upd_channel='' force_upd_channel='' force_ver='' force_update=''
+
+	IGNORE_CACHE=
+	while getopts ":s:v:c:U:W:fi" opt; do
+		case ${opt} in
+			c) upd_component_arg=$OPTARG ;;
+			s) sim_path=$OPTARG ;;
+			v) ver_str_arg=$OPTARG force_update=1 ;;
+			U) force_upd_channel=$OPTARG force_update=1 ;;
+			W) force_ver=$OPTARG force_update=1 ;;
+			f) force_update=1 ;;
+			i) IGNORE_CACHE=1 ;; # global var
+			*) unexp_arg "$OPTARG"; return 1
+		esac
+	done
+	shift $((OPTIND-1))
+	[ -z "${*}" ] || { unexp_arg "${*}"; return 1; }
+
+	case "$upd_component_arg" in
+		'') ;;
+		backend|BACKEND) upd_component_arg=BACKEND ;;
+		frontend|FRONTEND) upd_component_arg=FRONTEND ;;
+		*) upd_failed "Unexpected component '$upd_component_arg'"; return 1
+	esac
+	req_upd_components="${upd_component_arg:-"$QOSMATE_COMPONENTS"}"
+
+	if [ -n "$force_update" ]; then
+		upd_components="$req_upd_components"
+	else
+		check_version -n -c "$req_upd_components"
+		case $? in
+			0) return 0 ;;
+			1) return 1 ;;
+			254)
+				print_msg "Updates available. Do you want to update? [y/N] "
+				read -r answer
+				case "$answer" in
+					y|Y) ;;
+					*)
+						print_msg "Update cancelled."
+						return 0
+				esac
+		esac
+		for component in $req_upd_components; do
+			eval "[ -n \"\${${component}_upd_avail}\" ]" && upd_components="${upd_components}${component} "
+		done
+	fi
+
+	log_msg "Updating QoSmate components '$upd_components'..."
+
+	# parse version string from arguments into $req_upd_channel, $req_ver
+	case "$ver_str_arg" in
+		'') ;;
+		package*)
+			pkg_update_not_impl
+			return 1 ;;
+		release)
+			req_upd_channel="${ver_str_arg}" req_ver='' ;;
+		snapshot)
+			req_upd_channel="${ver_str_arg}" req_ver='' ;;
+		commit=*)
+			req_upd_channel="${ver_str_arg}" req_ver="${ver_str_arg#*=}" ;;
+		branch=*)
+			req_upd_channel="$ver_str_arg" req_ver='' ;;
+		[0-9]*|v[0-9]*)
+			req_upd_channel=release
+			req_ver="${ver_str_arg#*=}"
+			req_ver="${req_ver#v}"
+			;;
+		*)
+			upd_failed "Invalid version string '$ver_str_arg'."
+			return 1
+	esac
+
+	req_upd_channel="${force_upd_channel:-"${req_upd_channel}"}"
+	req_ver="${force_ver:-"${req_ver}"}"
+
+	# updating multiple components to same commit hash makes no sense
+	case "$req_upd_channel" in
+		snapshot|branch=*|commit=*)
+			case "$upd_components" in BACKEND*FRONTEND|FRONTEND*BACKEND)
+				[ -n "$req_ver" ] && {
+					upd_failed "Can not update multiple components '$upd_components' to version '$req_ver'."
+					return 1
+				}
+			esac
+	esac
+
+	rm -rf "${QOSMATE_UPD_DIR:-?}"
+	try_mkdir -p "$QOSMATE_UPD_DIR" || { upd_failed; return 1; }
+
+	if [ -n "$sim_path" ]
+	then
+		log_msg "Updating in simulation mode."
+		[ -d "$sim_path" ] || { upd_failed "Update simulation directory '$sim_path' does not exist."; return 1; }
+		[ -n "${req_ver}" ] || { upd_failed "Specify new version."; return 1; }
+		def_upd_channel=release
+		upd_version="${req_ver}"
+		: "${req_upd_channel:="${def_upd_channel}"}"
+
+		for component in $upd_components; do
+			[ -d "${sim_path}/${component}" ] ||
+				{ upd_failed "Simulation source directory doesn't have ${component} directory"; return 1; }
+		done
+		cp -rT "$sim_path" "$QOSMATE_UPD_DIR"
+	fi
+
+	case "$upd_components" in *BACKEND*)
+		backend_upd_req=1
+	esac
+
+	for component in $upd_components; do
+		upd_channel=
+		# set default update channel
+		case "$component" in
+			BACKEND)
+				def_upd_channel="${UPD_CHANNEL:-release}" ;;
+			FRONTEND)
+				if [ -n "$req_upd_channel" ]; then
+					:
+				elif [ ! -f "$QOSMATE_MAIN_FILE_FRONTEND" ]; then
+					def_upd_channel=release
+				else
+					get_frontend_spec _ def_upd_channel "$QOSMATE_MAIN_FILE_FRONTEND" || {
+						error_out "Failed to get current FRONTEND update channel. Defaulting to 'release'."
+						def_upd_channel=release
+					}
+				fi
+		esac
+
+		upd_channel="${req_upd_channel:-"${def_upd_channel}"}"
+
+		dist_dir="${QOSMATE_UPD_DIR}/${component}"
+		case "$upd_channel" in
+			package)
+				pkg_update_not_impl
+				return 1 ;;
+			*)
+				if [ -n "$sim_path" ]
+				then
+					log_msg "" "Updating $component to version '$upd_version' (update channel: '$upd_channel')."
+				else
+					get_gh_ref_data "$component" "$upd_channel" "$req_ver" upd_version tarball_url ver_type || return 1
+					case "$upd_channel" in
+						commit=*)
+							# set update channel to 'commit=<full_commit_hash>'
+							upd_channel="${upd_channel%=*}=${upd_version}"
+					esac
+					log_msg "" "Downloading $component, $ver_type '$upd_version' (update channel: '$upd_channel')."
+					fetch_qosmate_component "$component" "$tarball_url" || { upd_failed; return 1; }
+				fi
+
+				if [ -n "$backend_upd_req" ]; then
+					file_list_query_path="${QOSMATE_UPD_DIR}/BACKEND${QOSMATE_SERVICE_PATH}"
+				else
+					file_list_query_path="${QOSMATE_SERVICE_PATH}"
+				fi
+
+				new_file_list="$(/bin/sh "$file_list_query_path" print_file_list "$component" ALL)" &&
+				write_str_to_file "$new_file_list" "${dist_dir}/new_file_list" &&
+				[ -n "$new_file_list" ] || {
+					upd_failed "Failed to get file list from the fetched QoSmate version." \
+						"NOTE: QoSmate versions prior to v1.2.0 do not support the new update mechanism."
+					return 1
+				}
+
+				exec_files="$(/bin/sh "$file_list_query_path" print_file_list "$component" EXEC)" &&
+				write_str_to_file "$exec_files" "${dist_dir}/exec_files" || { upd_failed; return 1; }
+				eval "ver_${component}"='$upd_version'
+				eval "upd_channel_${component}"='$upd_channel'
+
+				# fix-up paths if needed
+				local dir_fixup_file="${dist_dir}/dir_fixups.txt"
+				local path_fixup_file="${dist_dir}/file_fixups.txt"
+
+				if [ -s "$dir_fixup_file" ]; then
+					fixup_paths "dir" "$dir_fixup_file" "$dist_dir" || { upd_failed "Failed to fix-up dir paths."; return 1; }
+				fi
+
+				if [ -s "$path_fixup_file" ]; then
+					fixup_paths "file" "$path_fixup_file" "$dist_dir" || { upd_failed "Failed to fix-up file paths."; return 1; }
+				fi
+		esac
+	done
+
+	[ -n "$backend_upd_req" ] &&
+		/bin/sh "${QOSMATE_UPD_DIR}/BACKEND${QOSMATE_SERVICE_PATH}" post_update_1
+
+	case "$ver_str_arg" in
+		package*)
+			pkg_update_not_impl
+			return 1 ;;
+		*)
+			install_qosmate_files "$QOSMATE_UPD_DIR" "$upd_components" || { upd_failed; return 1; }
+			rm -rf "${QOSMATE_UPD_DIR:-?}"
+	esac
+
+	[ -n "$backend_upd_req" ] && chmod +x "$QOSMATE_SERVICE_PATH"
+	/bin/sh "$QOSMATE_SERVICE_PATH" post_update_2 # post_update_2 is called when updating either component
+
+	log_msg "QoSmate components '$upd_components' have been successfully updated."
+
+	if [ -n "$backend_upd_req" ] && "$QOSMATE_SERVICE_PATH" enabled; then
+		log_msg "" "Restarting QoSmate."
+    	${QOSMATE_SERVICE_PATH} restart
+	fi
+	:
+}
+
+# 1 - path to upper distribution dir (containing a dir for each component)
+# 2 - component(s): <BACKEND|FRONTEND|"BACKEND FRONTEND">
+install_qosmate_files() {
+	inst_failed() {
+		[ -n "$1" ] && error_out "$1"
+		error_out "Failed to install new $component files."
+	}
+
+	local file preinst_path curr_files new_file_list new_file_list exec_files='' \
+		dist_dir main_file_path frontend_updated='' \
+		upper_dist_dir="$1" components="$2" version upd_channel
+
+	for component in $components; do
+		log_msg "" "Installing new $component files..."
+
+		eval "version=\"\${ver_${component}}\" upd_channel=\"\${upd_channel_${component}}\""
+		[ -n "$version" ] && [ -n "$upd_channel" ] ||
+			{ inst_failed "Internal error: failed to get version and update channel for component '$component'."; return 1; }
+
+		dist_dir="${upper_dist_dir}/${component}"
+
+		# read new file list
+		new_file_list="$(cat "${dist_dir}/new_file_list")" && [ -n "$new_file_list" ] &&
+		exec_files="$(cat "${dist_dir}/exec_files")" ||
+			{
+				rm -f "${dist_dir}/new_file_list" "${dist_dir}/exec_files"
+				inst_failed "Failed to read new file list."
+				return 1
+			}
+		rm -f "${dist_dir}/exec_files"
+
+		# get current file list
+		curr_files="$(print_file_list "$component" ALL)" || { inst_failed; return 1; }
+
+		eval "main_file_path=\"\${QOSMATE_MAIN_FILE_${component}}\""
+
+		# version and update channel string replacement vars
+		local ver_ptrn_prefix ver_repl_str upd_ch_repl_str
+		case "$component" in
+			BACKEND)
+				ver_ptrn_prefix=
+				ver_repl_str="VERSION\=\"$version\""
+				upd_ch_repl_str="UPD_CHANNEL\=\"$upd_channel\"" ;;
+			FRONTEND)
+				ver_ptrn_prefix="const UI_"
+				ver_repl_str="VERSION \= '$version'\;"
+				upd_ch_repl_str="UPD_CHANNEL \= '$upd_channel'\;" ;;
+		esac
+
+		# set version and update channel in component's main file
+		local preinst_main_file_path="${dist_dir}${main_file_path}"
+
+		sed -i "
+			/^\s*${ver_ptrn_prefix}VERSION\s*=/{s/.*/${ver_ptrn_prefix}${ver_repl_str}/;}
+			/^\s*${ver_ptrn_prefix}UPD_CHANNEL\s*=/{s/.*/${ver_ptrn_prefix}${upd_ch_repl_str}/;}" \
+				"$preinst_main_file_path" &&
+					# verify that substitution worked
+					grep -q "^${ver_ptrn_prefix}${ver_repl_str}" "$preinst_main_file_path" &&
+					grep -q "^${ver_ptrn_prefix}${upd_ch_repl_str}" "$preinst_main_file_path" ||
+						{ inst_failed "Failed to set version in file '$preinst_main_file_path'."; return 1; }
+
+		# Check for changed files
+		local curr_reg_file changed_files='' unchanged_files='' man_changed_files='' \
+			prefixed_curr_reg_file="${dist_dir}/prefixed_reg_${component}.md5"
+		eval "curr_reg_file=\"\${QOSMATE_FILES_REG_PATH_${component}}\""
+
+		if [ -s "$curr_reg_file" ]; then
+			# prefix file paths in the reg file for md5sum comparison
+			sed -E "/^$/d;s~([^ 	]+$)~${dist_dir}\\1~" "$curr_reg_file" > "$prefixed_curr_reg_file"
+			unchanged_files="$(md5sum -c "$prefixed_curr_reg_file" 2>/dev/null |
+				sed -n "/:\s*OK\s*$/{s/\s*:\s*OK\s*$//;s~^\s*${dist_dir}~~;p;}")"
+			rm -f "$prefixed_curr_reg_file"
+
+			# remove unchanged files from $new_file_list to reliably get a list of files to copy
+			changed_files="$(
+				printf '%s\n' "$unchanged_files" | awk '
+					NR==FNR {unch[$0];next}
+					{
+						if ($0=="" || $0 in unch) {next}
+						print $0
+					}
+				' - "${dist_dir}/new_file_list"
+			)"
+
+			# Detect manually modified files
+			man_changed_files="$(md5sum -c "$curr_reg_file" 2>/dev/null |
+				sed -n "/:\s*FAILED\s*$/{s/\s*:\s*FAILED\s*$//;p;}")"
+
+			# Add manually modified files to changed files
+			if [ -n "$man_changed_files" ]; then
+				changed_files="$(printf '%s\n' "${changed_files}${_NL_}${man_changed_files}" | sort -u | sed '/^$/d')"
+			fi
+		else
+			changed_files="$new_file_list"
+		fi
+
+		local IFS="$_NL_"
+		for file in $unchanged_files; do
+			[ -n "$file" ] || continue
+			log_msg "File '$file' did not change - not updating."
+		done
+
+		local mod_files_bk_dir="/tmp/qosmate_old_modified_files"
+		for file in $man_changed_files; do
+			[ -n "$file" ] && [ -f "$file" ] || continue
+			log_msg -warn "File '$file' was manually modified - overwriting."
+			if try_mkdir -p "$mod_files_bk_dir" && cp "$file" "${mod_files_bk_dir}/${file##*/}"; then
+				log_msg "Saved a backup copy of manually modified file to ${mod_files_bk_dir}/${file##*/}"
+			else
+				log_msg -warn "Can not create a backup copy of manually modified file '$file' - overwriting anyway."
+			fi
+		done
+
+		# Copy changed files
+		for file in $changed_files
+		do
+			preinst_path="${dist_dir}${file}"
+
+			log_msg "Copying file '${file}'."
+			try_mkdir -p "${file%/*}" && cp "$preinst_path" "$file" ||
+				{ inst_failed "Failed to copy file '$preinst_path' to '$file'."; return 1; }
+			[ "$component" = FRONTEND ] && frontend_updated=1
+		done
+
+		# delete obsolete files
+		for file in ${curr_files}
+		do
+			[ -f "$file" ] || continue
+
+			# check for $file in $new_file_list, allowing newline as list delimiter
+			case "$new_file_list" in
+				"$file"|"${file}${_NL_}"*|*"${_NL_}${file}"|*"${_NL_}${file}${_NL_}"*)
+					continue ;;
+				*)
+					log_msg "Deleting obsolete file '$file'."
+					rm -f "$file"
+			esac
+		done
+
+		# make files executable
+		set -- $exec_files # relying on IFS=\n
+		chmod +x "$@" || { inst_failed "Failed to make files executable."; return 1; }
+
+		# save the md5sum registry file if needed
+		if [ -n "$changed_files" ] || [ ! -s "$curr_reg_file" ]; then
+			# make md5sum registry of new files
+			# shellcheck disable=SC2046
+			set -- $(printf '%s\n' "$new_file_list" | sed "/^$/d;s~^\s*~${dist_dir}~") # relying on IFS=\n
+			md5sums="$(md5sum "$@")" && [ -n "$md5sums" ] &&
+			try_mkdir -p "${curr_reg_file%/*}" &&
+			printf '%s\n' "$md5sums" | sed "s~\s${dist_dir}~ ~" > "$curr_reg_file" ||
+				{ inst_failed "Failed to register new files."; return 1; }
+		fi
+		IFS="$DEFAULT_IFS"
+	done
+
+    # Restart rpcd only if any frontend files were updated
+    [ -n "$frontend_updated" ] && /etc/init.d/rpcd restart
+	:
+}
+
+
+### Servce functions
 
 load_config() {
     config_load 'qosmate'
@@ -35,7 +1102,7 @@ validate_custom_rules() {
     local rules_file="/etc/qosmate.d/custom_rules.nft"
 
     if [ ! -f "$rules_file" ]; then
-        echo "Custom rules file not found." | tee "$tmp_file"
+        print_msg "Custom rules file not found." | tee "$tmp_file"
         return 1
     fi
 
@@ -57,8 +1124,8 @@ validate_custom_rules() {
 detect_package_manager() {
     local has_apk=0 has_opkg=0
     
-    command -v apk >/dev/null 2>&1 && has_apk=1
-    command -v opkg >/dev/null 2>&1 && has_opkg=1
+    check_util apk && has_apk=1
+    check_util opkg && has_opkg=1
     
     if [ $has_apk -eq 1 ] && [ $has_opkg -eq 1 ]; then
         echo "conflict"
@@ -78,11 +1145,11 @@ check_pkg_manager() {
             return 0
             ;;
         conflict)
-            logger -s -t qosmate -p user.err "Multiple package managers detected (apk and opkg). Package management disabled."
+            error_out "Multiple package managers detected (apk and opkg). Package management disabled."
             return 1
             ;;
         *)
-            logger -s -t qosmate -p user.err "Error: No supported package manager found."
+            error_out "No supported package manager found."
             return 1
             ;;
     esac
@@ -116,7 +1183,7 @@ install_packages() {
     # Check if any packages are missing
     for pkg in $REQUIRED_PACKAGES; do
         if ! check_package "$pkg"; then
-            echo "$pkg is not installed."
+            print_msg "$pkg is not installed."
             need_update=1
             break
         fi
@@ -124,7 +1191,7 @@ install_packages() {
 
     # Run update if at least one package is missing
     if [ "$need_update" -eq 1 ]; then
-        echo "Updating package list..."
+        print_msg "Updating package list..."
         case "$pkg_manager" in
             "apk")
                 apk update
@@ -137,20 +1204,17 @@ install_packages() {
         # Install missing packages
         for pkg in $REQUIRED_PACKAGES; do
             if ! check_package "$pkg"; then
-                echo "Installing $pkg..."
-                logger -t qosmate "Installing $pkg..."
+                log_msg "Installing $pkg..."
                 case "$pkg_manager" in
                     "apk")
                         apk add "$pkg" || {
-                            echo "Failed to install $pkg."
-                            logger -t qosmate "Failed to install $pkg."
+                            error_out "Failed to install $pkg."
                             return 1  # Abort if the installation fails
                         }
                         ;;
                     "opkg")
                         opkg install "$pkg" || {
-                            echo "Failed to install $pkg."
-                            logger -t qosmate "Failed to install $pkg."
+                            error_out "Failed to install $pkg."
                             return 1  # Abort if the installation fails
                         }
                         ;;
@@ -170,53 +1234,15 @@ check_package_status() {
     done
     
     if [ -n "$missing_packages" ]; then
-        echo "Missing packages:$missing_packages"
-        logger -t qosmate "Missing packages:$missing_packages"
+        error_out "Missing packages:$missing_packages"
         return 1
     fi
     return 0
 }
 
-download_scripts() {
-    # Download backend files if missing
-    [ ! -f /etc/qosmate.sh ] && wget -O /etc/qosmate.sh "$QOSMATE_BASE_URL/etc/qosmate.sh" && chmod a+x /etc/qosmate.sh
-    [ ! -f /etc/init.d/qosmate ] && wget -O /etc/init.d/qosmate "$QOSMATE_BASE_URL/etc/init.d/qosmate" && chmod a+x /etc/init.d/qosmate
-    
-    # Download frontend files if missing
-    local frontend_updated=0
-    [ ! -f /usr/share/luci/menu.d/luci-app-qosmate.json ] && wget -O /usr/share/luci/menu.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/luci/menu.d/luci-app-qosmate.json" && frontend_updated=1
-    [ ! -f /usr/share/rpcd/acl.d/luci-app-qosmate.json ] && wget -O /usr/share/rpcd/acl.d/luci-app-qosmate.json "$QOSMATE_FRONTEND_BASE_URL/root/usr/share/rpcd/acl.d/luci-app-qosmate.json" && frontend_updated=1
-    [ ! -f /usr/libexec/rpcd/luci.qosmate ] && wget -O /usr/libexec/rpcd/luci.qosmate "$QOSMATE_FRONTEND_BASE_URL/root/usr/libexec/rpcd/luci.qosmate" && chmod a+x /usr/libexec/rpcd/luci.qosmate && frontend_updated=1
-    [ ! -f /usr/libexec/rpcd/luci.qosmate_stats ] && wget -O /usr/libexec/rpcd/luci.qosmate_stats "$QOSMATE_FRONTEND_BASE_URL/root/usr/libexec/rpcd/luci.qosmate_stats" && chmod a+x /usr/libexec/rpcd/luci.qosmate_stats && frontend_updated=1
-
-    # Download JS files if missing
-    local js_file
-    for js_file in $QOSMATE_JS_FILES; do
-        [ ! -f "/www/luci-static/resources/view/qosmate/${js_file}.js" ] && wget -O "/www/luci-static/resources/view/qosmate/${js_file}.js" "$QOSMATE_FRONTEND_URL_JS/${js_file}.js" && frontend_updated=1
-    done
-    
-    # Restart rpcd only if any frontend files were updated
-    [ "$frontend_updated" -eq 1 ] && /etc/init.d/rpcd restart
-
-    # Create the directory for tc-Netem distributions if it does not exist
-    mkdir -p /usr/lib/tc
-
-    # Base URL for the repository
-    DIST_URL="$QOSMATE_BASE_URL/usr/lib/tc"
-
-    # List of files
-    DIST_FILES="experimental.dist normal.dist normmix20-64.dist pareto.dist paretonormal.dist"
-
-    # Iterate through the list and download each file
-    for FILE in $DIST_FILES; do
-        if [ ! -f "/usr/lib/tc/$FILE" ]; then
-            echo "Downloading $FILE..."
-            wget -O "/usr/lib/tc/$FILE" "$DIST_URL/$FILE" || echo "Error downloading $FILE"
-        fi
-    done
-}
-
 create_hotplug_script() {
+    [ -s "/etc/hotplug.d/iface/13-qosmateHotplug" ] && { log_msg "Hotplug script already exists."; return 0; }
+	log_msg "Creating the hotplug script."
     cat > /etc/hotplug.d/iface/13-qosmateHotplug << 'EOF'
 #!/bin/sh
 
@@ -242,14 +1268,14 @@ EOF
 check_and_download_config() {
     local config_path="/etc/config/qosmate"
     if [ ! -f "$config_path" ]; then
-        echo "Configuration file not found, downloading the latest version..."
-        wget -O $config_path "$QOSMATE_BASE_URL/etc/config/qosmate" || {
-            echo "Error downloading configuration. Please check your internet connection and try again."
+        print_msg "Configuration file not found, downloading the latest version..."
+        wget -O $config_path "${QOSMATE_GH_RAW_URL_BACKEND_MAIN}/etc/config/qosmate" || {
+            error_out "Failed to download config. Please check your internet connection and try again."
             return 1
         }
-        echo "Configuration file downloaded successfully."
+        print_msg "Configuration file downloaded successfully."
     else
-        echo "Configuration file already exists."
+        print_msg "Configuration file already exists."
     fi
 }
 
@@ -258,37 +1284,37 @@ migrate_config() {
 
     # Function to add the global enabled option if it does not exist
     if ! grep -q "config global 'global'" $CONFIG_FILE; then
-        echo "Adding global configuration section..."
+        print_msg "Adding global configuration section..."
         sed -i '1i\
 config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
-        echo "Global configuration section added."
+        print_msg "Global configuration section added."
     else
-        echo "Global configuration section already exists."
+        print_msg "Global configuration section already exists."
     fi
 
     # Ensure the enabled option is present in the global section
     if ! grep -q "option enabled" $CONFIG_FILE; then
-        echo "Adding enabled option to global section..."
+        print_msg "Adding enabled option to global section..."
         sed -i "/config global 'global'/a\\
     option enabled '1'
 " $CONFIG_FILE
-        echo "Enabled option added."
+        print_msg "Enabled option added."
     else
-        echo "Enabled option already exists."
+        print_msg "Enabled option already exists."
     fi
 
     # Check for and correct the custom_rules section
     if grep -q "config qosmate 'custom_rules'" $CONFIG_FILE; then
-        echo "Incorrect custom_rules section found. Correcting..."
+        print_msg "Incorrect custom_rules section found. Correcting..."
         sed -i "s/config qosmate 'custom_rules'/config custom_rules 'custom_rules'/" $CONFIG_FILE
-        echo "custom_rules section corrected."
+        print_msg "custom_rules section corrected."
     fi
 
     # Remove duplicate custom_rules sections if both incorrect and correct versions exist
     if grep -q "config qosmate 'custom_rules'" $CONFIG_FILE && grep -q "config custom_rules 'custom_rules'" $CONFIG_FILE; then
-        echo "Both incorrect and correct custom_rules sections found. Removing the incorrect one..."
+        print_msg "Both incorrect and correct custom_rules sections found. Removing the incorrect one..."
         sed -i "/config qosmate 'custom_rules'/d" $CONFIG_FILE
-        echo "Incorrect custom_rules section removed."
+        print_msg "Incorrect custom_rules section removed."
     fi
 }
 
@@ -298,7 +1324,7 @@ manage_custom_rules_file() {
     case "$action" in
         create)
             # Ensure the directory exists
-            [ ! -d "/etc/qosmate.d" ] && mkdir -p "/etc/qosmate.d"
+            try_mkdir -p "/etc/qosmate.d"
             
             # Create the file if it doesn't exist
             [ ! -f "/etc/qosmate.d/custom_rules.nft" ] && touch "/etc/qosmate.d/custom_rules.nft"
@@ -312,8 +1338,35 @@ manage_custom_rules_file() {
 }
 
 start_service() {
+	# handle first run after installation or update from older versions
+	if [ "$VERSION" = dev ]; then
+		log_msg "" "Completing the upgrade of the update mechanism..."
+		update -f || return 1
+		# shellcheck disable=SC1090
+		. "${QOSMATE_SERVICE_PATH}" # source updated init script 
+	fi
+
+	for component in $QOSMATE_COMPONENTS; do
+		check_files_integrity "$component"
+		case $? in
+			0) ;; # integrity OK
+			1) return 1 ;;
+			2) # missing files
+				local fix_upd_channel='' fix_version='' force_version=''
+				case "$component" in
+					BACKEND) fix_version="$VERSION" fix_upd_channel="$UPD_CHANNEL" ;;
+					FRONTEND) get_component_spec fix_version fix_upd_channel FRONTEND local 2>/dev/null
+				esac
+				case "$fix_version" in
+					dev|''|"1.1.0"|"v1.1.0") ;;
+					*) force_version="-W $fix_version"
+				esac
+				: "${fix_upd_channel:=release}"
+				update -U "$fix_upd_channel" $force_version -c "$component" || return 1 ;;
+			3) ;; # non-matching md5sums
+		esac
+	done
     install_packages
-    download_scripts
     create_hotplug_script  # Create the hotplug script instead of downloading it
     check_and_download_config || return 1
     migrate_config
@@ -346,7 +1399,7 @@ stop_service() {
         OLD_WAN="$WAN"
     fi
 
-    echo "Stopping service qosmate..."
+    print_msg "Stopping service qosmate..."
     
     # Only disable if not in shutdown and not in restart
     if [ "$DISABLE_ON_STOP" != "0" ] && [ -z "$FROM_SHUTDOWN" ]; then
@@ -375,7 +1428,7 @@ stop_service() {
     # Remove the temporary file
     rm -f /tmp/qosmate_wan
 
-    echo "Reloading network service..."
+    print_msg "Reloading network service..."
     /etc/init.d/network reload
     /etc/init.d/firewall reload
     logger -t qosmate "Service stopped"
@@ -418,20 +1471,20 @@ status_service() {
     config_get GAMEDOWN hfsc GAMEDOWN
     : "${GAMEDOWN:=$((DOWNRATE*15/100+400))}"
 
-    echo "==== qosmate Status ===="
+    print_msg "==== qosmate Status ===="
     
     # Check if autostart is enabled
     if /etc/init.d/qosmate enabled; then
-        echo "qosmate autostart is enabled."
+        print_msg "qosmate autostart is enabled."
     else
-        echo "qosmate autostart is not enabled."
+        print_msg "qosmate autostart is not enabled."
     fi
 
     # Check if the service is enabled in UCI config
     if [ "$(uci -q get qosmate.global.enabled)" = "1" ]; then
-        echo "qosmate service is enabled."
+        print_msg "qosmate service is enabled."
     else
-        echo "qosmate service is disabled."
+        print_msg "qosmate service is disabled."
     fi
 
     # Check if traffic shaping is active
@@ -439,70 +1492,66 @@ status_service() {
     
     if tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc cake"; then
         if [ "$(uci -q get qosmate.global.enabled)" = "1" ]; then
-            echo "Traffic shaping is active on the egress interface ($WAN)."
+            print_msg "Traffic shaping is active on the egress interface ($WAN)."
         else
-            echo "Default CAKE qdisc is active on the egress interface ($WAN), but qosmate is not managing it."
+            print_msg "Default CAKE qdisc is active on the egress interface ($WAN), but qosmate is not managing it."
         fi
     elif tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc hfsc"; then
-        echo "Traffic shaping (HFSC) is active on the egress interface ($WAN)."
+        print_msg "Traffic shaping (HFSC) is active on the egress interface ($WAN)."
     else
-        echo "No traffic shaping is active on the egress interface ($WAN)."
+        print_msg "No traffic shaping is active on the egress interface ($WAN)."
     fi
 
     if tc qdisc show dev "$IFB" 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; then
-        echo "Traffic shaping is active on the ingress interface ($IFB)."
+        print_msg "Traffic shaping is active on the ingress interface ($IFB)."
     else
-        echo "No traffic shaping is active on the ingress interface ($IFB)."
+        print_msg "No traffic shaping is active on the ingress interface ($IFB)."
     fi
 
-    echo "==== Overall Status ===="
+    print_msg "==== Overall Status ===="
     # Determine if the service is actually running
     if [ "$(uci -q get qosmate.global.enabled)" = "1" ] && { tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc hfsc" ||
             tc qdisc show dev "$IFB" 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; }; then
-            echo "qosmate is currently active and managing traffic shaping."
+            print_msg "qosmate is currently active and managing traffic shaping."
     else
-        echo "qosmate is not currently active or managing traffic shaping."
+        print_msg "qosmate is not currently active or managing traffic shaping."
     fi
 
-    echo "==== Current Settings ===="
     # Show summary of current settings
-    echo "Upload rate: $UPRATE kbps"
-    echo "Download rate: $DOWNRATE kbps"
-    
-    echo "Game traffic upload: $GAMEUP kbps"
-    echo "Game traffic download: $GAMEDOWN kbps"
+    print_msg "==== Current Settings ====" \
+        "Upload rate: $UPRATE kbps" \
+        "Download rate: $DOWNRATE kbps" \
+        "Game traffic upload: $GAMEUP kbps" \
+        "Game traffic download: $GAMEDOWN kbps"
     if [ "$ROOT_QDISC" = "cake" ]; then
-        echo "Queue discipline: CAKE (Root qdisc)"
+        print_msg "Queue discipline: CAKE (Root qdisc)"
     else
-        echo "Queue discipline: $gameqdisc (for game traffic in HFSC)"
+        print_msg "Queue discipline: $gameqdisc (for game traffic in HFSC)"
     fi
 
-    echo "==== Package Status ===="
+    print_msg "==== Package Status ===="
 
     if check_pkg_manager "$pkg_manager" && check_package_status; then
-        echo "All required packages are installed."
+        print_msg "All required packages are installed."
     else
-        echo "Some required packages are missing. QoSmate may not function correctly."
+        print_msg "Some required packages are missing. QoSmate may not function correctly."
     fi
 
-    echo
-    echo "==== Detailed Technical Information ===="
-    echo "Traffic Control (tc) Queues:"
+    print_msg "" "==== Detailed Technical Information ====" \
+        "Traffic Control (tc) Queues:"
     tc -s qdisc
 
-    echo
-    echo "==== Nftables Ruleset (dscptag) ===="
+    print_msg "" "==== Nftables Ruleset (dscptag) ===="
     nft list ruleset | grep 'chain dscptag' -A 100
 
 
-    echo
-    echo "==== Custom Rules Table Status ===="
+    print_msg "" "==== Custom Rules Table Status ===="
     if nft list table inet qosmate_custom &>/dev/null; then
-        echo "Custom rules table (qosmate_custom) is active."
-        echo "Current custom rules:"
+        print_msg "Custom rules table (qosmate_custom) is active." \
+            "Current custom rules:"
         nft list table inet qosmate_custom
     else
-        echo "Custom rules table (qosmate_custom) is not active or doesn't exist."
+        print_msg "Custom rules table (qosmate_custom) is not active or doesn't exist."
     fi
 
 }
@@ -515,218 +1564,6 @@ restart() {
 
 reload_service() {
     restart
-}
-
-# Extract version from local or remote file
-# 1 - component (backend|frontend)
-# 2 - origin (local|remote)
-# Error codes: 1 - failed to get version, 2 - got invalid version
-get_version() {
-    local component="$1" origin="$2"
-    local fetch_cmd fetch_path pattern FS rv backend_path_prefix frontend_path_prefix
-
-    case "$origin" in
-        local)
-            fetch_cmd="cat"
-            backend_path_prefix=
-            frontend_path_prefix="$QOSMATE_FRONTEND_PATH_JS"
-            ;;
-        remote)
-            fetch_cmd="wget -qO-"
-            backend_path_prefix="$QOSMATE_BASE_URL"
-            frontend_path_prefix="$QOSMATE_FRONTEND_URL_JS"
-    esac
-
-    case "$component" in
-        backend)
-            fetch_path="${backend_path_prefix}/etc/qosmate.sh"
-            pattern="^VERSION="
-            FS='"'
-            ;;
-        frontend)
-            fetch_path="${frontend_path_prefix}/settings.js"
-            pattern="^const UI_VERSION"
-            FS="'"
-    esac
-
-    eval "$fetch_cmd" "$fetch_path" | {
-        # assumes version string enclosed in FS and no prior FS present in the version line
-        awk -F "$FS" "BEGIN{rv=1} \$0~/$pattern/ {rv=2; print \$2; if (\$2~/^[0-9]+([.][0-9]+)*$/) {rv=0}; exit} END{exit rv}"
-        rv=$?
-        cat > /dev/null # sink extra lines, otherwise this will be extremely slow
-        exit $rv # sets the exit code of the pipe
-    }
-    return $?
-}
-
-# Check and print versions for local and remote backend and frontend
-# sets global variables: $backend_upd_avail, $frontend_upd_avail
-# 1 - (optional) '-n' to not print update tip
-# Return codes:
-# 0 - no update
-# 1 - error
-# 254 - update available
-check_version() {
-    local origin notify_origin component notify_component version local_version upd_avail=''
-    local no_print_tip="$1"
-
-    for component in backend frontend; do
-        case "$component" in
-            backend)
-                notify_component=Backend
-                ;;
-            frontend)
-                notify_component=Frontend
-        esac
-
-        echo "$notify_component versions:"
-
-        for origin in local remote; do
-            case "$origin" in
-                local)
-                    notify_origin=Current
-                    ;;
-                remote)
-                    notify_origin=Latest
-            esac
-
-            version="$(get_version "$component" "$origin")" || {
-                if [ "$?" = 2 ] && [ -n "$version" ]; then
-                    printf '%s\n' "Error: Got invalid $origin $component version '$version'." >&2
-                else
-                    printf '%s\n' "Error: Failed to get $origin $component version." >&2
-                fi
-                return 1
-            }
-
-            case "$origin" in
-                local)
-                    local_version="$version"
-                    ;;
-                remote)
-                    if [ "$version" = "$local_version" ]; then
-                        unset "${component}_upd_avail"
-                    else
-                        upd_avail=1
-                        eval "${component}_upd_avail=1"
-                    fi
-            esac
-            printf '%s\n' "  $notify_origin version: $version"
-        done
-    done
-
-    if [ -n "$upd_avail" ]; then
-        [ "$no_print_tip" != '-n' ] && printf '\n%s\n%s\n' "A new version of QoSmate is available." \
-            "To update, run: /etc/init.d/qosmate update"
-        return 254
-    else
-        printf '\n%s\n' "QoSmate is up to date."
-    fi
-    :
-}
-
-# Ignores versions when global var $QOSMATE_FORCE is set to 1
-update() {
-    local component upd_avail=''
-
-    check_version -n
-    case $? in
-        0) ;;
-        254)
-            upd_avail=1
-            ;;
-        *)
-            return 1
-            ;;
-    esac
-
-    if [ "$QOSMATE_FORCE" = 1 ]; then
-        echo "Force update enabled. Proceeding with update even if versions are identical."
-    elif [ -z "$upd_avail" ]; then
-        return 0
-    fi
-
-    echo "Updates available. Do you want to update? [y/N] "
-    read -r answer
-    case "$answer" in
-        y|Y) ;;
-        *)
-            echo "Update cancelled."
-            return 0
-    esac
-
-    echo "Updating QoSmate..."
-
-    for component in backend frontend; do
-        local component_upd_avail js_file js_files gen_file gen_files exec_files exec_file fetch_base_url notify_component
-
-        case "$component" in
-            backend)
-                notify_component=Backend
-                fetch_base_url="${QOSMATE_BASE_URL}"
-                js_files=
-                gen_files=" \
-                    /etc/qosmate.sh \
-                    /etc/init.d/qosmate \
-                    /etc/hotplug.d/iface/13-qosmateHotplug"
-                exec_files=" \
-                    /etc/qosmate.sh \
-                    /etc/init.d/qosmate"
-                ;;
-            frontend)
-                notify_component=Frontend
-                fetch_base_url="${QOSMATE_FRONTEND_BASE_URL}/root"
-                js_files="$QOSMATE_JS_FILES"
-                gen_files=" \
-                    /usr/share/luci/menu.d/luci-app-qosmate.json \
-                    /usr/share/rpcd/acl.d/luci-app-qosmate.json \
-                    /usr/libexec/rpcd/luci.qosmate \
-                    /usr/libexec/rpcd/luci.qosmate_stats"
-                exec_files="/usr/libexec/rpcd/luci.qosmate \
-                    /usr/libexec/rpcd/luci.qosmate_stats"
-        esac
-
-        eval component_upd_avail="\"\${${component}_upd_avail}\""
-        if [ "$QOSMATE_FORCE" = 1 ] || [ -n "$component_upd_avail" ]; then
-            printf '\n%s\n' "Updating $component..."
-
-            # !! This relies on remote file path suffix matching local file path
-            for gen_file in $gen_files; do
-                wget -O "$gen_file" "${fetch_base_url}${gen_file}" || {
-                    echo "Command 'wget -O \"$gen_file\" \"${fetch_base_url}${gen_file}\"' exited with code $?." >&2
-                    echo "$notify_component update failed." >&2
-                    return 1
-                }
-            done
-
-            for exec_file in $exec_files; do
-                chmod +x "$exec_file" || {
-                    echo "Failed to make file '$exec_file' executable." >&2
-                    return 1
-                }
-            done
-
-            if [ "$component" = frontend ]; then
-                for js_file in $js_files; do
-                    wget -O "$QOSMATE_FRONTEND_PATH_JS/$js_file.js" "$QOSMATE_FRONTEND_URL_JS/$js_file.js" || {
-                        echo "Command 'wget -O \"$QOSMATE_FRONTEND_PATH_JS/$js_file.js\" \"$QOSMATE_FRONTEND_URL_JS/$js_file.js\"' exited with code $?." >&2
-                        echo "$notify_component update failed." >&2
-                        return 1
-                    }
-                done
-
-                /etc/init.d/rpcd restart
-                /etc/init.d/uhttpd restart
-            fi
-
-            echo "$notify_component update complete."
-        fi
-    done
-
-    expand_config
-
-    echo "Update complete. Please restart QoSmate."
-    /etc/init.d/qosmate restart
 }
 
 # 1 - speedtest command
@@ -743,11 +1580,11 @@ parse_speedtest_output() {
             awk "BEGIN{rv=1} \$0~/$direction:/ {print \$2; rv=0; exit} END{exit rv}"
             ;;
         *)
-            echo "Unexpected speedtest command '$speedtest_cmd'." >&2
+            error_out "Unexpected speedtest command '$speedtest_cmd'."
             false
             ;;
     esac || {
-        echo "Failed to get the $direction speed." >&2
+        error_out "Failed to get the $direction speed."
         echo "0"
         return 1
     }
@@ -765,11 +1602,11 @@ auto_setup() {
     else
         noninteractive=
     fi
-    [ -z "$noninteractive" ] && echo "Starting qosmate auto-setup..."
+    [ -z "$noninteractive" ] && print_msg "Starting qosmate auto-setup..."
 
     # Stop qosmate if it's running
     if /etc/init.d/qosmate status > /dev/null; then
-        echo "Stopping qosmate for accurate speed test results..."
+        print_msg "Stopping qosmate for accurate speed test results..."
         /etc/init.d/qosmate stop
         sleep 5  # Give some time for the network to stabilize
     fi
@@ -779,18 +1616,18 @@ auto_setup() {
     L3_DEVICE=$(ifstatus wan | grep -e '"l3_device"' | cut -d'"' -f4)
 
     if [ -z "$WAN_INTERFACE" ] && [ -z "$L3_DEVICE" ]; then
-        echo "Error: Unable to detect WAN interface. Please set it manually in the configuration."
+        error_out "Unable to detect WAN interface. Please set it manually in the configuration."
         return 1
     fi
 
     FINAL_INTERFACE=${L3_DEVICE:-$WAN_INTERFACE}
-    echo "Detected WAN interface: $FINAL_INTERFACE"
+    print_msg "Detected WAN interface: $FINAL_INTERFACE"
 
     if [ -n "$noninteractive" ]; then
         speedtest_req=1
     else
         while :; do
-            echo "Do you want to run a speed test or enter speeds manually? [test/manual]"
+            print_msg "Do you want to run a speed test or enter speeds manually? [test/manual]"
             read -r speed_choice
             case "$speed_choice" in
                 *[A-Z]*) speed_choice="$(printf %s "$speed_choice" | tr 'A-Z' 'a-z')"
@@ -799,18 +1636,18 @@ auto_setup() {
             case "$speed_choice" in
                 test|manual) break
             esac
-            echo "Invalid input '$speed_choice'. Please enter 'test' or 'manual'."
+            print_msg "Invalid input '$speed_choice'. Please enter 'test' or 'manual'."
         done
 
         if [[ "$speed_choice" = manual ]]; then
             for direction in download upload; do
                 while :; do
-                    echo "Please enter your $direction speed in Mbit/s:"
+                    print_msg "Please enter your $direction speed in Mbit/s:"
                     read -r response
                     case "$response" in
                         ''|*[!0-9.]*|*.*.*)
                             # do not allow empty string or irrelevant characters or 2x '.'
-                            echo "Invalid input '$response'. Please try again."
+                            print_msg "Invalid input '$response'. Please try again."
                             continue
                             ;;
                         *[0-9]*)
@@ -818,7 +1655,7 @@ auto_setup() {
                             ;;
                         *)
                             # do not allow input without digits
-                            echo "Invalid input '$response'. Please try again."
+                            print_msg "Invalid input '$response'. Please try again."
                             continue
                             ;;
                     esac
@@ -830,10 +1667,10 @@ auto_setup() {
             done
             speedtest_req=
         else
-            echo "This will run a speed test to configure qosmate. Do you want to continue? [y/N]"
+            print_msg "This will run a speed test to configure qosmate. Do you want to continue? [y/N]"
             read -r response
             if [[ ! "$response" =~ ^[Yy]$ ]]; then
-                echo "Auto-setup cancelled."
+                print_msg "Auto-setup cancelled."
                 return 0
             fi
             speedtest_req=1
@@ -842,22 +1679,22 @@ auto_setup() {
 
     if [ -n "$speedtest_req" ]; then
         # Check for speedtest-go first
-        if command -v speedtest-go &> /dev/null; then
-            echo "speedtest-go is already installed. Using it for the speed test."
+        if check_util speedtest-go; then
+            print_msg "speedtest-go is already installed. Using it for the speed test."
             SPEEDTEST_CMD="speedtest-go"
         else
-            echo "speedtest-go is not found. Checking for python3-speedtest-cli..."
-            if command -v speedtest &> /dev/null; then
-                echo "python3-speedtest-cli is already installed. Using it for the speed test."
+            print_msg "speedtest-go is not found. Checking for python3-speedtest-cli..."
+            if check_util speedtest; then
+                print_msg "python3-speedtest-cli is already installed. Using it for the speed test."
                 SPEEDTEST_CMD="speedtest --simple"
             else
-                echo "Neither speedtest-go nor python3-speedtest-cli is installed. Attempting to install speedtest-go..."
+                print_msg "Neither speedtest-go nor python3-speedtest-cli is installed. Attempting to install speedtest-go..."
                 check_pkg_manager "$pkg_manager" || return 1
                 
                 # Check for sufficient space (adjust the required space as needed)
                 FREE_SPACE=$(df /overlay | awk 'NR==2 {print $4}')
                 if [ "$FREE_SPACE" -lt 15360 ]; then  # Assuming 15MB for speedtest-go
-                    echo "Not enough space for speedtest-go. Attempting to install python3-speedtest-cli instead..."
+                    print_msg "Not enough space for speedtest-go. Attempting to install python3-speedtest-cli instead..."
                 else
                     case "$pkg_manager" in
                         "apk")
@@ -870,15 +1707,15 @@ auto_setup() {
                     if [ $? -eq 0 ]; then
                         SPEEDTEST_CMD="speedtest-go"
                     else
-                        echo "Failed to install speedtest-go. Attempting to install python3-speedtest-cli instead..."
+                        error_out "Failed to install speedtest-go. Attempting to install python3-speedtest-cli instead..."
                     fi
                 fi
 
                 # If speedtest-go installation failed or there wasn't enough space, try python3-speedtest-cli
                 if [ -z "$SPEEDTEST_CMD" ]; then
                     if [ "$FREE_SPACE" -lt 1024 ]; then  # 1MB for python3-speedtest-cli
-                        echo "Error: Not enough free space to install any speedtest tool."
-                        echo "Auto-setup cannot continue. Please free up some space and try again."
+                        error_out "Error: Not enough free space to install any speedtest tool." \
+                            "Auto-setup cannot continue. Please free up some space and try again."
                         return 1
                     fi
                     case "$pkg_manager" in
@@ -892,39 +1729,39 @@ auto_setup() {
                     if [ $? -eq 0 ]; then
                         SPEEDTEST_CMD="speedtest --simple"
                     else
-                        echo "Failed to install python3-speedtest-cli. Auto-setup cannot continue."
+                        error_out "Failed to install python3-speedtest-cli. Auto-setup cannot continue."
                         return 1
                     fi
                 fi
             fi
         fi
 
-        echo "Running speed test... This may take a few minutes."
+        print_msg "Running speed test... This may take a few minutes."
         SPEED_RESULT=$($SPEEDTEST_CMD)
 
         DOWNLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Download) &&
         UPLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Upload) ||
             return 1
 
-        echo "Speed test results:"
-        echo "Download speed: $DOWNLOAD_SPEED Mbit/s"
-        echo "Upload speed: $UPLOAD_SPEED Mbit/s"
+        print_msg "Speed test results:" \
+            "Download speed: $DOWNLOAD_SPEED Mbit/s" \
+            "Upload speed: $UPLOAD_SPEED Mbit/s"
     fi
 
     # Convert speeds to kbps and apply 90% rule
     DOWNRATE=$(awk -v speed="$DOWNLOAD_SPEED" 'BEGIN {print int(speed * 1000 * 0.9)}')
     UPRATE=$(awk -v speed="$UPLOAD_SPEED" 'BEGIN {print int(speed * 1000 * 0.9)}')
 
-    echo "QoS configuration:"
-    echo "DOWNRATE: $DOWNRATE kbps (90% of measured download speed)"
-    echo "UPRATE: $UPRATE kbps (90% of measured upload speed)"
+    print_msg "QoS configuration:" \
+        "DOWNRATE: $DOWNRATE kbps (90% of measured download speed)" \
+        "UPRATE: $UPRATE kbps (90% of measured upload speed)"
 
     # Section for gaming device IP
     if [ -z "$noninteractive" ]; then
-        echo "Would you like to add a gaming device IP for prioritization? [y/N]"
+        print_msg "Would you like to add a gaming device IP for prioritization? [y/N]"
         read -r response
         if [[ "$response" =~ ^[Yy]$ ]]; then
-            echo "Please enter the IP address of your gaming device:"
+            print_msg "Please enter the IP address of your gaming device:"
             read -r gaming_ip
         fi
     fi
@@ -934,11 +1771,11 @@ auto_setup() {
         if [[ $gaming_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
             # Check if rules for this IP already exist
             if grep -q "option src_ip '$gaming_ip'" /etc/config/qosmate || grep -q "option dest_ip '$gaming_ip'" /etc/config/qosmate; then
-                echo "Rules for IP $gaming_ip already exist. Skipping addition of new rules."
+                print_msg "Rules for IP $gaming_ip already exist. Skipping addition of new rules."
                 gaming_ip=
             fi
         else
-            echo "Invalid IP address format. No gaming device rules added."
+            print_msg "Invalid IP address format. No gaming device rules added."
             gaming_ip=
         fi
     fi
@@ -947,7 +1784,7 @@ auto_setup() {
     if [ -f /etc/config/qosmate ]; then
         cp /etc/config/qosmate "$temp_config_file"
     else
-        echo "Error: config file '/etc/config/qosmate' not found."
+        error_out "config file '/etc/config/qosmate' not found."
         return 1
     fi
 
@@ -976,24 +1813,24 @@ config rule
     option counter '1'
 EOF
     then
-        echo "Gaming device rules added for IP: $gaming_ip"
+        print_msg "Gaming device rules added for IP: $gaming_ip"
         :
     else
-        echo "No gaming device IP added."
+        print_msg "No gaming device IP added."
         :
     fi &&
     mv "$temp_config_file" /etc/config/qosmate ||
     {
-        echo "Failed to modify the config. Please check the file /etc/config/qosmate" >&2
+        error_out "Failed to modify the config. Please check the file /etc/config/qosmate"
         return 1
     }
 
-    echo "Configuration updated. New settings:"
+    print_msg "Configuration updated. New settings:"
     grep -E "option (WAN|DOWNRATE|UPRATE)" /etc/config/qosmate
 
 
-    echo "Auto-setup complete. qosmate has been configured with detected settings."
-    echo "To apply these changes, please restart qosmate by running: /etc/init.d/qosmate restart"
+    print_msg "Auto-setup complete. qosmate has been configured with detected settings." \
+        "To apply these changes, please restart qosmate by running: /etc/init.d/qosmate restart"
 }
 
 auto_setup_noninteractive() {
@@ -1011,14 +1848,14 @@ expand_config() {
     local config_file="/etc/config/qosmate"
     local main_script="/etc/qosmate.sh"
     
-    echo "Expanding qosmate configuration with all possible options..."
+    log_msg "" "Expanding qosmate configuration with all possible options..."
 
     # Ensure all sections exist
     for section in global settings advanced hfsc cake custom_rules; do
         if ! grep -q "config $section '$section'" "$config_file"; then
             echo >> "$config_file"  # Add a newline before the new section
             echo "config $section '$section'" >> "$config_file"
-            echo "Added section: $section"
+            print_msg "Added section: $section"
         fi
     done
 
@@ -1035,13 +1872,8 @@ expand_config() {
             UPRATE) option="DEFAULT_UPRATE" ;;
         esac
 
-        # First, try to find a direct assignment
+        # Try to find a direct assignment
         default_value=$(grep "^${option}=" "$main_script" | cut -d'=' -f2- | tr -d '"')
-
-        # If not found, look for it in the load_config function
-        if [ -z "$default_value" ]; then
-            default_value=$(sed -n "/load_config()/,/}/p" "$main_script" | grep "\<${option}=" | sed 's/.*|| echo "\(.*\)".*/\1/')
-        fi
 
         # Remove any remaining shell expansions and trim whitespace
         default_value=$(echo "$default_value" | sed -e 's/\$([^)]*)//g' -e 's/^ *//g' -e 's/ *$//g' -e 's/\${{.*}}//g')
@@ -1061,7 +1893,7 @@ expand_config() {
             if ! grep -q "option $option" "$config_file"; then
                 default_value=$(get_default_value "$option")
                 sed -i "/config $section/a\\    option $option '$default_value'" "$config_file"
-                echo "Added option $option to section $section with value: $default_value"
+                print_msg "Added option $option to section $section with value: $default_value"
             fi
         done
     }
@@ -1073,14 +1905,24 @@ expand_config() {
     add_options hfsc LINKTYPE OH gameqdisc GAMEUP GAMEDOWN nongameqdisc nongameqdiscoptions MAXDEL PFIFOMIN PACKETSIZE netemdelayms netemjitterms netemdist pktlossp
     add_options cake COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD PRIORITY_QUEUE_INGRESS PRIORITY_QUEUE_EGRESS HOST_ISOLATION NAT_INGRESS NAT_EGRESS ACK_FILTER_EGRESS RTT AUTORATE_INGRESS EXTRA_PARAMETERS_INGRESS EXTRA_PARAMETERS_EGRESS
 
-    echo "Configuration expanded successfully. You can now edit all available options in $config_file"
+    print_msg "Configuration expanded successfully. You can now edit all available options in $config_file"
 }
 
 health_check() {
     # Check if QoSmate is properly configured and running
     local status=""
     local errors=0
-    
+
+    # Check files existence and md5sums
+	for component in ${QOSMATE_COMPONENTS}; do
+		if check_files_integrity "$component"; then
+			status="${status}${component}_integrity:ok;"
+		else
+			status="${status}${component}_integrity:failed;"
+			errors=$((errors + 1))
+		fi
+	done
+
     load_config
     
     # Check if the service is enabled
@@ -1139,3 +1981,17 @@ health_check() {
 }
 
 pkg_manager="$(detect_package_manager)" # global variable
+
+
+### Process command-line args
+
+# if called directrly via /bin/sh with one of the keywords, set $action to the keyword
+case "$1" in
+	update|print_file_list|post_update_1|post_update_2) action="$1"; shift
+esac
+
+case "$action" in
+	update|print_file_list|post_update_1|post_update_2) "$action" "$@"; exit $? ;;
+esac
+
+:
