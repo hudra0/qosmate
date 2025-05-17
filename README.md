@@ -759,6 +759,7 @@ Please run these commands and provide their complete output:
 ubus call system board
 /etc/init.d/qosmate check_version
 /etc/init.d/qosmate status
+/etc/init.d/qosmate health_check
 cat /etc/config/qosmate
 ifstatus wan | grep -e device
 ```
