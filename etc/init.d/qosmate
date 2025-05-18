@@ -1529,6 +1529,26 @@ status_service() {
         print_msg "Queue discipline: $gameqdisc (for game traffic in HFSC)"
     fi
 
+    # Display QoSmate version information
+    print_msg "==== Version Information ===="
+    /etc/init.d/qosmate check_version
+
+    # Display system information
+    print_msg "==== System Information ===="
+    ubus call system board
+
+    # Display health check information
+    print_msg "==== Health Check ===="
+    /etc/init.d/qosmate health_check
+
+    # Display WAN interface information
+    print_msg "==== WAN Interface Information ===="
+    ifstatus wan | grep -e device
+
+    # Display QoSmate configuration
+    print_msg "==== QoSmate Configuration ===="
+    cat /etc/config/qosmate
+
     print_msg "==== Package Status ===="
 
     if check_pkg_manager "$pkg_manager" && check_package_status; then
