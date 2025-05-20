@@ -539,7 +539,7 @@ if [ -n "$TCPBULKPORT" ]; then
     tcpbulkport_rules="\
 meta l4proto tcp ct original proto-dst \$tcpbulkport counter jump mark_cs1"
 else
-    tcpbulkport_rules="# UDP Bulk Port rules disabled, no ports defined."
+    tcpbulkport_rules="# TCP Bulk Port rules disabled, no ports defined."
 fi
 
 # Check if VIDCONFPORTS is set
