@@ -725,8 +725,13 @@ ${SETS}
     }
 
     chain mark_cs0 {
-        ip dscp set cs0 return
-        ip6 dscp set cs0
+        # Ingress (from WAN): wash DSCP and stop processing to avoid conntrack overwrite
+        meta iifname "$WAN" ip dscp set cs0 counter accept
+        meta iifname "$WAN" ip6 dscp set cs0 counter accept
+        
+        # Egress (not from WAN): wash DSCP and return for normal QoSmate processing
+        ip dscp set cs0 counter return
+        ip6 dscp set cs0 counter
     }
     chain mark_cs1 {
         ip dscp set cs1 return
