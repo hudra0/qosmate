@@ -725,13 +725,8 @@ ${SETS}
     }
 
     chain mark_cs0 {
-        # Ingress (from WAN): wash DSCP and stop processing to avoid conntrack overwrite
-        meta iifname "$WAN" ip dscp set cs0 counter accept
-        meta iifname "$WAN" ip6 dscp set cs0 counter accept
-        
-        # Egress (not from WAN): wash DSCP and return for normal QoSmate processing
-        ip dscp set cs0 counter return
-        ip6 dscp set cs0 counter
+        ip dscp set cs0 return
+        ip6 dscp set cs0
     }
     chain mark_cs1 {
         ip dscp set cs1 return
@@ -751,6 +746,9 @@ ${SETS}
             echo "        counter jump mark_cs0"
           fi
         )
+        
+        # Skip rule processing for ingress packets since they're already classified by tc-ctinfo
+        meta iifname "$WAN" accept
 
         $RULE_SET_TCPMSS_UP
         $RULE_SET_TCPMSS_DOWN
