@@ -1541,6 +1541,38 @@ status_service() {
     print_msg "==== Health Check ===="
     /etc/init.d/qosmate health_check
 
+    # Check for flow offloading settings (incompatible with qosmate)
+    print_msg "==== Flow Offloading Check ===="
+    local flow_offloading_enabled=0
+    local flow_offloading_hw_enabled=0
+    
+    # Check software flow offloading in firewall defaults
+    if [ "$(uci -q get firewall.@defaults[0].flow_offloading)" = "1" ]; then
+        flow_offloading_enabled=1
+        print_msg "WARNING: Software flow offloading is enabled."
+    fi
+    
+    # Check hardware flow offloading in firewall defaults
+    if [ "$(uci -q get firewall.@defaults[0].flow_offloading_hw)" = "1" ]; then
+        flow_offloading_hw_enabled=1
+        print_msg "WARNING: Hardware flow offloading is enabled."
+    fi
+    
+    if [ $flow_offloading_enabled -eq 1 ] || [ $flow_offloading_hw_enabled -eq 1 ]; then
+        print_msg "CRITICAL: Flow offloading is incompatible with qosmate and may cause issues!"
+        print_msg "To disable flow offloading, run:"
+        if [ $flow_offloading_enabled -eq 1 ]; then
+            print_msg "  uci set firewall.@defaults[0].flow_offloading='0'"
+        fi
+        if [ $flow_offloading_hw_enabled -eq 1 ]; then
+            print_msg "  uci set firewall.@defaults[0].flow_offloading_hw='0'"
+        fi
+        print_msg "  uci commit firewall"
+        print_msg "  /etc/init.d/firewall restart"
+    else
+        print_msg "Flow offloading is disabled (compatible with qosmate)."
+    fi
+
     # Display WAN interface information
     print_msg "==== WAN Interface Information ===="
     ifstatus wan | grep -e device
