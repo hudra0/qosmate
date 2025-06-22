@@ -342,9 +342,27 @@ create_nft_rule() {
             fi
             result="$prefix @$setname"
         else
+            # Handle exclusion
             if [ $(echo "$values" | grep -c "!=") -gt 0 ]; then
                 exclude=1
                 values=$(echo "$values" | sed 's/!=//g')
+            fi
+            
+            # Check for IPv6 suffix format (::suffix/::mask)
+            if echo "$values" | grep -q '^::[^/]*/::'; then
+                # Extract suffix and mask
+                local suffix=$(echo "$values" | sed 's/^\(::[^/]*\)\/::\(.*\)$/\1/')
+                local mask=$(echo "$values" | sed 's/^::[^/]*\/\(::[^/]*\)$/\1/')
+                
+                # Force IPv6 prefix and create bitwise AND match
+                prefix=$(echo "$prefix" | sed 's/ip /ip6 /')
+                if [ $exclude -eq 1 ]; then
+                    result="$prefix & $mask != $suffix"
+                else
+                    result="$prefix & $mask == $suffix"
+                fi
+                echo "$result"
+                return 0
             fi
             
             # Check for mixed IPv4/IPv6 addresses within a set of IP addresses
