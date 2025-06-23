@@ -16,7 +16,7 @@ The project builds upon the amazing work of [@dlakelan](https://github.com/dlake
 > **Compatibility Note**: Officially, only OpenWrt is supported. Forks may introduce fundamental changes or adjustments that could impact compatibility or functionality.
 
 Key aspects of QoSmate include
-- Support for both HFSC and CAKE queueing disciplines
+- Support for HFSC, CAKE, and Hybrid queueing disciplines
 - A LuCI-based interface for easy configuration
 - DSCP marking and traffic prioritization options via CLI and UI
 - Automatic package installation and setup
@@ -91,7 +91,7 @@ chmod +x /usr/libexec/rpcd/luci.qosmate_stats && \
     - **WAN Interface**: Select your WAN interface
     - **Download Rate (kbps)**: Set to 80-90% of your actual download speed
     - **Upload Rate (kbps)**: Set to 80-90% of your actual upload speed
-    - **Root Queueing Discipline**: Choose between HFSC (default) and CAKE
+   - **Root Queueing Discipline**: Choose between HFSC (default), CAKE, or Hybrid (HFSC + fq_codel realtime/bulk + CAKE for other traffic)
 3. Apply the changes
 
 #### Auto-setup Function
@@ -120,6 +120,7 @@ Before starting with QoSmate configuration:
 2. Enable WASH in both directions (WASHDSCPUP and WASHDSCPDOWN)
 3. Choose your Root Queueing Discipline:
    - For older/less powerful routers, use HFSC as it requires fewer system resources
+   - Hybrid mode uses HFSC + fq_codel for realtime and bulk classes while CAKE manages all other traffic
 4. Consider overhead settings:
    - Default settings are conservative to cover most use cases
    - It's better to overestimate overhead than to underestimate it
@@ -154,7 +155,7 @@ Remember that these are starting points - optimal settings may depend on your sp
 | WAN           | Specifies the WAN interface. This is crucial for applying QoS rules to the correct network interface. It's typically the interface connected to your ISP.                                                                      | string            | eth1    |
 | DOWNRATE      | Download rate in kbps. Set this to about 80-90% of your actual download speed to allow for overhead and prevent bufferbloat. This creates a buffer that helps maintain low latency even when the connection is fully utilized. | integer           | 90000   |
 | UPRATE        | Upload rate in kbps. Set this to about 80-90% of your actual upload speed for the same reasons as DOWNRATE.                                                                                                                    | integer           | 45000   |
-| ROOT_QDISC    | Specifies the root queueing discipline. Options are 'hfsc' or 'cake'                                                                                                                                                           | enum (hfsc, cake) | hfsc    |
+| ROOT_QDISC    | Specifies the root queueing discipline. Options are 'hfsc', 'cake', or 'hybrid' | enum (hfsc, cake, hybrid) | hfsc    |
 
 ### HFSC Specific Settings
 
@@ -930,6 +931,19 @@ tc class add dev $WAN parent 1:1 classid 1:13 hfsc ls m1 "$((RATE*20/100))kbit" 
 tc class add dev $WAN parent 1:1 classid 1:14 hfsc ls m1 "$((RATE*7/100))kbit" d "${DUR}ms" m2 "$((RATE*15/100))kbit"
 tc class add dev $WAN parent 1:1 classid 1:15 hfsc ls m1 "$((RATE*3/100))kbit" d "${DUR}ms" m2 "$((RATE*10/100))kbit"
 ```
+
+### Hybrid Mode (HFSC + CAKE)
+
+Hybrid mode sets HFSC as the root scheduler and uses three classes with fq_codel:
+
+1. **Realtime Class (1:11)**
+   - Handles EF/CS5/CS6/CS7 traffic with the selected `gameqdisc`.
+2. **CAKE Class (1:13)**
+   - Manages most traffic with CAKE for fairness and host isolation.
+3. **Bulk Class (1:15)**
+   - Uses HFSC with `fq_codel` for CS1 bulk traffic.
+
+This approach keeps latency low for realtime flows while benefiting from CAKE's advanced features for general traffic.
 
 ### CAKE (Common Applications Kept Enhanced)
 
