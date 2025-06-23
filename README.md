@@ -91,7 +91,7 @@ chmod +x /usr/libexec/rpcd/luci.qosmate_stats && \
     - **WAN Interface**: Select your WAN interface
     - **Download Rate (kbps)**: Set to 80-90% of your actual download speed
     - **Upload Rate (kbps)**: Set to 80-90% of your actual upload speed
-   - **Root Queueing Discipline**: Choose between HFSC (default), CAKE, or Hybrid (HFSC realtime/bulk + CAKE for other traffic)
+   - **Root Queueing Discipline**: Choose between HFSC (default), CAKE, or Hybrid (HFSC + fq_codel realtime/bulk + CAKE for other traffic)
 3. Apply the changes
 
 #### Auto-setup Function
@@ -120,7 +120,7 @@ Before starting with QoSmate configuration:
 2. Enable WASH in both directions (WASHDSCPUP and WASHDSCPDOWN)
 3. Choose your Root Queueing Discipline:
    - For older/less powerful routers, use HFSC as it requires fewer system resources
-   - Hybrid mode uses HFSC for realtime and bulk classes while CAKE manages all other traffic, offering a balance of low latency and fairness
+   - Hybrid mode uses HFSC + fq_codel for realtime and bulk classes while CAKE manages all other traffic
 4. Consider overhead settings:
    - Default settings are conservative to cover most use cases
    - It's better to overestimate overhead than to underestimate it
@@ -934,7 +934,7 @@ tc class add dev $WAN parent 1:1 classid 1:15 hfsc ls m1 "$((RATE*3/100))kbit" d
 
 ### Hybrid Mode (HFSC + CAKE)
 
-Hybrid mode sets HFSC as the root scheduler and uses three classes:
+Hybrid mode sets HFSC as the root scheduler and uses three classes with fq_codel:
 
 1. **Realtime Class (1:11)**
    - Handles EF/CS5/CS6/CS7 traffic with the selected `gameqdisc`.
