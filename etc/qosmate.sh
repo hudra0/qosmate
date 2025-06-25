@@ -342,10 +342,11 @@ create_nft_rule() {
             fi
             result="$prefix @$setname"
         else
-            # Handle exclusion
-            if [ $(echo "$values" | grep -c "!=") -gt 0 ]; then
+            # Check if ANY value starts with !=
+            if echo "$values" | grep -qE '(^|[[:space:]])!=' ; then
                 exclude=1
-                values=$(echo "$values" | sed 's/!=//g')
+                # Remove != from the beginning of each space-separated value
+                values=$(echo "$values" | sed -E 's/(^|[[:space:]])!=([^[:space:]]+)/\1\2/g')
             fi
             
             # Check for IPv6 suffix format (::suffix/::mask)
