@@ -147,9 +147,12 @@ calculate_ack_rates() {
 # Call the function to perform the ACK rates calculations
 calculate_ack_rates
 
-# Function to check if an IP is IPv6
+# Function to check if a single IP address is IPv6
+# Note: This assumes the input is a single IP, not a space-separated list
+# Handles CIDR notation (e.g. ::/0 or 192.168.1.0/24)
 is_ipv6() {
-    case "$1" in
+    local ip="${1%/*}"  # Remove CIDR suffix if present
+    case "$ip" in
         *:*) return 0 ;;
         *) return 1 ;;
     esac
@@ -271,46 +274,84 @@ create_nft_rule() {
     local has_ipv4=0
     local has_ipv6=0
     
-    # Check source IP version
+    # Variables to store filtered IPs for mixed rules
+    local src_ip_v4=""
+    local src_ip_v6=""
+    local dest_ip_v4=""
+    local dest_ip_v6=""
+    
+    # Function to separate IPs by family
+    separate_ips_by_family() {
+        local ips="$1"
+        local ipv4_result=""
+        local ipv6_result=""
+        
+        # Debug log (uncomment for troubleshooting)
+        # debug_log "separate_ips_by_family: Processing IPs: '$ips'"
+        
+        for ip in $ips; do
+            # Preserve != prefix
+            local prefix=""
+            local clean_ip="$ip"
+            if echo "$ip" | grep -q '^!='; then
+                prefix="!="
+                clean_ip=$(echo "$ip" | sed 's/^!=//')
+            fi
+            
+            # debug_log "  Checking IP: '$ip' (clean: '$clean_ip')"
+            
+            # Check if it's a set reference
+            if echo "$clean_ip" | grep -q '^@'; then
+                local setname=$(echo "$clean_ip" | sed 's/^@//')
+                if [ "$(get_set_family "$setname")" = "ipv6" ]; then
+                    ipv6_result="${ipv6_result}${ipv6_result:+ }${prefix}${clean_ip}"
+                    # debug_log "    -> IPv6 set: $setname"
+                else
+                    ipv4_result="${ipv4_result}${ipv4_result:+ }${prefix}${clean_ip}"
+                    # debug_log "    -> IPv4 set: $setname"
+                fi
+            # Check for IPv6 suffix format
+            elif echo "$clean_ip" | grep -q '^::[^/]*/::'; then
+                ipv6_result="${ipv6_result}${ipv6_result:+ }${prefix}${clean_ip}"
+                # debug_log "    -> IPv6 suffix format"
+            # Regular IP check
+            elif is_ipv6 "$clean_ip"; then
+                ipv6_result="${ipv6_result}${ipv6_result:+ }${prefix}${clean_ip}"
+                # debug_log "    -> IPv6 address"
+            else
+                ipv4_result="${ipv4_result}${ipv4_result:+ }${prefix}${clean_ip}"
+                # debug_log "    -> IPv4 address"
+            fi
+        done
+        
+        # debug_log "  Results: IPv4='$ipv4_result', IPv6='$ipv6_result'"
+        echo "$ipv4_result|$ipv6_result"
+    }
+    
+    # Check and separate source IPs
     if [ -n "$src_ip" ]; then
-        if echo "$src_ip" | grep -q '^@'; then
-            # Handle IP set
-            local src_set=$(echo "$src_ip" | sed 's/^@//')
-            if [ "$(get_set_family "$src_set")" = "ipv6" ]; then
-                has_ipv6=1
-            else
-                has_ipv4=1
-            fi
-        elif is_ipv6 "$src_ip"; then
-            has_ipv6=1
-        else
-            has_ipv4=1
-        fi
+        local separated=$(separate_ips_by_family "$src_ip")
+        src_ip_v4=$(echo "$separated" | cut -d'|' -f1)
+        src_ip_v6=$(echo "$separated" | cut -d'|' -f2)
+        
+        [ -n "$src_ip_v4" ] && has_ipv4=1
+        [ -n "$src_ip_v6" ] && has_ipv6=1
     fi
     
-    # Check destination IP version
+    # Check and separate destination IPs
     if [ -n "$dest_ip" ]; then
-        if echo "$dest_ip" | grep -q '^@'; then
-            # Handle IP set
-            local dest_set=$(echo "$dest_ip" | sed 's/^@//')
-            if [ "$(get_set_family "$dest_set")" = "ipv6" ]; then
-                has_ipv6=1
-            else
-                has_ipv4=1
-            fi
-        elif is_ipv6 "$dest_ip"; then
-            has_ipv6=1
-        else
-            has_ipv4=1
-        fi
+        local separated=$(separate_ips_by_family "$dest_ip")
+        dest_ip_v4=$(echo "$separated" | cut -d'|' -f1)
+        dest_ip_v6=$(echo "$separated" | cut -d'|' -f2)
+        
+        [ -n "$dest_ip_v4" ] && has_ipv4=1
+        [ -n "$dest_ip_v6" ] && has_ipv6=1
     fi
     
-    # Check for mixed IPv4/IPv6 rule *in the input* and exit early if mixed
-    # This check should only fail if the user explicitly provided both v4 and v6 addresses in src_ip or dest_ip
-    if [ -n "$src_ip" ] || [ -n "$dest_ip" ]; then # Only check if an IP was actually provided in config
+    # Log if mixed IPv4/IPv6 addresses are found
+    if [ -n "$src_ip" ] || [ -n "$dest_ip" ]; then
        if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then 
-            logger -t qosmate "Error: Mixed IPv4/IPv6 addresses explicitly specified in rule '$name' ($config). Rule skipped."
-            return 0
+            logger -t qosmate "Info: Mixed IPv4/IPv6 addresses in rule '$name' ($config). Splitting into separate rules."
         fi
     fi
 
@@ -420,19 +461,7 @@ create_nft_rule() {
         rule_cmd="$rule_cmd $proto_result"
     fi
 
-    # Append source IP and port if provided
-    if [ -n "$src_ip" ]; then
-        local ip_cmd="ip saddr"
-        if is_ipv6 "$src_ip"; then
-            ip_cmd="ip6 saddr"
-        fi
-        local src_ip_result=$(handle_multiple_values "$src_ip" "$ip_cmd")
-        if [ "$src_ip_result" = "ERROR_MIXED_IP" ]; then
-            # Skip this rule entirely
-            return 0
-        fi
-        rule_cmd="$rule_cmd $src_ip_result"
-    fi
+    # Note: Source IP handling is now done per-family in the rule generation below
     
     # Use connection tracking for source port
     if [ -n "$src_port" ]; then
@@ -444,19 +473,7 @@ create_nft_rule() {
         rule_cmd="$rule_cmd $src_port_result"
     fi
 
-    # Append destination IP and port if provided
-    if [ -n "$dest_ip" ]; then
-        local ip_cmd="ip daddr"
-        if is_ipv6 "$dest_ip"; then
-            ip_cmd="ip6 daddr"
-        fi
-        local dest_ip_result=$(handle_multiple_values "$dest_ip" "$ip_cmd")
-        if [ "$dest_ip_result" = "ERROR_MIXED_IP" ]; then
-            # Skip this rule entirely
-            return 0
-        fi
-        rule_cmd="$rule_cmd $dest_ip_result"
-    fi
+    # Note: Destination IP handling is now done per-family in the rule generation below
     
     # Use connection tracking for destination port
     if [ -n "$dest_port" ]; then
@@ -476,8 +493,19 @@ create_nft_rule() {
     # Generate IPv4 rule if needed
     if [ "$has_ipv4" -eq 1 ]; then
         local rule_cmd_v4="$common_rule_part"
+        
+        # Add IPv4-specific IP addresses
+        if [ -n "$src_ip_v4" ]; then
+            local src_result=$(handle_multiple_values "$src_ip_v4" "ip saddr")
+            rule_cmd_v4="$rule_cmd_v4 $src_result"
+        fi
+        if [ -n "$dest_ip_v4" ]; then
+            local dest_result=$(handle_multiple_values "$dest_ip_v4" "ip daddr")
+            rule_cmd_v4="$rule_cmd_v4 $dest_result"
+        fi
+        
         # Ensure we only add parts if there's something to match on (IP/Port/Proto)
-        if [ -n "$proto" ] || [ -n "$src_ip" ] || [ -n "$dest_ip" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
+        if [ -n "$proto" ] || [ -n "$src_ip_v4" ] || [ -n "$dest_ip_v4" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
             rule_cmd_v4="$rule_cmd_v4 ip dscp set $class"
         fi
         [ "$counter" -eq 1 ] && rule_cmd_v4="$rule_cmd_v4 counter"
@@ -494,8 +522,19 @@ create_nft_rule() {
     # Generate IPv6 rule if needed
     if [ "$has_ipv6" -eq 1 ]; then
         local rule_cmd_v6="$common_rule_part"
-         # Ensure we only add parts if there's something to match on (IP/Port/Proto)
-        if [ -n "$proto" ] || [ -n "$src_ip" ] || [ -n "$dest_ip" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
+        
+        # Add IPv6-specific IP addresses
+        if [ -n "$src_ip_v6" ]; then
+            local src_result=$(handle_multiple_values "$src_ip_v6" "ip6 saddr")
+            rule_cmd_v6="$rule_cmd_v6 $src_result"
+        fi
+        if [ -n "$dest_ip_v6" ]; then
+            local dest_result=$(handle_multiple_values "$dest_ip_v6" "ip6 daddr")
+            rule_cmd_v6="$rule_cmd_v6 $dest_result"
+        fi
+        
+        # Ensure we only add parts if there's something to match on (IP/Port/Proto)
+        if [ -n "$proto" ] || [ -n "$src_ip_v6" ] || [ -n "$dest_ip_v6" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
             rule_cmd_v6="$rule_cmd_v6 ip6 dscp set $class"
         fi
         [ "$counter" -eq 1 ] && rule_cmd_v6="$rule_cmd_v6 counter"
