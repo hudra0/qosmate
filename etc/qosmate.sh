@@ -799,7 +799,7 @@ ${SETS}
         type filter hook $NFT_HOOK priority $NFT_PRIORITY; policy accept;
 
         iif "lo" accept    
-        $(if { [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; } && [ "$WASHDSCPDOWN" -eq 1 ]; then
+        $(if { [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ] || [ "$ROOT_QDISC" = "htb" ]; } && [ "$WASHDSCPDOWN" -eq 1 ]; then
             echo "# wash all the DSCP on ingress ... "
             echo "        counter jump mark_cs0"
           fi
@@ -847,7 +847,7 @@ ${DYNAMIC_RULES}
         ct mark set ip dscp or 128 counter
         ct mark set ip6 dscp or 128 counter
 
-        $(if { [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; } && [ "$WASHDSCPUP" -eq 1 ]; then
+        $(if { [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ] || [ "$ROOT_QDISC" = "htb" ]; } && [ "$WASHDSCPUP" -eq 1 ]; then
             echo "# wash all DSCP on egress ... "
             echo "meta oifname \$wan jump mark_cs0"
           fi
@@ -1293,6 +1293,162 @@ setup_hybrid() {
     fi
 }
 
+# Helper functions for HTB dynamic parameter calculation
+# Calculate optimal HTB quantum based on rate
+calculate_htb_quantum() {
+    local rate=$1
+    local duration_us=${2:-1000}  # Default 1ms = 1000µs
+    local MTU=1500
+    
+    # Duration-based calculation (SQM-style)
+    # rate in kbit/s, duration in µs, result in bytes
+    local quantum=$(((duration_us * rate) / 8000))
+    
+    # ATM-aware minimum
+    if [ "$LINKTYPE" = "atm" ]; then
+        local min_quantum=$(((MTU + 48 + 47) / 48 * 53))
+        [ $quantum -lt $min_quantum ] && quantum=$min_quantum
+    else
+        [ $quantum -lt $MTU ] && quantum=$MTU
+    fi
+    
+    # Maximum reasonable quantum (200KB)
+    [ $quantum -gt 200000 ] && quantum=200000
+    
+    echo $quantum
+}
+
+# Calculate HTB burst size based on rate and target latency
+calculate_htb_burst() {
+    local rate=$1
+    local duration_us=${2:-10000}  # Default 10ms = 10000µs
+    
+    # burst in bytes for given duration
+    local burst=$(((duration_us * rate) / 8000))
+    
+    # Minimum burst should be at least 1 MTU
+    [ $burst -lt 1500 ] && burst=1500
+    
+    echo $burst
+}
+
+# Function to setup HTB qdisc (simple.qos style with 3 classes)
+setup_htb() {
+    local DEV=$1 RATE=$2 DIR=$3
+    local MTU=1500
+    
+    # Ensure rate is valid
+    [ "$RATE" -le 0 ] && RATE=1
+    
+    # Delete existing qdisc
+    tc qdisc del dev "$DEV" root > /dev/null 2>&1
+    
+    # Calculate overhead parameters like HFSC
+    local TC_OH_PARAMS=""
+    case $LINKTYPE in
+        "atm")
+            TC_OH_PARAMS="stab mtu 2047 tsize 512 mpu 68 overhead ${OH} linklayer atm"
+            ;;
+        "DOCSIS")
+            TC_OH_PARAMS="stab overhead 25 linklayer ethernet"
+            ;;
+        *)
+            TC_OH_PARAMS="stab overhead 40 linklayer ethernet"
+            ;;
+    esac
+    
+    # Setup HTB root with default to best effort (class 13)
+    tc qdisc add dev "$DEV" root handle 1: $TC_OH_PARAMS htb default 13
+    
+    # Calculate HTB quantum and burst for all classes
+    local HTB_QUANTUM=$(calculate_htb_quantum $RATE)
+    local HTB_BURST=$(calculate_htb_burst $RATE)
+    local HTB_CBURST=$((HTB_BURST / 10))
+    [ $HTB_CBURST -lt 1500 ] && HTB_CBURST=1500
+    
+    # Create main rate limiting class
+    tc class add dev "$DEV" parent 1: classid 1:1 htb \
+        quantum $HTB_QUANTUM \
+        rate "${RATE}kbit" ceil "${RATE}kbit" \
+        burst $HTB_BURST cburst $HTB_CBURST
+    
+    # Calculate rates
+    # Priority: 1% + 400kbit
+    local PRIO_RATE_MIN=$((RATE / 100 + 400))
+    # Minimum 400kbit
+    [ $PRIO_RATE_MIN -lt 400 ] && PRIO_RATE_MIN=400
+    
+    # Ceiling rates
+    local PRIO_CEIL=$((RATE / 3))      # 33% maximum
+    local BE_MIN_RATE=$((RATE / 6))    # 16% guaranteed
+    local BK_MIN_RATE=$((RATE / 6))    # 16% guaranteed
+    local BE_CEIL=$((RATE - 16))       # Almost full rate
+    
+    # Priority class (1:11) - for realtime/gaming traffic
+    tc class add dev "$DEV" parent 1:1 classid 1:11 htb \
+        quantum $HTB_QUANTUM \
+        rate "${PRIO_RATE_MIN}kbit" ceil "${PRIO_CEIL}kbit" \
+        prio 1
+    
+    # Best Effort class (1:13) - default traffic
+    tc class add dev "$DEV" parent 1:1 classid 1:13 htb \
+        quantum $HTB_QUANTUM \
+        rate "${BE_MIN_RATE}kbit" ceil "${BE_CEIL}kbit" \
+        burst $HTB_BURST cburst $HTB_CBURST prio 2
+    
+    # Background/Bulk class (1:15) - low priority
+    tc class add dev "$DEV" parent 1:1 classid 1:15 htb \
+        quantum $HTB_QUANTUM \
+        rate "${BK_MIN_RATE}kbit" ceil "${BE_CEIL}kbit" \
+        burst $HTB_BURST cburst $HTB_CBURST prio 3
+    
+    # Attach leaf qdiscs
+    # Calculate fq_codel parameters
+    local INTVL=$((100+2*1500*8/RATE))
+    local TARG=$((540*8/RATE+4))
+    
+    # Priority class gets fq_codel with aggressive settings
+    tc qdisc add dev "$DEV" parent 1:11 handle 110: fq_codel \
+        interval "${INTVL}ms" target "${TARG}ms" \
+        quantum 300 memory_limit $((PRIO_RATE_MIN*100))
+    
+    # Best effort with standard settings
+    tc qdisc add dev "$DEV" parent 1:13 handle 130: fq_codel \
+        interval "${INTVL}ms" target "${TARG}ms" \
+        quantum 1500 memory_limit $((BE_MIN_RATE*200))
+    
+    # Background with larger target
+    tc qdisc add dev "$DEV" parent 1:15 handle 150: fq_codel \
+        interval "$((INTVL*2))ms" target "$((TARG*2))ms" \
+        quantum 300 memory_limit $((BK_MIN_RATE*200))
+    
+    # Apply DSCP filters only on ingress (LAN/IFB)
+    if [ "$DIR" = "lan" ]; then
+        # Delete existing filters
+        tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
+        tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1
+        
+        # IPv4 filters (prio 1)
+        # Priority class: EF, CS5, CS6, CS7
+        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xb8 0xfc classid 1:11 # EF (46)
+        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xa0 0xfc classid 1:11 # CS5 (40)
+        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xc0 0xfc classid 1:11 # CS6 (48)
+        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xe0 0xfc classid 1:11 # CS7 (56)
+        
+        # Background class: CS1
+        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x20 0xfc classid 1:15 # CS1 (8)
+        
+        # Default (CS0, CS2, CS3, CS4, AF*) goes to BE via default 13
+        
+        # IPv6 filters (prio 2)
+        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 46) 0x0FC0 at 0 classid 1:11 # EF
+        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 40) 0x0FC0 at 0 classid 1:11 # CS5
+        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 48) 0x0FC0 at 0 classid 1:11 # CS6
+        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 56) 0x0FC0 at 0 classid 1:11 # CS7
+        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 8) 0x0FC0 at 0 classid 1:15 # CS1
+    fi
+}
+
 
 ##############################
 #       Main Logic
@@ -1326,6 +1482,11 @@ case "$ROOT_QDISC" in
     cake)
         echo "Applying CAKE queueing discipline."
         setup_cake
+        ;;
+    htb)
+        echo "Applying HTB queueing discipline."
+        setup_htb "$WAN" "$UPRATE" "wan"
+        setup_htb "$LAN" "$DOWNRATE" "lan"
         ;;
     *) # Fallback for unsupported ROOT_QDISC
         echo "Error: Unsupported ROOT_QDISC: '$ROOT_QDISC'. Check /etc/config/qosmate." >&2
