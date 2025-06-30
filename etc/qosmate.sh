@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317
+# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317,SC3060
 
 VERSION="1.2.0" # will become obsolete in future releases as version string is now in the init script
 
@@ -158,6 +158,23 @@ is_ipv6() {
     esac
 }
 
+# checks whether string is an ipv6 mask
+is_ipv6_mask() {
+    case "$1" in
+        ::*/::*) ;;
+        *) return 1
+    esac
+    local inp="${1#"::"}"
+    case "${inp%"/::"*}" in *"/"*) return 1; esac
+    return 0
+}
+
+# checks whether string is nft set reference
+is_set_ref() {
+    case "$1" in "@"*) return 0; esac
+    return 1
+}
+
 # Debug function
 debug_log() {
     local message="$1"
@@ -282,57 +299,55 @@ create_nft_rule() {
     
     # Function to separate IPs by family
     separate_ips_by_family() {
-        local ips="$1"
-        local ipv4_result=""
-        local ipv6_result=""
+        local ips="$3" \
+            ip prefix setname \
+            ipv4_result="" \
+            ipv6_result=""
         
         # Debug log (uncomment for troubleshooting)
         # debug_log "separate_ips_by_family: Processing IPs: '$ips'"
         
         for ip in $ips; do
             # Preserve != prefix
-            local prefix=""
-            local clean_ip="$ip"
-            if echo "$ip" | grep -q '^!='; then
+            prefix=""
+            case "$ip" in '!='*)
                 prefix="!="
-                clean_ip=$(echo "$ip" | sed 's/^!=//')
-            fi
+                ip="${ip#"!="}"
+            esac
             
-            # debug_log "  Checking IP: '$ip' (clean: '$clean_ip')"
+            # debug_log "  Checking IP: '$ip'
             
             # Check if it's a set reference
-            if echo "$clean_ip" | grep -q '^@'; then
-                local setname=$(echo "$clean_ip" | sed 's/^@//')
+            if is_set_ref "$ip"; then
+                setname="${ip#"@"}"
                 if [ "$(get_set_family "$setname")" = "ipv6" ]; then
-                    ipv6_result="${ipv6_result}${ipv6_result:+ }${prefix}${clean_ip}"
+                    ipv6_result="${ipv6_result}${ipv6_result:+ }${prefix}${ip}"
                     # debug_log "    -> IPv6 set: $setname"
                 else
-                    ipv4_result="${ipv4_result}${ipv4_result:+ }${prefix}${clean_ip}"
+                    ipv4_result="${ipv4_result}${ipv4_result:+ }${prefix}${ip}"
                     # debug_log "    -> IPv4 set: $setname"
                 fi
             # Check for IPv6 suffix format
-            elif echo "$clean_ip" | grep -q '^::[^/]*/::'; then
-                ipv6_result="${ipv6_result}${ipv6_result:+ }${prefix}${clean_ip}"
+            elif is_ipv6_mask "$ip"; then
+                ipv6_result="${ipv6_result}${ipv6_result:+ }${prefix}${ip}"
                 # debug_log "    -> IPv6 suffix format"
             # Regular IP check
-            elif is_ipv6 "$clean_ip"; then
-                ipv6_result="${ipv6_result}${ipv6_result:+ }${prefix}${clean_ip}"
+            elif is_ipv6 "$ip"; then
+                ipv6_result="${ipv6_result}${ipv6_result:+ }${prefix}${ip}"
                 # debug_log "    -> IPv6 address"
             else
-                ipv4_result="${ipv4_result}${ipv4_result:+ }${prefix}${clean_ip}"
+                ipv4_result="${ipv4_result}${ipv4_result:+ }${prefix}${ip}"
                 # debug_log "    -> IPv4 address"
             fi
         done
         
         # debug_log "  Results: IPv4='$ipv4_result', IPv6='$ipv6_result'"
-        echo "$ipv4_result|$ipv6_result"
+        eval "${1}=\"\${ipv4_result}\" ${2}=\"\${ipv6_result}\""
     }
     
     # Check and separate source IPs
     if [ -n "$src_ip" ]; then
-        local separated=$(separate_ips_by_family "$src_ip")
-        src_ip_v4=$(echo "$separated" | cut -d'|' -f1)
-        src_ip_v6=$(echo "$separated" | cut -d'|' -f2)
+        separate_ips_by_family src_ip_v4 src_ip_v6 "$src_ip"
         
         [ -n "$src_ip_v4" ] && has_ipv4=1
         [ -n "$src_ip_v6" ] && has_ipv6=1
@@ -340,9 +355,7 @@ create_nft_rule() {
     
     # Check and separate destination IPs
     if [ -n "$dest_ip" ]; then
-        local separated=$(separate_ips_by_family "$dest_ip")
-        dest_ip_v4=$(echo "$separated" | cut -d'|' -f1)
-        dest_ip_v6=$(echo "$separated" | cut -d'|' -f2)
+        separate_ips_by_family dest_ip_v4 dest_ip_v6 "$dest_ip"
         
         [ -n "$dest_ip_v4" ] && has_ipv4=1
         [ -n "$dest_ip_v6" ] && has_ipv6=1
@@ -374,8 +387,8 @@ create_nft_rule() {
         
         # Handle set references (@setname)
         if echo "$values" | grep -q '^@'; then
-            local setname=$(echo "$values" | sed 's/^@//')
-            local family=$(get_set_family "$setname")
+            local setname="$(echo "$values" | sed 's/^@//')"
+            local family="$(get_set_family "$setname")"
             debug_log "Set $setname has family: $family"
             
             if [ "$family" = "ipv6" ]; then
@@ -393,12 +406,12 @@ create_nft_rule() {
             # Check for IPv6 suffix format (::suffix/::mask)
             if echo "$values" | grep -q '^::[^/]*/::'; then
                 # Extract suffix and mask
-                local suffix=$(echo "$values" | sed 's/^\(::[^/]*\)\/::\(.*\)$/\1/')
-                local mask=$(echo "$values" | sed 's/^::[^/]*\/\(::[^/]*\)$/\1/')
+                local suffix="$(echo "$values" | sed 's/^\(::[^/]*\)\/::\(.*\)$/\1/')"
+                local mask="$(echo "$values" | sed 's/^::[^/]*\/\(::[^/]*\)$/\1/')"
                 
                 # Force IPv6 prefix and create bitwise AND match
-                prefix=$(echo "$prefix" | sed 's/ip /ip6 /')
-                if [ $exclude -eq 1 ]; then
+                prefix="${prefix//ip /ip6 }"
+                if [ "$exclude" -eq 1 ]; then
                     result="$prefix & $mask != $suffix"
                 else
                     result="$prefix & $mask == $suffix"
@@ -407,34 +420,34 @@ create_nft_rule() {
                 return 0
             fi
             
-            # Check for mixed IPv4/IPv6 addresses within a set of IP addresses
-            if echo "$prefix" | grep -q "addr" && [ $(echo "$values" | wc -w) -gt 1 ]; then
-                local has_ipv4=0
-                local has_ipv6=0
-                
-                # Check each address in the set
-                for ip in $values; do
-                    if is_ipv6 "$ip"; then
-                        has_ipv6=1
-                    else
-                        has_ipv4=1
+            if [ "$(echo "$values" | wc -w)" -gt 1 ]; then
+                # Check for mixed IPv4/IPv6 addresses within a set of IP addresses
+                case "$prefix" in *addr*)
+                    local has_ipv4=0
+                    local has_ipv6=0
+                    
+                    # Check each address in the set
+                    for ip in $values; do
+                        if is_ipv6 "$ip"; then
+                            has_ipv6=1
+                        else
+                            has_ipv4=1
+                        fi
+                    done
+                    
+                    # If mixed, log and signal error
+                    if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then
+                        logger -t qosmate "Error: Mixed IPv4/IPv6 addresses within a set: { $values }. Rule skipped."
+                        echo "ERROR_MIXED_IP"
+                        return 1
                     fi
-                done
-                
-                # If mixed, log and signal error
-                if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then
-                    logger -t qosmate "Error: Mixed IPv4/IPv6 addresses within a set: { $values }. Rule skipped."
-                    echo "ERROR_MIXED_IP"
-                    return 1
-                fi
-                
-                # Update prefix based on IP type
-                if [ "$has_ipv6" -eq 1 ]; then
-                    prefix=$(echo "$prefix" | sed 's/ip /ip6 /')
-                fi
-            fi
-            
-            if [ $(echo "$values" | wc -w) -gt 1 ]; then
+                    
+                    # Update prefix based on IP type
+                    if [ "$has_ipv6" -eq 1 ]; then
+                        prefix="${prefix//ip /ip6 }"
+                    fi
+                esac
+
                 if [ $exclude -eq 1 ]; then
                     result="$prefix != { $(echo $values | tr ' ' ',') }"
                 else
