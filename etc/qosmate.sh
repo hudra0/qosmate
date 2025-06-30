@@ -1372,17 +1372,68 @@ setup_htb() {
         rate "${RATE}kbit" ceil "${RATE}kbit" \
         burst $HTB_BURST cburst $HTB_CBURST
     
-    # Calculate rates
-    # Priority: 1% + 400kbit
-    local PRIO_RATE_MIN=$((RATE / 100 + 400))
-    # Minimum 400kbit
-    [ $PRIO_RATE_MIN -lt 400 ] && PRIO_RATE_MIN=400
+    # Smart calculation that scales smoothly across all bandwidths
+    # Formula: percent = 15 + (50000 / RATE), capped between 5-40%
+    #
+    # This creates a hyperbolic curve that provides:
+    # - High percentage (up to 40%) for very low bandwidth connections
+    # - Smooth decrease as bandwidth increases
+    # - Stabilizes around 15% for high bandwidth connections
+    #
+    # Examples:
+    # - 1 Mbit:   15 + 50 = 65% → capped at 40% → 400 kbit → min 800 kbit
+    # - 5 Mbit:   15 + 10 = 25% → 1250 kbit
+    # - 10 Mbit:  15 + 5  = 20% → 2000 kbit
+    # - 50 Mbit:  15 + 1  = 16% → 8000 kbit
+    # - 100 Mbit: 15 + 0.5 = 15.5% → 15500 kbit
+    #
+    # Visualization:
+    #   40% |*
+    #       |  *
+    #   30% |    *
+    #       |      *
+    #   20% |        * * * * *
+    #   15% |                  * * * * * * * *
+    #       +---------------------------------> Bandwidth
+    #       1    5   10   20   50  100  200 Mbit
+    #
+    # Two safety mechanisms ensure adequate priority bandwidth:
+    # 1. Percentage-based: Scales with total bandwidth
+    # 2. Absolute minimum: 800 kbit for gaming/VoIP needs
     
-    # Ceiling rates
-    local PRIO_CEIL=$((RATE / 3))      # 33% maximum
+    # Calculate sliding percentage (higher % for lower rates)
+    local percent=$((15 + 50000 / RATE))
+    [ $percent -gt 40 ] && percent=40  # Cap at 40%
+    [ $percent -lt 5 ] && percent=5     # Floor at 5%
+    
+    local percent_based=$((RATE * percent / 100))
+    local absolute_min=800              # Gaming/VoIP minimum
+    
+    # Take the maximum of percentage-based and absolute minimum
+    local PRIO_RATE_MIN=$percent_based
+    [ $absolute_min -gt $PRIO_RATE_MIN ] && PRIO_RATE_MIN=$absolute_min
+    
+    # Calculate ceiling - ensure it's at least min + some headroom
+    local PRIO_CEIL=$((RATE / 3))  # Start with 33%
+    
+    # Ensure ceiling is at least min rate + 10%
+    local min_ceiling=$((PRIO_RATE_MIN * 110 / 100))
+    [ $PRIO_CEIL -lt $min_ceiling ] && PRIO_CEIL=$min_ceiling
+    
+    # Calculate BE and BK rates
     local BE_MIN_RATE=$((RATE / 6))    # 16% guaranteed
     local BK_MIN_RATE=$((RATE / 6))    # 16% guaranteed
-    local BE_CEIL=$((RATE - 16))       # Almost full rate
+    
+    # Adjust if total mins exceed available bandwidth
+    local total_min=$((PRIO_RATE_MIN + BE_MIN_RATE + BK_MIN_RATE))
+    if [ $total_min -gt $((RATE * 90 / 100)) ]; then
+        # Scale down proportionally
+        BE_MIN_RATE=$((BE_MIN_RATE * RATE * 90 / 100 / total_min))
+        BK_MIN_RATE=$((BK_MIN_RATE * RATE * 90 / 100 / total_min))
+    fi
+    
+    # BE/BK ceiling - almost full rate minus a small reserve
+    local BE_CEIL=$((RATE - 16))
     
     # Priority class (1:11) - for realtime/gaming traffic
     tc class add dev "$DEV" parent 1:1 classid 1:11 htb \
@@ -1410,17 +1461,17 @@ setup_htb() {
     # Priority class gets fq_codel with aggressive settings
     tc qdisc add dev "$DEV" parent 1:11 handle 110: fq_codel \
         interval "${INTVL}ms" target "${TARG}ms" \
-        quantum 300 memory_limit $((PRIO_RATE_MIN*100))
+        quantum 300 memory_limit $((PRIO_RATE_MIN*200/8))
     
     # Best effort with standard settings
     tc qdisc add dev "$DEV" parent 1:13 handle 130: fq_codel \
         interval "${INTVL}ms" target "${TARG}ms" \
-        quantum 1500 memory_limit $((BE_MIN_RATE*200))
+        quantum 1500 memory_limit $((BE_MIN_RATE*200/8))
     
     # Background with larger target
     tc qdisc add dev "$DEV" parent 1:15 handle 150: fq_codel \
         interval "$((INTVL*2))ms" target "$((TARG*2))ms" \
-        quantum 300 memory_limit $((BK_MIN_RATE*200))
+        quantum 300 memory_limit $((BK_MIN_RATE*200/8))
     
     # Apply DSCP filters only on ingress (LAN/IFB)
     if [ "$DIR" = "lan" ]; then
