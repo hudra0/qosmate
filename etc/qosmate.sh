@@ -421,33 +421,33 @@ create_nft_rule() {
             fi
             
             if [ "$(echo "$values" | wc -w)" -gt 1 ]; then
-                # Check for mixed IPv4/IPv6 addresses within a set of IP addresses
+            # Check for mixed IPv4/IPv6 addresses within a set of IP addresses
                 case "$prefix" in *addr*)
-                    local has_ipv4=0
-                    local has_ipv6=0
-                    
-                    # Check each address in the set
-                    for ip in $values; do
-                        if is_ipv6 "$ip"; then
-                            has_ipv6=1
-                        else
-                            has_ipv4=1
-                        fi
-                    done
-                    
-                    # If mixed, log and signal error
-                    if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then
-                        logger -t qosmate "Error: Mixed IPv4/IPv6 addresses within a set: { $values }. Rule skipped."
-                        echo "ERROR_MIXED_IP"
-                        return 1
+                local has_ipv4=0
+                local has_ipv6=0
+                
+                # Check each address in the set
+                for ip in $values; do
+                    if is_ipv6 "$ip"; then
+                        has_ipv6=1
+                    else
+                        has_ipv4=1
                     fi
-                    
-                    # Update prefix based on IP type
-                    if [ "$has_ipv6" -eq 1 ]; then
+                done
+                
+                # If mixed, log and signal error
+                if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then
+                    logger -t qosmate "Error: Mixed IPv4/IPv6 addresses within a set: { $values }. Rule skipped."
+                    echo "ERROR_MIXED_IP"
+                    return 1
+                fi
+                
+                # Update prefix based on IP type
+                if [ "$has_ipv6" -eq 1 ]; then
                         prefix="${prefix//ip /ip6 }"
-                    fi
+                fi
                 esac
-
+            
                 if [ $exclude -eq 1 ]; then
                     result="$prefix != { $(echo $values | tr ' ' ',') }"
                 else
@@ -546,7 +546,7 @@ create_nft_rule() {
             rule_cmd_v6="$rule_cmd_v6 $dest_result"
         fi
         
-        # Ensure we only add parts if there's something to match on (IP/Port/Proto)
+         # Ensure we only add parts if there's something to match on (IP/Port/Proto)
         if [ -n "$proto" ] || [ -n "$src_ip_v6" ] || [ -n "$dest_ip_v6" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
             rule_cmd_v6="$rule_cmd_v6 ip6 dscp set $class"
         fi
@@ -1492,17 +1492,17 @@ setup_htb() {
     # Priority class gets fq_codel with aggressive settings
     tc qdisc add dev "$DEV" parent 1:11 handle 110: fq_codel \
         interval "${INTVL}ms" target "${TARG}ms" \
-        quantum 300 memory_limit $((PRIO_RATE_MIN*200/8))
+        quantum 300
     
     # Best effort with standard settings
     tc qdisc add dev "$DEV" parent 1:13 handle 130: fq_codel \
         interval "${INTVL}ms" target "${TARG}ms" \
-        quantum 1500 memory_limit $((BE_MIN_RATE*200/8))
+        quantum 1500
     
     # Background with larger target
     tc qdisc add dev "$DEV" parent 1:15 handle 150: fq_codel \
         interval "$((INTVL*2))ms" target "$((TARG*2))ms" \
-        quantum 300 memory_limit $((BK_MIN_RATE*200/8))
+        quantum 300
     
     # Apply DSCP filters only on ingress (LAN/IFB)
     if [ "$DIR" = "lan" ]; then
