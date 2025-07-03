@@ -423,22 +423,42 @@ create_nft_rule() {
                 continue
             fi
 
-            # Check for mixed IPv4/IPv6 addresses within a set of IP addresses
-            case "$prefix" in *addr*)
-                if is_ipv6 "$value"; then
-                    has_ipv6=1
-                else
-                    has_ipv4=1
-                fi
-                
-                if [ -n "$negation" ]; then
-                    res_set_neg="${res_set_neg}${res_set_neg:+ }${value}"
-                else
-                    res_set_pos="${res_set_pos}${res_set_pos:+ }${value}"
-                fi
-
+            # Collect values based on prefix type
+            case "$prefix" in 
+                *addr*)
+                    # IP address handling
+                    if is_ipv6 "$value"; then
+                        has_ipv6=1
+                    else
+                        has_ipv4=1
+                    fi
+                    
+                    if [ -n "$negation" ]; then
+                        res_set_neg="${res_set_neg}${res_set_neg:+ }${value}"
+                    else
+                        res_set_pos="${res_set_pos}${res_set_pos:+ }${value}"
+                    fi
+                    ;;
+                    
+                "th sport"|"th dport")
+                    # Port handling - no IPv4/IPv6 distinction needed
+                    if [ -n "$negation" ]; then
+                        res_set_neg="${res_set_neg}${res_set_neg:+ }${value}"
+                    else
+                        res_set_pos="${res_set_pos}${res_set_pos:+ }${value}"
+                    fi
+                    ;;
+                    
+                "meta l4proto")
+                    # Protocol handling
+                    if [ -n "$negation" ]; then
+                        res_set_neg="${res_set_neg}${res_set_neg:+ }${value}"
+                    else
+                        res_set_pos="${res_set_pos}${res_set_pos:+ }${value}"
+                    fi
+                    ;;
             esac
-		done
+        done
 
         if [ -n "$set_ref_seen" ] || [ -n "$ipv6_mask_seen" ]; then
             printf '%s\n' "$result"
@@ -457,8 +477,10 @@ create_nft_rule() {
             prefix="${prefix//ip /ip6 }"
         fi
 
+        # Construct the final rule
         case "$prefix" in
             *addr*)
+                # IP address rules
                 if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
                     logger -t qosmate "Error: no valid values found in '$values'. Rule skipped."
                     printf '%s\n' "ERROR_NO_VALID_VALUES"
@@ -471,9 +493,58 @@ create_nft_rule() {
 
                 if [ -n "$res_set_pos" ]; then
                     result="${result}${result:+ }${prefix} { ${res_set_pos// /,} }"
-                fi ;;
-
-                # *** TODO: construct rules for other prefixes ***
+                fi 
+                ;;
+                
+            "th sport"|"th dport")
+                # Port rules
+                if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
+                    logger -t qosmate "Error: no valid ports found in '$values'. Rule skipped."
+                    printf '%s\n' "ERROR_NO_VALID_VALUES"
+                    return 1
+                fi
+                
+                # Single value without set brackets
+                if [ -z "$res_set_neg" ] && [ $(echo "$res_set_pos" | wc -w) -eq 1 ]; then
+                    result="${prefix} ${res_set_pos}"
+                elif [ -z "$res_set_pos" ] && [ $(echo "$res_set_neg" | wc -w) -eq 1 ]; then
+                    result="${prefix} != ${res_set_neg}"
+                else
+                    # Multiple values or mixed negation
+                    if [ -n "$res_set_neg" ]; then
+                        result="${result}${result:+ }${prefix} != { ${res_set_neg// /,} }"
+                    fi
+                    
+                    if [ -n "$res_set_pos" ]; then
+                        result="${result}${result:+ }${prefix} { ${res_set_pos// /,} }"
+                    fi
+                fi
+                ;;
+                
+            "meta l4proto")
+                # Protocol rules
+                if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
+                    logger -t qosmate "Error: no valid protocols found in '$values'. Rule skipped."
+                    printf '%s\n' "ERROR_NO_VALID_VALUES"
+                    return 1
+                fi
+                
+                # Single protocol without set brackets
+                if [ -z "$res_set_neg" ] && [ $(echo "$res_set_pos" | wc -w) -eq 1 ]; then
+                    result="${prefix} ${res_set_pos}"
+                elif [ -z "$res_set_pos" ] && [ $(echo "$res_set_neg" | wc -w) -eq 1 ]; then
+                    result="${prefix} != ${res_set_neg}"
+                else
+                    # Multiple protocols or mixed negation
+                    if [ -n "$res_set_neg" ]; then
+                        result="${result}${result:+ }${prefix} != { ${res_set_neg// /,} }"
+                    fi
+                    
+                    if [ -n "$res_set_pos" ]; then
+                        result="${prefix} { ${res_set_pos// /,} }"
+                    fi
+                fi
+                ;;
         esac
 
         printf '%s\n' "$result"
