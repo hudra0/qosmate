@@ -384,7 +384,6 @@ create_nft_rule() {
         for value in $values; do
             if [ -n "$set_ref_seen" ] || [ -n "$ipv6_mask_seen" ]; then
                 logger -t qosmate "Error: invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
-                printf '%s\n' "ERROR_INVALID_STRING" # for frontend use?
                 return 1
             fi
 
@@ -468,7 +467,6 @@ create_nft_rule() {
         # If mixed, log and signal error
         if [ -n "$has_ipv4" ] && [ -n "$has_ipv6" ]; then
             logger -t qosmate "Error: Mixed IPv4/IPv6 addresses within a set: { $values }. Rule skipped."
-            printf '%s\n' "ERROR_MIXED_IP"
             return 1
         fi
 
@@ -483,7 +481,6 @@ create_nft_rule() {
                 # IP address rules
                 if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
                     logger -t qosmate "Error: no valid values found in '$values'. Rule skipped."
-                    printf '%s\n' "ERROR_NO_VALID_VALUES"
                     return 1
                 fi
 
@@ -500,7 +497,6 @@ create_nft_rule() {
                 # Port rules
                 if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
                     logger -t qosmate "Error: no valid ports found in '$values'. Rule skipped."
-                    printf '%s\n' "ERROR_NO_VALID_VALUES"
                     return 1
                 fi
                 
@@ -517,7 +513,6 @@ create_nft_rule() {
                 # Protocol rules
                 if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
                     logger -t qosmate "Error: no valid protocols found in '$values'. Rule skipped."
-                    printf '%s\n' "ERROR_NO_VALID_VALUES"
                     return 1
                 fi
                 
@@ -536,9 +531,9 @@ create_nft_rule() {
 
     # Handle multiple protocols
     if [ -n "$proto" ]; then
-        local proto_result="$(gen_rule "$proto" "meta l4proto")"
-        if [ "$proto_result" = "ERROR_MIXED_IP" ]; then
-            # Skip this rule entirely
+        local proto_result
+        if ! proto_result="$(gen_rule "$proto" "meta l4proto")"; then
+            # Skip rule
             return 0
         fi
         rule_cmd="$rule_cmd $proto_result"
@@ -548,9 +543,9 @@ create_nft_rule() {
     
     # Use connection tracking for source port
     if [ -n "$src_port" ]; then
-        local src_port_result="$(gen_rule "$src_port" "th sport")"
-        if [ "$src_port_result" = "ERROR_MIXED_IP" ]; then
-            # Skip this rule entirely
+        local src_port_result
+        if ! src_port_result="$(gen_rule "$src_port" "th sport")"; then
+            # Skip rule
             return 0
         fi
         rule_cmd="$rule_cmd $src_port_result"
@@ -560,9 +555,9 @@ create_nft_rule() {
     
     # Use connection tracking for destination port
     if [ -n "$dest_port" ]; then
-        local dest_port_result="$(gen_rule "$dest_port" "th dport")"
-        if [ "$dest_port_result" = "ERROR_MIXED_IP" ]; then
-            # Skip this rule entirely
+        local dest_port_result
+        if ! dest_port_result="$(gen_rule "$dest_port" "th dport")"; then
+            # Skip rule
             return 0
         fi
         rule_cmd="$rule_cmd $dest_port_result"
@@ -579,11 +574,19 @@ create_nft_rule() {
         
         # Add IPv4-specific IP addresses
         if [ -n "$src_ip_v4" ]; then
-            local src_result="$(gen_rule "$src_ip_v4" "ip saddr")"
+            local src_result
+            if ! src_result="$(gen_rule "$src_ip_v4" "ip saddr")"; then
+                # Skip rule
+                return 0
+            fi
             rule_cmd_v4="$rule_cmd_v4 $src_result"
         fi
         if [ -n "$dest_ip_v4" ]; then
-            local dest_result="$(gen_rule "$dest_ip_v4" "ip daddr")"
+            local dest_result
+            if ! dest_result="$(gen_rule "$dest_ip_v4" "ip daddr")"; then
+                # Skip rule
+                return 0
+            fi
             rule_cmd_v4="$rule_cmd_v4 $dest_result"
         fi
         
@@ -608,11 +611,19 @@ create_nft_rule() {
         
         # Add IPv6-specific IP addresses
         if [ -n "$src_ip_v6" ]; then
-            local src_result="$(gen_rule "$src_ip_v6" "ip6 saddr")"
+            local src_result
+            if ! src_result="$(gen_rule "$src_ip_v6" "ip6 saddr")"; then
+                # Skip rule
+                return 0
+            fi
             rule_cmd_v6="$rule_cmd_v6 $src_result"
         fi
         if [ -n "$dest_ip_v6" ]; then
-            local dest_result="$(gen_rule "$dest_ip_v6" "ip6 daddr")"
+            local dest_result
+            if ! dest_result="$(gen_rule "$dest_ip_v6" "ip6 daddr")"; then
+                # Skip rule
+                return 0
+            fi
             rule_cmd_v6="$rule_cmd_v6 $dest_result"
         fi
         
