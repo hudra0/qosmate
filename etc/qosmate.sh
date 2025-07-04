@@ -434,27 +434,27 @@ create_nft_rule() {
                     fi
                     
                     if [ -n "$negation" ]; then
-                        res_set_neg="${res_set_neg}${res_set_neg:+ }${value}"
+                        res_set_neg="${res_set_neg}${res_set_neg:+,}${value}"
                     else
-                        res_set_pos="${res_set_pos}${res_set_pos:+ }${value}"
+                        res_set_pos="${res_set_pos}${res_set_pos:+,}${value}"
                     fi
                     ;;
                     
                 "th sport"|"th dport")
                     # Port handling - no IPv4/IPv6 distinction needed
                     if [ -n "$negation" ]; then
-                        res_set_neg="${res_set_neg}${res_set_neg:+ }${value}"
+                        res_set_neg="${res_set_neg}${res_set_neg:+,}${value}"
                     else
-                        res_set_pos="${res_set_pos}${res_set_pos:+ }${value}"
+                        res_set_pos="${res_set_pos}${res_set_pos:+,}${value}"
                     fi
                     ;;
                     
                 "meta l4proto")
                     # Protocol handling
                     if [ -n "$negation" ]; then
-                        res_set_neg="${res_set_neg}${res_set_neg:+ }${value}"
+                        res_set_neg="${res_set_neg}${res_set_neg:+,}${value}"
                     else
-                        res_set_pos="${res_set_pos}${res_set_pos:+ }${value}"
+                        res_set_pos="${res_set_pos}${res_set_pos:+,}${value}"
                     fi
                     ;;
             esac
@@ -488,11 +488,11 @@ create_nft_rule() {
                 fi
 
                 if [ -n "$res_set_neg" ]; then
-                    result="${result}${result:+ }${prefix} != { ${res_set_neg// /,} }"
+                    result="${result}${result:+ }${prefix} != { ${res_set_neg} }"
                 fi
 
                 if [ -n "$res_set_pos" ]; then
-                    result="${result}${result:+ }${prefix} { ${res_set_pos// /,} }"
+                    result="${result}${result:+ }${prefix} { ${res_set_pos} }"
                 fi 
                 ;;
                 
@@ -504,20 +504,12 @@ create_nft_rule() {
                     return 1
                 fi
                 
-                # Single value without set brackets
-                if [ -z "$res_set_neg" ] && [ $(echo "$res_set_pos" | wc -w) -eq 1 ]; then
-                    result="${prefix} ${res_set_pos}"
-                elif [ -z "$res_set_pos" ] && [ $(echo "$res_set_neg" | wc -w) -eq 1 ]; then
-                    result="${prefix} != ${res_set_neg}"
-                else
-                    # Multiple values or mixed negation
-                    if [ -n "$res_set_neg" ]; then
-                        result="${result}${result:+ }${prefix} != { ${res_set_neg// /,} }"
-                    fi
-                    
-                    if [ -n "$res_set_pos" ]; then
-                        result="${result}${result:+ }${prefix} { ${res_set_pos// /,} }"
-                    fi
+                if [ -n "$res_set_neg" ]; then
+                    result="${result}${result:+ }${prefix} != { ${res_set_neg} }"
+                fi
+                
+                if [ -n "$res_set_pos" ]; then
+                    result="${result}${result:+ }${prefix} { ${res_set_pos} }"
                 fi
                 ;;
                 
@@ -529,20 +521,12 @@ create_nft_rule() {
                     return 1
                 fi
                 
-                # Single protocol without set brackets
-                if [ -z "$res_set_neg" ] && [ $(echo "$res_set_pos" | wc -w) -eq 1 ]; then
-                    result="${prefix} ${res_set_pos}"
-                elif [ -z "$res_set_pos" ] && [ $(echo "$res_set_neg" | wc -w) -eq 1 ]; then
-                    result="${prefix} != ${res_set_neg}"
-                else
-                    # Multiple protocols or mixed negation
-                    if [ -n "$res_set_neg" ]; then
-                        result="${result}${result:+ }${prefix} != { ${res_set_neg// /,} }"
-                    fi
-                    
-                    if [ -n "$res_set_pos" ]; then
-                        result="${prefix} { ${res_set_pos// /,} }"
-                    fi
+                if [ -n "$res_set_neg" ]; then
+                    result="${result}${result:+ }${prefix} != { ${res_set_neg} }"
+                fi
+                
+                if [ -n "$res_set_pos" ]; then
+                    result="${result}${result:+ }${prefix} { ${res_set_pos} }"
                 fi
                 ;;
         esac
