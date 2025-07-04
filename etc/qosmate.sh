@@ -377,7 +377,7 @@ create_nft_rule() {
     # Function to handle multiple values with IP family awareness
     gen_rule() {
         local value setname family suffix mask comp_op negation \
-            result='' res_set_neg='' res_set_pos='' has_ipv4='' has_ipv6='' set_ref_seen='' ipv6_mask_seen='' \
+            result='' res_set_neg='' res_set_pos='' has_ipv4='' has_ipv6='' set_ref_seen='' ipv6_mask_seen='' reg_val_seen='' \
             values="$1" \
             prefix="$2"
         
@@ -396,22 +396,30 @@ create_nft_rule() {
                 value="${value#"!="}"
             esac
 
-            # Handle set references (@setname)
+                        # Handle set references (@setname)
             if is_set_ref "$value"; then
+                if [ -n "$reg_val_seen" ]; then
+                    logger -t qosmate "Error: invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
+                    return 1
+                fi
                 set_ref_seen=1
                 setname="${value#@}"
                 family="$(get_set_family "$setname")"
-                debug_log "Set $setname has family: $family"
-                
-                if [ "$family" = "ipv6" ]; then
+            debug_log "Set $setname has family: $family"
+            
+            if [ "$family" = "ipv6" ]; then
                     prefix="${prefix//ip /ip6 }"
-                fi
+            fi
                 result="${prefix}${negation} @${setname}"
                 continue
             fi
 
             # Check for IPv6 suffix format (::suffix/::mask)
             if is_ipv6_mask "$value"; then
+                if [ -n "$reg_val_seen" ]; then
+                    logger -t qosmate "Error: invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
+                    return 1
+                fi
                 ipv6_mask_seen=1
                 # Extract suffix and mask
                 suffix="${value%%"/::"*}"
@@ -426,6 +434,7 @@ create_nft_rule() {
             case "$prefix" in 
                 *addr*)
                     # IP address handling
+                    reg_val_seen=1
                     if is_ipv6 "$value"; then
                         has_ipv6=1
                     else
@@ -441,6 +450,7 @@ create_nft_rule() {
                     
                 "th sport"|"th dport")
                     # Port handling - no IPv4/IPv6 distinction needed
+                    reg_val_seen=1
                     if [ -n "$negation" ]; then
                         res_set_neg="${res_set_neg}${res_set_neg:+,}${value}"
                     else
@@ -450,11 +460,16 @@ create_nft_rule() {
                     
                 "meta l4proto")
                     # Protocol handling
+                    reg_val_seen=1
                     if [ -n "$negation" ]; then
                         res_set_neg="${res_set_neg}${res_set_neg:+,}${value}"
                     else
                         res_set_pos="${res_set_pos}${res_set_pos:+,}${value}"
                     fi
+                    ;;
+                *)
+                    logger -t qosmate "Error: unexpected data in '$values'."
+                    return 1
                     ;;
             esac
         done
