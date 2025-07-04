@@ -396,7 +396,7 @@ create_nft_rule() {
                 value="${value#"!="}"
             esac
 
-                        # Handle set references (@setname)
+            # Handle set references (@setname)
             if is_set_ref "$value"; then
                 if [ -n "$reg_val_seen" ]; then
                     logger -t qosmate "Error: invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
@@ -405,11 +405,11 @@ create_nft_rule() {
                 set_ref_seen=1
                 setname="${value#@}"
                 family="$(get_set_family "$setname")"
-            debug_log "Set $setname has family: $family"
-            
-            if [ "$family" = "ipv6" ]; then
+                debug_log "Set $setname has family: $family"
+                
+                if [ "$family" = "ipv6" ]; then
                     prefix="${prefix//ip /ip6 }"
-            fi
+                fi
                 result="${prefix}${negation} @${setname}"
                 continue
             fi
@@ -468,7 +468,7 @@ create_nft_rule() {
                     fi
                     ;;
                 *)
-                    logger -t qosmate "Error: unexpected data in '$values'."
+                    logger -t qosmate "Error: unexpected data in '$prefix'."
                     return 1
                     ;;
             esac
