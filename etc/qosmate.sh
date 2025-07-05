@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317,SC3060
+# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317,SC3060,SC3057
 
 VERSION="1.2.0" # will become obsolete in future releases as version string is now in the init script
 
@@ -11,6 +11,17 @@ DEFAULT_WAN="eth1"
 DEFAULT_DOWNRATE="90000"
 DEFAULT_UPRATE="45000"
 DEFAULT_OH="44"
+
+: "${VERSION}"
+
+# Trim leading and trailing whitespaces and tabs in variable $1
+trim_spaces() {
+    local tr_in tr_out
+    eval "tr_in=\"\${$1}\""
+    tr_out="${tr_in%"${tr_in##*[! 	]}"}"
+    tr_out="${tr_out#"${tr_out%%[! 	]*}"}"
+    eval "$1=\"\${tr_out}\""
+}
 
 load_config() {
     # Global settings
@@ -581,7 +592,8 @@ create_nft_rule() {
     # Build final rule(s) based on has_ipv4 and has_ipv6 flags
     local final_rule_v4=""
     local final_rule_v6=""
-    local common_rule_part="$(echo "$rule_cmd" | sed -e 's/^[ ]*//' -e 's/[ ]*$//')" # Trim common parts
+    local common_rule_part="$rule_cmd"
+    trim_spaces common_rule_part # Trim common parts
 
     # Generate IPv4 rule if needed
     if [ "$has_ipv4" -eq 1 ]; then
@@ -613,7 +625,7 @@ create_nft_rule() {
         [ "$trace" -eq 1 ] && rule_cmd_v4="$rule_cmd_v4 meta nftrace set 1"
         [ -n "$name" ] && rule_cmd_v4="$rule_cmd_v4 comment \"ipv4_$name\""
             
-        rule_cmd_v4=$(echo "$rule_cmd_v4" | sed 's/[ ]*$//') # Trim final rule
+        trim_spaces rule_cmd_v4 # Trim final rule
         # Ensure the rule is not just a semicolon
         if [ -n "$rule_cmd_v4" ] && [ "$rule_cmd_v4" != ";" ]; then
             final_rule_v4="$rule_cmd_v4;"
@@ -650,7 +662,7 @@ create_nft_rule() {
         [ "$trace" -eq 1 ] && rule_cmd_v6="$rule_cmd_v6 meta nftrace set 1"
         [ -n "$name" ] && rule_cmd_v6="$rule_cmd_v6 comment \"ipv6_$name\""
 
-        rule_cmd_v6=$(echo "$rule_cmd_v6" | sed 's/[ ]*$//') # Trim final rule
+        trim_spaces rule_cmd_v6 # Trim final rule
         # Ensure the rule is not just a semicolon
         if [ -n "$rule_cmd_v6" ] && [ "$rule_cmd_v6" != ";" ]; then
              final_rule_v6="$rule_cmd_v6;"
@@ -1028,23 +1040,40 @@ EOF
 #       QoS Setup Functions
 ##############################
 
-# Calculates hex value for tc u32 IPv6 DSCP matching.
-# Arg1: DSCP value (0-63), e.g., 46. Output: 4-digit hex, e.g., "0B80".
-# Used for 'match u16 0x<VAL> 0x0FC0 at 0'.
-get_ipv6_dscp_hex_match_val() {
-    local dscp_input_val
-    dscp_input_val="$1"
+# 1 - device
+# 3 - class enum
+# 4 - family (ipv4|ipv6)
+add_tc_filter() {
+    local class_id dsfield hex_match proto prio match_str \
+        dev="$1" \
+        class_enum="$2" \
+        family="$3"
 
-    local six_bit_dscp_val
-    local result_val
+    case "$class_enum" in
+        cs0|CS0) class_id=1:13 dsfield=0x00 hex_match=0x0000 ;; # 0 -> Default
+        ef|EF) class_id=1:11 dsfield=0xb8 hex_match=0x0B80 ;; # 46
+        cs1|CS1) class_id=1:15 dsfield=0x20 hex_match=0x0200 ;; # 8
+        cs2|CS2) class_id=1:14 dsfield=0x40 hex_match=0x0400 ;; # 16
+        cs4|CS4) class_id=1:12 dsfield=0x80 hex_match=0x0800 ;; # 32
+        cs5|CS5) class_id=1:11 dsfield=0xa0 hex_match=0x0A00 ;; # 40
+        cs6|CS6) class_id=1:11 dsfield=0xc0 hex_match=0x0C00 ;; # 48
+        cs7|CS7) class_id=1:11 dsfield=0xe0 hex_match=0x0E00 ;; # 56
+        af11|AF11) class_id=1:14 dsfield=0x28 hex_match=0x0280 ;; # 10
+        af41|AF41) class_id=1:12 dsfield=0x88 hex_match=0x0880 ;; # 34
+        af42|AF42) class_id=1:12 dsfield=0x90 hex_match=0x0900 ;; # 36
+        *) # TODO: throw an error
+    esac
 
-    # Get lower 6 bits of DSCP input (0-63).
-    six_bit_dscp_val=$(( (dscp_input_val + 0) & 0x3f ))
+    case "$family" in
+        ipv4)
+            proto=ip prio=1 match_str="ip dsfield $dsfield 0xfc"
+            ;;
+        ipv6)
+            proto=ipv6 prio=2 match_str="u16 $hex_match 0x0FC0 at 0"
+            ;;
+    esac
 
-    # Shift DSCP bits for tc u32 mask.
-    result_val=$(( six_bit_dscp_val * 64 ))
-
-    printf "%04X" "$result_val"
+    tc filter add dev "$dev" parent 1: protocol "$proto" prio "$prio" u32 match $match_str classid "$class_id"
 }
 
 # Function to setup the specific game qdisc (pfifo, red, fq_codel, netem, etc.)
@@ -1108,8 +1137,8 @@ setup_game_qdisc() {
         "netem")
             # Only apply NETEM if this direction is enabled
             if [ "$NETEM_DIRECTION" = "both" ] || \
-               ([ "$NETEM_DIRECTION" = "egress" ] && [ "$DIR" = "wan" ]) || \
-               ([ "$NETEM_DIRECTION" = "ingress" ] && [ "$DIR" = "lan" ]); then
+               { [ "$NETEM_DIRECTION" = "egress" ] && [ "$DIR" = "wan" ]; } || \
+               { [ "$NETEM_DIRECTION" = "ingress" ] && [ "$DIR" = "lan" ]; }; then
                 
                 NETEM_CMD="tc qdisc add dev \"$DEV\" parent 1:11 handle 10: netem limit $((4+9*RATE/8/500))"
                 
@@ -1217,32 +1246,12 @@ setup_hfsc() {
         tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
         tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1 # Also delete prio 2
 
-        # IPv4 Filters (prio 1)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xb8 0xfc classid 1:11 # ef (46)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xa0 0xfc classid 1:11 # cs5 (40)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xc0 0xfc classid 1:11 # cs6 (48)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xe0 0xfc classid 1:11 # cs7 (56)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x80 0xfc classid 1:12 # cs4 (32)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x88 0xfc classid 1:12 # af41 (34)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x90 0xfc classid 1:12 # af42 (36)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x40 0xfc classid 1:14 # cs2 (16)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x28 0xfc classid 1:14 # af11 (10)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x20 0xfc classid 1:15 # cs1 (8)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x00 0xfc classid 1:13 # none (0) -> Default
-
-        # IPv6 Filters (prio 2)
-        # IPv6 Traffic Class is shifted 4 bits to the left
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 46) 0x0FC0 at 0 classid 1:11 # EF (46)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 40) 0x0FC0 at 0 classid 1:11 # CS5 (40)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 48) 0x0FC0 at 0 classid 1:11 # CS6 (48)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 56) 0x0FC0 at 0 classid 1:11 # CS7 (56)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 32) 0x0FC0 at 0 classid 1:12 # CS4 (32)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 34) 0x0FC0 at 0 classid 1:12 # AF41 (34)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 36) 0x0FC0 at 0 classid 1:12 # AF42 (36)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 16) 0x0FC0 at 0 classid 1:14 # CS2 (16)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 10) 0x0FC0 at 0 classid 1:14 # AF11 (10)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 8) 0x0FC0 at 0 classid 1:15 # CS1 (8)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 0) 0x0FC0 at 0 classid 1:13 # CS0/BE (0)
+        local family class_enum
+        for family in ipv4 ipv6; do
+            for class_enum in ef cs5 cs6 cs7 cs4 af41 af42 cs2 cs1 cs0; do
+                add_tc_filter "$DEV" "$class_enum" "$family"
+            done
+        done
     fi
 }
 
@@ -1384,21 +1393,20 @@ setup_hybrid() {
         tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
         tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1
 
+        local class_enum
+
         # IPv4 Filters (prio 1)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xb8 0xfc classid 1:11 # EF -> Realtime
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xa0 0xfc classid 1:11 # CS5 -> Realtime
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xc0 0xfc classid 1:11 # CS6 -> Realtime
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xe0 0xfc classid 1:11 # CS7 -> Realtime
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x20 0xfc classid 1:15 # CS1 -> Bulk
+        # EF, CS5, CS6, CS7 -> Realtime
+        # CS1 -> Bulk
+        for class_enum in ef cs5 cs6 cs7 cs1; do
+            add_tc_filter "$DEV" "$class_enum" "ipv4"
+        done
         # Default rule sends to 1:13 (CAKE)
 
         # IPv6 Filters (prio 2)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 46) 0x0FC0 at 0 classid 1:11 # EF (46)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 40) 0x0FC0 at 0 classid 1:11 # CS5 (40)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 48) 0x0FC0 at 0 classid 1:11 # CS6 (48)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 56) 0x0FC0 at 0 classid 1:11 # CS7 (56)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 8) 0x0FC0 at 0 classid 1:15 # CS1 (8)     
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 0) 0x0FC0 at 0 classid 1:13 # CS0/BE (0)
+        for class_enum in ef cs5 cs6 cs7 cs1 cs0; do
+            add_tc_filter "$DEV" "$class_enum" "ipv6"
+        done
     fi
 }
 
