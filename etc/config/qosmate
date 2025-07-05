@@ -27,6 +27,7 @@ config advanced 'advanced'
     option MSS ''
     option NFT_HOOK 'forward'
     option NFT_PRIORITY '0'
+    option MAX_CONNECTIONS '0'
 
 config hfsc 'hfsc'
     option LINKTYPE 'ethernet'
