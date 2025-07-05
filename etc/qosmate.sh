@@ -1042,11 +1042,8 @@ EOF
 # Arg1: DSCP value (0-63), e.g., 46. Output: 4-digit hex, e.g., "0B80".
 # Used for 'match u16 0x<VAL> 0x0FC0 at 0'.
 get_ipv6_dscp_hex_match_val() {
-    local dscp_input_val
-    dscp_input_val="$1"
-
-    local six_bit_dscp_val
-    local result_val
+    local six_bit_dscp_val result_val \
+        dscp_input_val="$1"
 
     # Get lower 6 bits of DSCP input (0-63).
     six_bit_dscp_val=$(( (dscp_input_val + 0) & 0x3f ))
