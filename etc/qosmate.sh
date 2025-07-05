@@ -1,5 +1,5 @@
 #!/bin/sh
-# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317,SC3060,SC3057
+# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317,SC3060,SC3057
 
 VERSION="1.2.0" # will become obsolete in future releases as version string is now in the init script
 
@@ -11,6 +11,8 @@ DEFAULT_WAN="eth1"
 DEFAULT_DOWNRATE="90000"
 DEFAULT_UPRATE="45000"
 DEFAULT_OH="44"
+
+: "${VERSION}"
 
 # Trim leading and trailing whitespaces and tabs in variable $1
 trim_spaces() {
