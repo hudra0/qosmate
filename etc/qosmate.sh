@@ -348,7 +348,6 @@ create_nft_rule() {
     # Check and separate source IPs
     if [ -n "$src_ip" ]; then
         separate_ips_by_family src_ip_v4 src_ip_v6 "$src_ip"
-        
         [ -n "$src_ip_v4" ] && has_ipv4=1
         [ -n "$src_ip_v6" ] && has_ipv6=1
     fi
@@ -356,16 +355,13 @@ create_nft_rule() {
     # Check and separate destination IPs
     if [ -n "$dest_ip" ]; then
         separate_ips_by_family dest_ip_v4 dest_ip_v6 "$dest_ip"
-        
         [ -n "$dest_ip_v4" ] && has_ipv4=1
         [ -n "$dest_ip_v6" ] && has_ipv6=1
     fi
     
     # Log if mixed IPv4/IPv6 addresses are found
-    if [ -n "$src_ip" ] || [ -n "$dest_ip" ]; then
-       if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then 
-            logger -t qosmate "Info: Mixed IPv4/IPv6 addresses in rule '$name' ($config). Splitting into separate rules."
-        fi
+    if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then 
+        logger -t qosmate "Info: Mixed IPv4/IPv6 addresses in rule '$name' ($config). Splitting into separate rules."
     fi
 
     # If no IP address was specified, we assume the rule applies to both IPv4 and IPv6
@@ -379,96 +375,180 @@ create_nft_rule() {
     local rule_cmd=""
 
     # Function to handle multiple values with IP family awareness
-    handle_multiple_values() {
-        local values="$1"
-        local prefix="$2"
-        local result=""
-        local exclude=0
+    gen_rule() {
+        local value setname family suffix mask comp_op negation \
+            result='' res_set_neg='' res_set_pos='' has_ipv4='' has_ipv6='' set_ref_seen='' ipv6_mask_seen='' reg_val_seen='' \
+            values="$1" \
+            prefix="$2"
         
-        # Handle set references (@setname)
-        if echo "$values" | grep -q '^@'; then
-            local setname="$(echo "$values" | sed 's/^@//')"
-            local family="$(get_set_family "$setname")"
-            debug_log "Set $setname has family: $family"
-            
-            if [ "$family" = "ipv6" ]; then
-                prefix=$(echo "$prefix" | sed 's/ip /ip6 /')
+        for value in $values; do
+            if [ -n "$set_ref_seen" ] || [ -n "$ipv6_mask_seen" ]; then
+                logger -t qosmate "Error: invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
+                return 1
             fi
-            result="$prefix @$setname"
-        else
-            # Check if ANY value starts with !=
-            if echo "$values" | grep -qE '(^|[[:space:]])!=' ; then
-                exclude=1
-                # Remove != from the beginning of each space-separated value
-                values=$(echo "$values" | sed -E 's/(^|[[:space:]])!=([^[:space:]]+)/\1\2/g')
-            fi
-            
-            # Check for IPv6 suffix format (::suffix/::mask)
-            if echo "$values" | grep -q '^::[^/]*/::'; then
-                # Extract suffix and mask
-                local suffix="$(echo "$values" | sed 's/^\(::[^/]*\)\/::\(.*\)$/\1/')"
-                local mask="$(echo "$values" | sed 's/^::[^/]*\/\(::[^/]*\)$/\1/')"
-                
-                # Force IPv6 prefix and create bitwise AND match
-                prefix="${prefix//ip /ip6 }"
-                if [ "$exclude" -eq 1 ]; then
-                    result="$prefix & $mask != $suffix"
-                else
-                    result="$prefix & $mask == $suffix"
-                fi
-                echo "$result"
-                return 0
-            fi
-            
-            if [ "$(echo "$values" | wc -w)" -gt 1 ]; then
-                # Check for mixed IPv4/IPv6 addresses within a set of IP addresses
-                case "$prefix" in *addr*)
-                    local has_ipv4=0
-                    local has_ipv6=0
-                    
-                    # Check each address in the set
-                    for ip in $values; do
-                        if is_ipv6 "$ip"; then
-                            has_ipv6=1
-                        else
-                            has_ipv4=1
-                        fi
-                    done
-                    
-                    # If mixed, log and signal error
-                    if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then
-                        logger -t qosmate "Error: Mixed IPv4/IPv6 addresses within a set: { $values }. Rule skipped."
-                        echo "ERROR_MIXED_IP"
-                        return 1
-                    fi
-                    
-                    # Update prefix based on IP type
-                    if [ "$has_ipv6" -eq 1 ]; then
-                        prefix="${prefix//ip /ip6 }"
-                    fi
-                esac
 
-                if [ $exclude -eq 1 ]; then
-                    result="$prefix != { $(echo $values | tr ' ' ',') }"
-                else
-                    result="$prefix { $(echo $values | tr ' ' ',') }"
+            # Check if value starts with '!=' and preserve the '!=' prefix
+            negation=
+            comp_op="=="
+            case "$value" in '!='*)
+                negation=" !="
+                comp_op="!="
+                value="${value#"!="}"
+            esac
+
+            # Handle set references (@setname)
+            if is_set_ref "$value"; then
+                if [ -n "$reg_val_seen" ]; then
+                    logger -t qosmate "Error: invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
+                    return 1
                 fi
-            else
-                if [ $exclude -eq 1 ]; then
-                    result="$prefix != $values"
-                else
-                    result="$prefix $values"
+                set_ref_seen=1
+                setname="${value#@}"
+                family="$(get_set_family "$setname")"
+                debug_log "Set $setname has family: $family"
+                
+                if [ "$family" = "ipv6" ]; then
+                    prefix="${prefix//ip /ip6 }"
                 fi
+                result="${prefix}${negation} @${setname}"
+                continue
             fi
+
+            # Check for IPv6 suffix format (::suffix/::mask)
+            if is_ipv6_mask "$value"; then
+                if [ -n "$reg_val_seen" ]; then
+                    logger -t qosmate "Error: invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
+                    return 1
+                fi
+                ipv6_mask_seen=1
+                # Extract suffix and mask
+                suffix="${value%%"/::"*}"
+                mask="${value#"${suffix}/"}"
+                
+                # Force IPv6 prefix and create bitwise AND|NOT match
+                result="${prefix//ip /ip6 } & ${mask} ${comp_op} ${suffix}"
+                continue
+            fi
+
+            # Collect values based on prefix type
+            case "$prefix" in 
+                *addr*)
+                    # IP address handling
+                    reg_val_seen=1
+                    if is_ipv6 "$value"; then
+                        has_ipv6=1
+                    else
+                        has_ipv4=1
+                    fi
+                    
+                    if [ -n "$negation" ]; then
+                        res_set_neg="${res_set_neg}${res_set_neg:+,}${value}"
+                    else
+                        res_set_pos="${res_set_pos}${res_set_pos:+,}${value}"
+                    fi
+                    ;;
+                    
+                "th sport"|"th dport")
+                    # Port handling - no IPv4/IPv6 distinction needed
+                    reg_val_seen=1
+                    if [ -n "$negation" ]; then
+                        res_set_neg="${res_set_neg}${res_set_neg:+,}${value}"
+                    else
+                        res_set_pos="${res_set_pos}${res_set_pos:+,}${value}"
+                    fi
+                    ;;
+                    
+                "meta l4proto")
+                    # Protocol handling
+                    reg_val_seen=1
+                    if [ -n "$negation" ]; then
+                        res_set_neg="${res_set_neg}${res_set_neg:+,}${value}"
+                    else
+                        res_set_pos="${res_set_pos}${res_set_pos:+,}${value}"
+                    fi
+                    ;;
+                *)
+                    logger -t qosmate "Error: unexpected data in '$prefix'."
+                    return 1
+                    ;;
+            esac
+        done
+
+        if [ -n "$set_ref_seen" ] || [ -n "$ipv6_mask_seen" ]; then
+            printf '%s\n' "$result"
+            return 0
         fi
-        echo "$result"
+
+        # If mixed, log and signal error
+        if [ -n "$has_ipv4" ] && [ -n "$has_ipv6" ]; then
+            logger -t qosmate "Error: Mixed IPv4/IPv6 addresses within a set: { $values }. Rule skipped."
+            return 1
+        fi
+
+        # Update prefix based on IP type
+        if [ -n "$has_ipv6" ]; then
+            prefix="${prefix//ip /ip6 }"
+        fi
+
+        # Construct the final rule
+        case "$prefix" in
+            *addr*)
+                # IP address rules
+                if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
+                    logger -t qosmate "Error: no valid values found in '$values'. Rule skipped."
+                    return 1
+                fi
+
+                if [ -n "$res_set_neg" ]; then
+                    result="${result}${result:+ }${prefix} != { ${res_set_neg} }"
+                fi
+
+                if [ -n "$res_set_pos" ]; then
+                    result="${result}${result:+ }${prefix} { ${res_set_pos} }"
+                fi 
+                ;;
+                
+            "th sport"|"th dport")
+                # Port rules
+                if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
+                    logger -t qosmate "Error: no valid ports found in '$values'. Rule skipped."
+                    return 1
+                fi
+                
+                if [ -n "$res_set_neg" ]; then
+                    result="${result}${result:+ }${prefix} != { ${res_set_neg} }"
+                fi
+                
+                if [ -n "$res_set_pos" ]; then
+                    result="${result}${result:+ }${prefix} { ${res_set_pos} }"
+                fi
+                ;;
+                
+            "meta l4proto")
+                # Protocol rules
+                if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
+                    logger -t qosmate "Error: no valid protocols found in '$values'. Rule skipped."
+                    return 1
+                fi
+                
+                if [ -n "$res_set_neg" ]; then
+                    result="${result}${result:+ }${prefix} != { ${res_set_neg} }"
+                fi
+                
+                if [ -n "$res_set_pos" ]; then
+                    result="${result}${result:+ }${prefix} { ${res_set_pos} }"
+                fi
+                ;;
+        esac
+
+        printf '%s\n' "$result"
     }
 
     # Handle multiple protocols
     if [ -n "$proto" ]; then
-        local proto_result=$(handle_multiple_values "$proto" "meta l4proto")
-        if [ "$proto_result" = "ERROR_MIXED_IP" ]; then
-            # Skip this rule entirely
+        local proto_result
+        if ! proto_result="$(gen_rule "$proto" "meta l4proto")"; then
+            # Skip rule
             return 0
         fi
         rule_cmd="$rule_cmd $proto_result"
@@ -478,9 +558,9 @@ create_nft_rule() {
     
     # Use connection tracking for source port
     if [ -n "$src_port" ]; then
-        local src_port_result=$(handle_multiple_values "$src_port" "th sport")
-        if [ "$src_port_result" = "ERROR_MIXED_IP" ]; then
-            # Skip this rule entirely
+        local src_port_result
+        if ! src_port_result="$(gen_rule "$src_port" "th sport")"; then
+            # Skip rule
             return 0
         fi
         rule_cmd="$rule_cmd $src_port_result"
@@ -490,9 +570,9 @@ create_nft_rule() {
     
     # Use connection tracking for destination port
     if [ -n "$dest_port" ]; then
-        local dest_port_result=$(handle_multiple_values "$dest_port" "th dport")
-        if [ "$dest_port_result" = "ERROR_MIXED_IP" ]; then
-            # Skip this rule entirely
+        local dest_port_result
+        if ! dest_port_result="$(gen_rule "$dest_port" "th dport")"; then
+            # Skip rule
             return 0
         fi
         rule_cmd="$rule_cmd $dest_port_result"
@@ -501,7 +581,7 @@ create_nft_rule() {
     # Build final rule(s) based on has_ipv4 and has_ipv6 flags
     local final_rule_v4=""
     local final_rule_v6=""
-    local common_rule_part=$(echo "$rule_cmd" | sed -e 's/^[ ]*//' -e 's/[ ]*$//') # Trim common parts
+    local common_rule_part="$(echo "$rule_cmd" | sed -e 's/^[ ]*//' -e 's/[ ]*$//')" # Trim common parts
 
     # Generate IPv4 rule if needed
     if [ "$has_ipv4" -eq 1 ]; then
@@ -509,11 +589,19 @@ create_nft_rule() {
         
         # Add IPv4-specific IP addresses
         if [ -n "$src_ip_v4" ]; then
-            local src_result=$(handle_multiple_values "$src_ip_v4" "ip saddr")
+            local src_result
+            if ! src_result="$(gen_rule "$src_ip_v4" "ip saddr")"; then
+                # Skip rule
+                return 0
+            fi
             rule_cmd_v4="$rule_cmd_v4 $src_result"
         fi
         if [ -n "$dest_ip_v4" ]; then
-            local dest_result=$(handle_multiple_values "$dest_ip_v4" "ip daddr")
+            local dest_result
+            if ! dest_result="$(gen_rule "$dest_ip_v4" "ip daddr")"; then
+                # Skip rule
+                return 0
+            fi
             rule_cmd_v4="$rule_cmd_v4 $dest_result"
         fi
         
@@ -538,11 +626,19 @@ create_nft_rule() {
         
         # Add IPv6-specific IP addresses
         if [ -n "$src_ip_v6" ]; then
-            local src_result=$(handle_multiple_values "$src_ip_v6" "ip6 saddr")
+            local src_result
+            if ! src_result="$(gen_rule "$src_ip_v6" "ip6 saddr")"; then
+                # Skip rule
+                return 0
+            fi
             rule_cmd_v6="$rule_cmd_v6 $src_result"
         fi
         if [ -n "$dest_ip_v6" ]; then
-            local dest_result=$(handle_multiple_values "$dest_ip_v6" "ip6 daddr")
+            local dest_result
+            if ! dest_result="$(gen_rule "$dest_ip_v6" "ip6 daddr")"; then
+                # Skip rule
+                return 0
+            fi
             rule_cmd_v6="$rule_cmd_v6 $dest_result"
         fi
         
