@@ -12,6 +12,15 @@ DEFAULT_DOWNRATE="90000"
 DEFAULT_UPRATE="45000"
 DEFAULT_OH="44"
 
+# Trim leading and trailing whitespaces and tabs in variable $1
+trim_spaces() {
+    local tr_in tr_out
+    eval "tr_in=\"\${$1}\""
+    tr_out="${tr_in%"${tr_in##*[! 	]}"}"
+    tr_out="${tr_out#"${tr_out%%[! 	]*}"}"
+    eval "$1=\"\${tr_out}\""
+}
+
 load_config() {
     # Global settings
     ROOT_QDISC=$(uci -q get qosmate.settings.ROOT_QDISC || echo "hfsc")
@@ -581,7 +590,8 @@ create_nft_rule() {
     # Build final rule(s) based on has_ipv4 and has_ipv6 flags
     local final_rule_v4=""
     local final_rule_v6=""
-    local common_rule_part="$(echo "$rule_cmd" | sed -e 's/^[ ]*//' -e 's/[ ]*$//')" # Trim common parts
+    local common_rule_part="$rule_cmd"
+    trim_spaces common_rule_part # Trim common parts
 
     # Generate IPv4 rule if needed
     if [ "$has_ipv4" -eq 1 ]; then
@@ -613,7 +623,7 @@ create_nft_rule() {
         [ "$trace" -eq 1 ] && rule_cmd_v4="$rule_cmd_v4 meta nftrace set 1"
         [ -n "$name" ] && rule_cmd_v4="$rule_cmd_v4 comment \"ipv4_$name\""
             
-        rule_cmd_v4=$(echo "$rule_cmd_v4" | sed 's/[ ]*$//') # Trim final rule
+        trim_spaces rule_cmd_v4 # Trim final rule
         # Ensure the rule is not just a semicolon
         if [ -n "$rule_cmd_v4" ] && [ "$rule_cmd_v4" != ";" ]; then
             final_rule_v4="$rule_cmd_v4;"
@@ -650,7 +660,7 @@ create_nft_rule() {
         [ "$trace" -eq 1 ] && rule_cmd_v6="$rule_cmd_v6 meta nftrace set 1"
         [ -n "$name" ] && rule_cmd_v6="$rule_cmd_v6 comment \"ipv6_$name\""
 
-        rule_cmd_v6=$(echo "$rule_cmd_v6" | sed 's/[ ]*$//') # Trim final rule
+        trim_spaces rule_cmd_v6 # Trim final rule
         # Ensure the rule is not just a semicolon
         if [ -n "$rule_cmd_v6" ] && [ "$rule_cmd_v6" != ";" ]; then
              final_rule_v6="$rule_cmd_v6;"
