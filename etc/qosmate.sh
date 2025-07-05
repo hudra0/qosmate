@@ -1118,8 +1118,8 @@ setup_game_qdisc() {
         "netem")
             # Only apply NETEM if this direction is enabled
             if [ "$NETEM_DIRECTION" = "both" ] || \
-               ([ "$NETEM_DIRECTION" = "egress" ] && [ "$DIR" = "wan" ]) || \
-               ([ "$NETEM_DIRECTION" = "ingress" ] && [ "$DIR" = "lan" ]); then
+               { [ "$NETEM_DIRECTION" = "egress" ] && [ "$DIR" = "wan" ]; } || \
+               { [ "$NETEM_DIRECTION" = "ingress" ] && [ "$DIR" = "lan" ]; }; then
                 
                 NETEM_CMD="tc qdisc add dev \"$DEV\" parent 1:11 handle 10: netem limit $((4+9*RATE/8/500))"
                 
