@@ -1269,7 +1269,7 @@ setup_hfsc() {
 
         local family class_enum
         for family in ipv4 ipv6; do
-            for class_enum in ef cs5 cs6 cs7 cs4 af41 af42 cs2 cs1 cs0; do
+            for class_enum in ef cs5 cs6 cs7 cs4 af41 af42 cs2 af11 cs1 cs0; do
                 add_tc_filter "$DEV" "$class_enum" "$family"
             done
         done
