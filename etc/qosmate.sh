@@ -1,7 +1,12 @@
 #!/bin/sh
-# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317,SC3060,SC3057
+# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317,SC3060,SC3057,SC3003
 
 VERSION="1.2.0" # will become obsolete in future releases as version string is now in the init script
+
+_NL_='
+'
+DEFAULT_IFS=" 	${_NL_}"
+IFS="$DEFAULT_IFS"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -24,66 +29,86 @@ trim_spaces() {
 }
 
 load_config() {
-    # Global settings
-    ROOT_QDISC=$(uci -q get qosmate.settings.ROOT_QDISC || echo "hfsc")
-    WAN=$(uci -q get qosmate.settings.WAN || echo "$DEFAULT_WAN")
-    DOWNRATE=$(uci -q get qosmate.settings.DOWNRATE || echo "$DEFAULT_DOWNRATE")
-    UPRATE=$(uci -q get qosmate.settings.UPRATE || echo "$DEFAULT_UPRATE")
-    
-    # Advanced settings
-    PRESERVE_CONFIG_FILES=$(uci -q get qosmate.advanced.PRESERVE_CONFIG_FILES || echo "0")
-    WASHDSCPUP=$(uci -q get qosmate.advanced.WASHDSCPUP || echo "1")
-    WASHDSCPDOWN=$(uci -q get qosmate.advanced.WASHDSCPDOWN || echo "1")
-    BWMAXRATIO=$(uci -q get qosmate.advanced.BWMAXRATIO || echo "20")
-    ACKRATE=$(uci -q get qosmate.advanced.ACKRATE || echo "$((UPRATE * 5 / 100))")
-    UDP_RATE_LIMIT_ENABLED=$(uci -q get qosmate.advanced.UDP_RATE_LIMIT_ENABLED || echo "0")
-    TCP_UPGRADE_ENABLED=$(uci -q get qosmate.advanced.TCP_UPGRADE_ENABLED || echo "1")
-    UDPBULKPORT=$(uci -q get qosmate.advanced.UDPBULKPORT || echo "")
-    TCPBULKPORT=$(uci -q get qosmate.advanced.TCPBULKPORT || echo "")
-    VIDCONFPORTS=$(uci -q get qosmate.advanced.VIDCONFPORTS || echo "")
-    REALTIME4=$(uci -q get qosmate.advanced.REALTIME4 || echo "")
-    REALTIME6=$(uci -q get qosmate.advanced.REALTIME6 || echo "")
-    LOWPRIOLAN4=$(uci -q get qosmate.advanced.LOWPRIOLAN4 || echo "")
-    LOWPRIOLAN6=$(uci -q get qosmate.advanced.LOWPRIOLAN6 || echo "")
-    MSS=$(uci -q get qosmate.advanced.MSS || echo "536")
-    NFT_HOOK=$(uci -q get qosmate.advanced.NFT_HOOK || echo "forward")
-    NFT_PRIORITY=$(uci -q get qosmate.advanced.NFT_PRIORITY || echo "0")
-    TCP_DOWNPRIO_INITIAL_ENABLED=$(uci -q get qosmate.advanced.TCP_DOWNPRIO_INITIAL_ENABLED || echo "1")
-    TCP_DOWNPRIO_SUSTAINED_ENABLED=$(uci -q get qosmate.advanced.TCP_DOWNPRIO_SUSTAINED_ENABLED || echo "1")
+    # Format : <var_name>^<section>^<option>^<def_val>
+    # Commented and empty lines are ignored
+    # Default values resolved to $[...] are eval'ed to get the value
+    local config_entries="
+        # Global settings
+            ROOT_QDISC^settings^ROOT_QDISC^hfsc
+            WAN^settings^WAN^\$DEFAULT_WAN
+            DOWNRATE^settings^DOWNRATE^\$DEFAULT_DOWNRATE
+            UPRATE^settings^UPRATE^\$DEFAULT_UPRATE
+        # Advanced settings
+            PRESERVE_CONFIG_FILES^advanced^PRESERVE_CONFIG_FILES^0
+            WASHDSCPUP^advanced^WASHDSCPUP^1
+            WASHDSCPDOWN^advanced^WASHDSCPDOWN^1
+            BWMAXRATIO^advanced^BWMAXRATIO^20
+            ACKRATE^advanced^ACKRATE^\$((UPRATE * 5 / 100))
+            UDP_RATE_LIMIT_ENABLED^advanced^UDP_RATE_LIMIT_ENABLED^0
+            TCP_UPGRADE_ENABLED^advanced^TCP_UPGRADE_ENABLED^1
+            UDPBULKPORT^advanced^UDPBULKPORT^
+            TCPBULKPORT^advanced^TCPBULKPORT^
+            VIDCONFPORTS^advanced^VIDCONFPORTS^
+            REALTIME4^advanced^REALTIME4^
+            REALTIME6^advanced^REALTIME6^
+            LOWPRIOLAN4^advanced^LOWPRIOLAN4^
+            LOWPRIOLAN6^advanced^LOWPRIOLAN6^
+            MSS^advanced^MSS^536
+            NFT_HOOK^advanced^NFT_HOOK^forward
+            NFT_PRIORITY^advanced^NFT_PRIORITY^0
+            TCP_DOWNPRIO_INITIAL_ENABLED^advanced^TCP_DOWNPRIO_INITIAL_ENABLED^1
+            TCP_DOWNPRIO_SUSTAINED_ENABLED^advanced^TCP_DOWNPRIO_SUSTAINED_ENABLED^1
+        # HFSC specific settings
+            LINKTYPE^hfsc^LINKTYPE^ethernet
+            OH^hfsc^OH^\$DEFAULT_OH
+            gameqdisc^hfsc^gameqdisc^pfifo
+            GAMEUP^hfsc^GAMEUP^\$((UPRATE*15/100+400))
+            GAMEDOWN^hfsc^GAMEDOWN^\$((DOWNRATE*15/100+400))
+            nongameqdisc^hfsc^nongameqdisc^fq_codel
+            nongameqdiscoptions^hfsc^nongameqdiscoptions^besteffort ack-filter
+            MAXDEL^hfsc^MAXDEL^24
+            PFIFOMIN^hfsc^PFIFOMIN^5
+            PACKETSIZE^hfsc^PACKETSIZE^450
+            netemdelayms^hfsc^netemdelayms^30
+            netemjitterms^hfsc^netemjitterms^7
+            netemdist^hfsc^netemdist^normal
+            NETEM_DIRECTION^hfsc^netem_direction^both
+            pktlossp^hfsc^pktlossp^none
+        # CAKE specific settings
+            COMMON_LINK_PRESETS^cake^COMMON_LINK_PRESETS^ethernet
+            OVERHEAD^cake^OVERHEAD^
+            MPU^cake^MPU^
+            LINK_COMPENSATION^cake^LINK_COMPENSATION^
+            ETHER_VLAN_KEYWORD^cake^ETHER_VLAN_KEYWORD^
+            PRIORITY_QUEUE_INGRESS^cake^PRIORITY_QUEUE_INGRESS^diffserv4
+            PRIORITY_QUEUE_EGRESS^cake^PRIORITY_QUEUE_EGRESS^diffserv4
+            HOST_ISOLATION^cake^HOST_ISOLATION^1
+            NAT_INGRESS^cake^NAT_INGRESS^1
+            NAT_EGRESS^cake^NAT_EGRESS^0
+            ACK_FILTER_EGRESS^cake^ACK_FILTER_EGRESS^auto
+            RTT^cake^RTT^
+            AUTORATE_INGRESS^cake^AUTORATE_INGRESS^0
+            EXTRA_PARAMETERS_INGRESS^cake^EXTRA_PARAMETERS_INGRESS^
+            EXTRA_PARAMETERS_EGRESS^cake^EXTRA_PARAMETERS_EGRESS^
+    "
 
-    # HFSC specific settings
-    LINKTYPE=$(uci -q get qosmate.hfsc.LINKTYPE || echo "ethernet")
-    OH=$(uci -q get qosmate.hfsc.OH || echo "$DEFAULT_OH")
-    gameqdisc=$(uci -q get qosmate.hfsc.gameqdisc || echo "pfifo")
-    GAMEUP=$(uci -q get qosmate.hfsc.GAMEUP || echo "$((UPRATE*15/100+400))")
-    GAMEDOWN=$(uci -q get qosmate.hfsc.GAMEDOWN || echo "$((DOWNRATE*15/100+400))")    
-    nongameqdisc=$(uci -q get qosmate.hfsc.nongameqdisc || echo "fq_codel")
-    nongameqdiscoptions=$(uci -q get qosmate.hfsc.nongameqdiscoptions || echo "besteffort ack-filter")
-    MAXDEL=$(uci -q get qosmate.hfsc.MAXDEL || echo "24")
-    PFIFOMIN=$(uci -q get qosmate.hfsc.PFIFOMIN || echo "5")
-    PACKETSIZE=$(uci -q get qosmate.hfsc.PACKETSIZE || echo "450")
-    netemdelayms=$(uci -q get qosmate.hfsc.netemdelayms || echo "30")
-    netemjitterms=$(uci -q get qosmate.hfsc.netemjitterms || echo "7")
-    netemdist=$(uci -q get qosmate.hfsc.netemdist || echo "normal")
-    NETEM_DIRECTION=$(uci -q get qosmate.hfsc.netem_direction || echo "both")
-    pktlossp=$(uci -q get qosmate.hfsc.pktlossp || echo "none")
-
-    # CAKE specific settings
-    COMMON_LINK_PRESETS=$(uci -q get qosmate.cake.COMMON_LINK_PRESETS || echo "ethernet")
-    OVERHEAD=$(uci -q get qosmate.cake.OVERHEAD || echo "")
-    MPU=$(uci -q get qosmate.cake.MPU || echo "")
-    LINK_COMPENSATION=$(uci -q get qosmate.cake.LINK_COMPENSATION || echo "")
-    ETHER_VLAN_KEYWORD=$(uci -q get qosmate.cake.ETHER_VLAN_KEYWORD || echo "")
-    PRIORITY_QUEUE_INGRESS=$(uci -q get qosmate.cake.PRIORITY_QUEUE_INGRESS || echo "diffserv4")
-    PRIORITY_QUEUE_EGRESS=$(uci -q get qosmate.cake.PRIORITY_QUEUE_EGRESS || echo "diffserv4")
-    HOST_ISOLATION=$(uci -q get qosmate.cake.HOST_ISOLATION || echo "1")
-    NAT_INGRESS=$(uci -q get qosmate.cake.NAT_INGRESS || echo "1")
-    NAT_EGRESS=$(uci -q get qosmate.cake.NAT_EGRESS || echo "0")
-    ACK_FILTER_EGRESS=$(uci -q get qosmate.cake.ACK_FILTER_EGRESS || echo "auto")
-    RTT=$(uci -q get qosmate.cake.RTT || echo "")
-    AUTORATE_INGRESS=$(uci -q get qosmate.cake.AUTORATE_INGRESS || echo "0")
-    EXTRA_PARAMETERS_INGRESS=$(uci -q get qosmate.cake.EXTRA_PARAMETERS_INGRESS || echo "")
-    EXTRA_PARAMETERS_EGRESS=$(uci -q get qosmate.cake.EXTRA_PARAMETERS_EGRESS || echo "")
+    local entry var_name section option def_val
+    local IFS=$'\n'
+    for entry in ${config_entries}; do
+        trim_spaces entry
+        case "$entry" in
+            ''|"#"*) continue
+        esac
+        IFS="^"
+        set -- $entry
+        var_name="$1" section="$2" option="$3" def_val="$4"
+        IFS="${DEFAULT_IFS}"
+        case "$def_val" in
+            \$*) eval "def_val=\"${def_val}\""
+        esac
+        config_get "$var_name" "$section" "$option" "$def_val"
+    done
+    IFS="${DEFAULT_IFS}"
 
     # Calculated values
     FIRST500MS=$((DOWNRATE * 500 / 8))
@@ -255,7 +280,6 @@ create_nft_sets() {
     # Clear the temporary file
     rm -f /tmp/qosmate_set_families
     
-    config_load 'qosmate'
     config_foreach create_set ipset
     
     export QOSMATE_SETS="$sets_created"
@@ -676,9 +700,6 @@ create_nft_rule() {
 }
 
 generate_dynamic_nft_rules() {
-    . /lib/functions.sh
-    config_load 'qosmate'
-    
     # Check global enable setting
     local global_enabled
     config_get_bool global_enabled global enabled 1  # Default to enabled if not set
