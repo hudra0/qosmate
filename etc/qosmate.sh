@@ -17,7 +17,7 @@ DEFAULT_DOWNRATE="90000"
 DEFAULT_UPRATE="45000"
 DEFAULT_OH="44"
 
-: "${VERSION}"
+: "${VERSION}" "${DEFAULT_WAN}" "${DEFAULT_DOWNRATE}" "${DEFAULT_UPRATE}" "${DEFAULT_OH}" "${nongameqdisc:=}" "${nongameqdiscoptions:=}"
 
 # Trim leading and trailing whitespaces and tabs in variable $1
 trim_spaces() {
