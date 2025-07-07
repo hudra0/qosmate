@@ -1062,8 +1062,8 @@ EOF
 ##############################
 
 # 1 - device
-# 3 - class enum
-# 4 - family (ipv4|ipv6)
+# 2 - class enum
+# 3 - family (ipv4|ipv6)
 add_tc_filter() {
     local class_id dsfield hex_match proto prio match_str \
         dev="$1" \
