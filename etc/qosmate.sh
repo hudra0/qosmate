@@ -202,7 +202,7 @@ create_nft_sets() {
     local sets_created=""
     
     create_set() {
-        local section="$1" name ip_list mode timeout set_flags is_ipv6_set=0
+        local section="$1" name ip_list mode timeout set_flags
 
         config_get name "$section" name
         # Only process if enabled (default: enabled)
@@ -217,7 +217,6 @@ create_nft_sets() {
         # Get the IP list based on family
         if [ "$family" = "ipv6" ]; then
             config_get ip_list "$section" ip6
-            is_ipv6_set=1
             echo "$name ipv6" >> /tmp/qosmate_set_families
         else
             config_get ip_list "$section" ip4
