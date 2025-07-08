@@ -1,7 +1,12 @@
 #!/bin/sh
-# shellcheck disable=SC2034,SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317,SC3060
+# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC2317,SC3060,SC3057,SC3003
 
 VERSION="1.2.0" # will become obsolete in future releases as version string is now in the init script
+
+_NL_='
+'
+DEFAULT_IFS=" 	${_NL_}"
+IFS="$DEFAULT_IFS"
 
 . /lib/functions.sh
 config_load 'qosmate'
@@ -12,67 +17,78 @@ DEFAULT_DOWNRATE="90000"
 DEFAULT_UPRATE="45000"
 DEFAULT_OH="44"
 
+: "${VERSION}" "${DEFAULT_WAN}" "${DEFAULT_DOWNRATE}" "${DEFAULT_UPRATE}" "${DEFAULT_OH}" "${nongameqdisc:=}" "${nongameqdiscoptions:=}"
+
+# Trim leading and trailing whitespaces and tabs in variable $1
+trim_spaces() {
+    local tr_in tr_out
+    eval "tr_in=\"\${$1}\""
+    tr_out="${tr_in%"${tr_in##*[! 	]}"}"
+    tr_out="${tr_out#"${tr_out%%[! 	]*}"}"
+    eval "$1=\"\${tr_out}\""
+}
+
 load_config() {
     # Global settings
-    ROOT_QDISC=$(uci -q get qosmate.settings.ROOT_QDISC || echo "hfsc")
-    WAN=$(uci -q get qosmate.settings.WAN || echo "$DEFAULT_WAN")
-    DOWNRATE=$(uci -q get qosmate.settings.DOWNRATE || echo "$DEFAULT_DOWNRATE")
-    UPRATE=$(uci -q get qosmate.settings.UPRATE || echo "$DEFAULT_UPRATE")
-    
+    config_get ROOT_QDISC settings ROOT_QDISC hfsc
+    config_get WAN settings WAN $DEFAULT_WAN
+    config_get DOWNRATE settings DOWNRATE $DEFAULT_DOWNRATE
+    config_get UPRATE settings UPRATE $DEFAULT_UPRATE
+
     # Advanced settings
-    PRESERVE_CONFIG_FILES=$(uci -q get qosmate.advanced.PRESERVE_CONFIG_FILES || echo "0")
-    WASHDSCPUP=$(uci -q get qosmate.advanced.WASHDSCPUP || echo "1")
-    WASHDSCPDOWN=$(uci -q get qosmate.advanced.WASHDSCPDOWN || echo "1")
-    BWMAXRATIO=$(uci -q get qosmate.advanced.BWMAXRATIO || echo "20")
-    ACKRATE=$(uci -q get qosmate.advanced.ACKRATE || echo "$((UPRATE * 5 / 100))")
-    UDP_RATE_LIMIT_ENABLED=$(uci -q get qosmate.advanced.UDP_RATE_LIMIT_ENABLED || echo "0")
-    TCP_UPGRADE_ENABLED=$(uci -q get qosmate.advanced.TCP_UPGRADE_ENABLED || echo "1")
-    UDPBULKPORT=$(uci -q get qosmate.advanced.UDPBULKPORT || echo "")
-    TCPBULKPORT=$(uci -q get qosmate.advanced.TCPBULKPORT || echo "")
-    VIDCONFPORTS=$(uci -q get qosmate.advanced.VIDCONFPORTS || echo "")
-    REALTIME4=$(uci -q get qosmate.advanced.REALTIME4 || echo "")
-    REALTIME6=$(uci -q get qosmate.advanced.REALTIME6 || echo "")
-    LOWPRIOLAN4=$(uci -q get qosmate.advanced.LOWPRIOLAN4 || echo "")
-    LOWPRIOLAN6=$(uci -q get qosmate.advanced.LOWPRIOLAN6 || echo "")
-    MSS=$(uci -q get qosmate.advanced.MSS || echo "536")
-    NFT_HOOK=$(uci -q get qosmate.advanced.NFT_HOOK || echo "forward")
-    NFT_PRIORITY=$(uci -q get qosmate.advanced.NFT_PRIORITY || echo "0")
-    TCP_DOWNPRIO_INITIAL_ENABLED=$(uci -q get qosmate.advanced.TCP_DOWNPRIO_INITIAL_ENABLED || echo "1")
-    TCP_DOWNPRIO_SUSTAINED_ENABLED=$(uci -q get qosmate.advanced.TCP_DOWNPRIO_SUSTAINED_ENABLED || echo "1")
+    config_get PRESERVE_CONFIG_FILES advanced PRESERVE_CONFIG_FILES 0
+    config_get WASHDSCPUP advanced WASHDSCPUP 1
+    config_get WASHDSCPDOWN advanced WASHDSCPDOWN 1
+    config_get BWMAXRATIO advanced BWMAXRATIO 20
+    config_get ACKRATE advanced ACKRATE $((UPRATE * 5 / 100))
+    config_get UDP_RATE_LIMIT_ENABLED advanced UDP_RATE_LIMIT_ENABLED 0
+    config_get TCP_UPGRADE_ENABLED advanced TCP_UPGRADE_ENABLED 1
+    config_get UDPBULKPORT advanced UDPBULKPORT
+    config_get TCPBULKPORT advanced TCPBULKPORT
+    config_get VIDCONFPORTS advanced VIDCONFPORTS
+    config_get REALTIME4 advanced REALTIME4
+    config_get REALTIME6 advanced REALTIME6
+    config_get LOWPRIOLAN4 advanced LOWPRIOLAN4
+    config_get LOWPRIOLAN6 advanced LOWPRIOLAN6
+    config_get MSS advanced MSS 536
+    config_get NFT_HOOK advanced NFT_HOOK forward
+    config_get NFT_PRIORITY advanced NFT_PRIORITY 0
+    config_get TCP_DOWNPRIO_INITIAL_ENABLED advanced TCP_DOWNPRIO_INITIAL_ENABLED 1
+    config_get TCP_DOWNPRIO_SUSTAINED_ENABLED advanced TCP_DOWNPRIO_SUSTAINED_ENABLED 1
 
     # HFSC specific settings
-    LINKTYPE=$(uci -q get qosmate.hfsc.LINKTYPE || echo "ethernet")
-    OH=$(uci -q get qosmate.hfsc.OH || echo "$DEFAULT_OH")
-    gameqdisc=$(uci -q get qosmate.hfsc.gameqdisc || echo "pfifo")
-    GAMEUP=$(uci -q get qosmate.hfsc.GAMEUP || echo "$((UPRATE*15/100+400))")
-    GAMEDOWN=$(uci -q get qosmate.hfsc.GAMEDOWN || echo "$((DOWNRATE*15/100+400))")    
-    nongameqdisc=$(uci -q get qosmate.hfsc.nongameqdisc || echo "fq_codel")
-    nongameqdiscoptions=$(uci -q get qosmate.hfsc.nongameqdiscoptions || echo "besteffort ack-filter")
-    MAXDEL=$(uci -q get qosmate.hfsc.MAXDEL || echo "24")
-    PFIFOMIN=$(uci -q get qosmate.hfsc.PFIFOMIN || echo "5")
-    PACKETSIZE=$(uci -q get qosmate.hfsc.PACKETSIZE || echo "450")
-    netemdelayms=$(uci -q get qosmate.hfsc.netemdelayms || echo "30")
-    netemjitterms=$(uci -q get qosmate.hfsc.netemjitterms || echo "7")
-    netemdist=$(uci -q get qosmate.hfsc.netemdist || echo "normal")
-    NETEM_DIRECTION=$(uci -q get qosmate.hfsc.netem_direction || echo "both")
-    pktlossp=$(uci -q get qosmate.hfsc.pktlossp || echo "none")
+    config_get LINKTYPE hfsc LINKTYPE ethernet
+    config_get OH hfsc OH $DEFAULT_OH
+    config_get gameqdisc hfsc gameqdisc pfifo
+    config_get GAMEUP hfsc GAMEUP $((UPRATE*15/100+400))
+    config_get GAMEDOWN hfsc GAMEDOWN $((DOWNRATE*15/100+400))
+    config_get nongameqdisc hfsc nongameqdisc fq_codel
+    config_get nongameqdiscoptions hfsc nongameqdiscoptions besteffort ack-filter
+    config_get MAXDEL hfsc MAXDEL 24
+    config_get PFIFOMIN hfsc PFIFOMIN 5
+    config_get PACKETSIZE hfsc PACKETSIZE 450
+    config_get netemdelayms hfsc netemdelayms 30
+    config_get netemjitterms hfsc netemjitterms 7
+    config_get netemdist hfsc netemdist normal
+    config_get NETEM_DIRECTION hfsc netem_direction both
+    config_get pktlossp hfsc pktlossp none
 
     # CAKE specific settings
-    COMMON_LINK_PRESETS=$(uci -q get qosmate.cake.COMMON_LINK_PRESETS || echo "ethernet")
-    OVERHEAD=$(uci -q get qosmate.cake.OVERHEAD || echo "")
-    MPU=$(uci -q get qosmate.cake.MPU || echo "")
-    LINK_COMPENSATION=$(uci -q get qosmate.cake.LINK_COMPENSATION || echo "")
-    ETHER_VLAN_KEYWORD=$(uci -q get qosmate.cake.ETHER_VLAN_KEYWORD || echo "")
-    PRIORITY_QUEUE_INGRESS=$(uci -q get qosmate.cake.PRIORITY_QUEUE_INGRESS || echo "diffserv4")
-    PRIORITY_QUEUE_EGRESS=$(uci -q get qosmate.cake.PRIORITY_QUEUE_EGRESS || echo "diffserv4")
-    HOST_ISOLATION=$(uci -q get qosmate.cake.HOST_ISOLATION || echo "1")
-    NAT_INGRESS=$(uci -q get qosmate.cake.NAT_INGRESS || echo "1")
-    NAT_EGRESS=$(uci -q get qosmate.cake.NAT_EGRESS || echo "0")
-    ACK_FILTER_EGRESS=$(uci -q get qosmate.cake.ACK_FILTER_EGRESS || echo "auto")
-    RTT=$(uci -q get qosmate.cake.RTT || echo "")
-    AUTORATE_INGRESS=$(uci -q get qosmate.cake.AUTORATE_INGRESS || echo "0")
-    EXTRA_PARAMETERS_INGRESS=$(uci -q get qosmate.cake.EXTRA_PARAMETERS_INGRESS || echo "")
-    EXTRA_PARAMETERS_EGRESS=$(uci -q get qosmate.cake.EXTRA_PARAMETERS_EGRESS || echo "")
+    config_get COMMON_LINK_PRESETS cake COMMON_LINK_PRESETS ethernet
+    config_get OVERHEAD cake OVERHEAD
+    config_get MPU cake MPU
+    config_get LINK_COMPENSATION cake LINK_COMPENSATION
+    config_get ETHER_VLAN_KEYWORD cake ETHER_VLAN_KEYWORD
+    config_get PRIORITY_QUEUE_INGRESS cake PRIORITY_QUEUE_INGRESS diffserv4
+    config_get PRIORITY_QUEUE_EGRESS cake PRIORITY_QUEUE_EGRESS diffserv4
+    config_get HOST_ISOLATION cake HOST_ISOLATION 1
+    config_get NAT_INGRESS cake NAT_INGRESS 1
+    config_get NAT_EGRESS cake NAT_EGRESS 0
+    config_get ACK_FILTER_EGRESS cake ACK_FILTER_EGRESS auto
+    config_get RTT cake RTT
+    config_get AUTORATE_INGRESS cake AUTORATE_INGRESS 0
+    config_get EXTRA_PARAMETERS_INGRESS cake EXTRA_PARAMETERS_INGRESS
+    config_get EXTRA_PARAMETERS_EGRESS cake EXTRA_PARAMETERS_EGRESS
 
     # Calculated values
     FIRST500MS=$((DOWNRATE * 500 / 8))
@@ -186,7 +202,7 @@ create_nft_sets() {
     local sets_created=""
     
     create_set() {
-        local section="$1" name ip_list mode timeout set_flags is_ipv6_set=0
+        local section="$1" name ip_list mode timeout set_flags
 
         config_get name "$section" name
         # Only process if enabled (default: enabled)
@@ -201,7 +217,6 @@ create_nft_sets() {
         # Get the IP list based on family
         if [ "$family" = "ipv6" ]; then
             config_get ip_list "$section" ip6
-            is_ipv6_set=1
             echo "$name ipv6" >> /tmp/qosmate_set_families
         else
             config_get ip_list "$section" ip4
@@ -244,7 +259,6 @@ create_nft_sets() {
     # Clear the temporary file
     rm -f /tmp/qosmate_set_families
     
-    config_load 'qosmate'
     config_foreach create_set ipset
     
     export QOSMATE_SETS="$sets_created"
@@ -581,7 +595,8 @@ create_nft_rule() {
     # Build final rule(s) based on has_ipv4 and has_ipv6 flags
     local final_rule_v4=""
     local final_rule_v6=""
-    local common_rule_part="$(echo "$rule_cmd" | sed -e 's/^[ ]*//' -e 's/[ ]*$//')" # Trim common parts
+    local common_rule_part="$rule_cmd"
+    trim_spaces common_rule_part # Trim common parts
 
     # Generate IPv4 rule if needed
     if [ "$has_ipv4" -eq 1 ]; then
@@ -613,7 +628,7 @@ create_nft_rule() {
         [ "$trace" -eq 1 ] && rule_cmd_v4="$rule_cmd_v4 meta nftrace set 1"
         [ -n "$name" ] && rule_cmd_v4="$rule_cmd_v4 comment \"ipv4_$name\""
             
-        rule_cmd_v4=$(echo "$rule_cmd_v4" | sed 's/[ ]*$//') # Trim final rule
+        trim_spaces rule_cmd_v4 # Trim final rule
         # Ensure the rule is not just a semicolon
         if [ -n "$rule_cmd_v4" ] && [ "$rule_cmd_v4" != ";" ]; then
             final_rule_v4="$rule_cmd_v4;"
@@ -650,7 +665,7 @@ create_nft_rule() {
         [ "$trace" -eq 1 ] && rule_cmd_v6="$rule_cmd_v6 meta nftrace set 1"
         [ -n "$name" ] && rule_cmd_v6="$rule_cmd_v6 comment \"ipv6_$name\""
 
-        rule_cmd_v6=$(echo "$rule_cmd_v6" | sed 's/[ ]*$//') # Trim final rule
+        trim_spaces rule_cmd_v6 # Trim final rule
         # Ensure the rule is not just a semicolon
         if [ -n "$rule_cmd_v6" ] && [ "$rule_cmd_v6" != ";" ]; then
              final_rule_v6="$rule_cmd_v6;"
@@ -664,9 +679,6 @@ create_nft_rule() {
 }
 
 generate_dynamic_nft_rules() {
-    . /lib/functions.sh
-    config_load 'qosmate'
-    
     # Check global enable setting
     local global_enabled
     config_get_bool global_enabled global enabled 1  # Default to enabled if not set
@@ -1028,23 +1040,40 @@ EOF
 #       QoS Setup Functions
 ##############################
 
-# Calculates hex value for tc u32 IPv6 DSCP matching.
-# Arg1: DSCP value (0-63), e.g., 46. Output: 4-digit hex, e.g., "0B80".
-# Used for 'match u16 0x<VAL> 0x0FC0 at 0'.
-get_ipv6_dscp_hex_match_val() {
-    local dscp_input_val
-    dscp_input_val="$1"
+# 1 - device
+# 2 - class enum
+# 3 - family (ipv4|ipv6)
+add_tc_filter() {
+    local class_id dsfield hex_match proto prio match_str \
+        dev="$1" \
+        class_enum="$2" \
+        family="$3"
 
-    local six_bit_dscp_val
-    local result_val
+    case "$class_enum" in
+        cs0|CS0) class_id=1:13 dsfield=0x00 hex_match=0x0000 ;; # 0 -> Default
+        ef|EF) class_id=1:11 dsfield=0xb8 hex_match=0x0B80 ;; # 46
+        cs1|CS1) class_id=1:15 dsfield=0x20 hex_match=0x0200 ;; # 8
+        cs2|CS2) class_id=1:14 dsfield=0x40 hex_match=0x0400 ;; # 16
+        cs4|CS4) class_id=1:12 dsfield=0x80 hex_match=0x0800 ;; # 32
+        cs5|CS5) class_id=1:11 dsfield=0xa0 hex_match=0x0A00 ;; # 40
+        cs6|CS6) class_id=1:11 dsfield=0xc0 hex_match=0x0C00 ;; # 48
+        cs7|CS7) class_id=1:11 dsfield=0xe0 hex_match=0x0E00 ;; # 56
+        af11|AF11) class_id=1:14 dsfield=0x28 hex_match=0x0280 ;; # 10
+        af41|AF41) class_id=1:12 dsfield=0x88 hex_match=0x0880 ;; # 34
+        af42|AF42) class_id=1:12 dsfield=0x90 hex_match=0x0900 ;; # 36
+        *) # TODO: throw an error
+    esac
 
-    # Get lower 6 bits of DSCP input (0-63).
-    six_bit_dscp_val=$(( (dscp_input_val + 0) & 0x3f ))
+    case "$family" in
+        ipv4)
+            proto=ip prio=1 match_str="ip dsfield $dsfield 0xfc"
+            ;;
+        ipv6)
+            proto=ipv6 prio=2 match_str="u16 $hex_match 0x0FC0 at 0"
+            ;;
+    esac
 
-    # Shift DSCP bits for tc u32 mask.
-    result_val=$(( six_bit_dscp_val * 64 ))
-
-    printf "%04X" "$result_val"
+    tc filter add dev "$dev" parent 1: protocol "$proto" prio "$prio" u32 match $match_str classid "$class_id"
 }
 
 # Function to setup the specific game qdisc (pfifo, red, fq_codel, netem, etc.)
@@ -1108,8 +1137,8 @@ setup_game_qdisc() {
         "netem")
             # Only apply NETEM if this direction is enabled
             if [ "$NETEM_DIRECTION" = "both" ] || \
-               ([ "$NETEM_DIRECTION" = "egress" ] && [ "$DIR" = "wan" ]) || \
-               ([ "$NETEM_DIRECTION" = "ingress" ] && [ "$DIR" = "lan" ]); then
+               { [ "$NETEM_DIRECTION" = "egress" ] && [ "$DIR" = "wan" ]; } || \
+               { [ "$NETEM_DIRECTION" = "ingress" ] && [ "$DIR" = "lan" ]; }; then
                 
                 NETEM_CMD="tc qdisc add dev \"$DEV\" parent 1:11 handle 10: netem limit $((4+9*RATE/8/500))"
                 
@@ -1217,32 +1246,12 @@ setup_hfsc() {
         tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
         tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1 # Also delete prio 2
 
-        # IPv4 Filters (prio 1)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xb8 0xfc classid 1:11 # ef (46)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xa0 0xfc classid 1:11 # cs5 (40)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xc0 0xfc classid 1:11 # cs6 (48)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xe0 0xfc classid 1:11 # cs7 (56)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x80 0xfc classid 1:12 # cs4 (32)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x88 0xfc classid 1:12 # af41 (34)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x90 0xfc classid 1:12 # af42 (36)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x40 0xfc classid 1:14 # cs2 (16)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x28 0xfc classid 1:14 # af11 (10)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x20 0xfc classid 1:15 # cs1 (8)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x00 0xfc classid 1:13 # none (0) -> Default
-
-        # IPv6 Filters (prio 2)
-        # IPv6 Traffic Class is shifted 4 bits to the left
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 46) 0x0FC0 at 0 classid 1:11 # EF (46)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 40) 0x0FC0 at 0 classid 1:11 # CS5 (40)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 48) 0x0FC0 at 0 classid 1:11 # CS6 (48)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 56) 0x0FC0 at 0 classid 1:11 # CS7 (56)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 32) 0x0FC0 at 0 classid 1:12 # CS4 (32)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 34) 0x0FC0 at 0 classid 1:12 # AF41 (34)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 36) 0x0FC0 at 0 classid 1:12 # AF42 (36)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 16) 0x0FC0 at 0 classid 1:14 # CS2 (16)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 10) 0x0FC0 at 0 classid 1:14 # AF11 (10)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 8) 0x0FC0 at 0 classid 1:15 # CS1 (8)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 0) 0x0FC0 at 0 classid 1:13 # CS0/BE (0)
+        local family class_enum
+        for family in ipv4 ipv6; do
+            for class_enum in ef cs5 cs6 cs7 cs4 af41 af42 cs2 af11 cs1 cs0; do
+                add_tc_filter "$DEV" "$class_enum" "$family"
+            done
+        done
     fi
 }
 
@@ -1384,21 +1393,20 @@ setup_hybrid() {
         tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
         tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1
 
+        local class_enum
+
         # IPv4 Filters (prio 1)
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xb8 0xfc classid 1:11 # EF -> Realtime
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xa0 0xfc classid 1:11 # CS5 -> Realtime
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xc0 0xfc classid 1:11 # CS6 -> Realtime
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0xe0 0xfc classid 1:11 # CS7 -> Realtime
-        tc filter add dev "$DEV" parent 1: protocol ip prio 1 u32 match ip dsfield 0x20 0xfc classid 1:15 # CS1 -> Bulk
+        # EF, CS5, CS6, CS7 -> Realtime
+        # CS1 -> Bulk
+        for class_enum in ef cs5 cs6 cs7 cs1; do
+            add_tc_filter "$DEV" "$class_enum" "ipv4"
+        done
         # Default rule sends to 1:13 (CAKE)
 
         # IPv6 Filters (prio 2)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 46) 0x0FC0 at 0 classid 1:11 # EF (46)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 40) 0x0FC0 at 0 classid 1:11 # CS5 (40)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 48) 0x0FC0 at 0 classid 1:11 # CS6 (48)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 56) 0x0FC0 at 0 classid 1:11 # CS7 (56)
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 8) 0x0FC0 at 0 classid 1:15 # CS1 (8)     
-        tc filter add dev "$DEV" parent 1: protocol ipv6 prio 2 u32 match u16 0x$(get_ipv6_dscp_hex_match_val 0) 0x0FC0 at 0 classid 1:13 # CS0/BE (0)
+        for class_enum in ef cs5 cs6 cs7 cs1 cs0; do
+            add_tc_filter "$DEV" "$class_enum" "ipv6"
+        done
     fi
 }
 
