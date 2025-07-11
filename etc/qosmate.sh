@@ -766,8 +766,8 @@ fi
 # Check if UDP rate limiting should be applied
 if [ "$UDP_RATE_LIMIT_ENABLED" -eq 1 ]; then
     udp_rate_limit_rules="\
-meta l4proto udp ip dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip dscp set cs0 counter
-        meta l4proto udp ip6 dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip6 dscp set cs0 counter"
+meta l4proto udp ip dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip dscp set af11 counter
+        meta l4proto udp ip6 dscp > cs2 add @udp_meter {ct id . ct direction limit rate over 450/second} counter ip6 dscp set af11 counter"
 else
     udp_rate_limit_rules="# UDP rate limiting is disabled."
 fi
