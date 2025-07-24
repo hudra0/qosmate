@@ -359,7 +359,7 @@ create_nft_rule() {
             separate_ips_by_family "${ip_type}_v4" "${ip_type}_v6" "$ip_val"
             eval "
                 [ -n \"\${${ip_type}_v4}\" ] && has_ipv4=1
-                [ -n \"\${${ip_type}_v4}\" ] && has_ipv6=1
+                [ -n \"\${${ip_type}_v6}\" ] && has_ipv6=1
             "
         fi
     done
