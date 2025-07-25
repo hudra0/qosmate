@@ -845,6 +845,16 @@ rm /usr/share/rpcd/acl.d/luci-app-qosmate.json
 ```
 5. Reboot your router to clear any remaining settings.
 
+## Resetting to Default Configuration
+
+To reset QoSmate to its default configuration, you can use the following command. This will backup your current configuration and download the default one from the repository:
+
+```bash
+mv /etc/config/qosmate /etc/config/qosmate.old && wget -O /etc/config/qosmate https://raw.githubusercontent.com/hudra0/qosmate/main/etc/config/qosmate && /etc/init.d/qosmate restart
+```
+
+Note: Make sure to review and adjust the default configuration as needed for your specific setup.
+
 ## Building qosmate and Luci-app-qosmate Packages for OpenWrt
 
 1. Navigate to Your OpenWrt Buildroot Directory:
