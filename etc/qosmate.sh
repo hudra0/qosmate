@@ -530,7 +530,6 @@ create_nft_rule() {
     
     # Use connection tracking for source and destination ports
     local src_port dest_port port port_type port_res port_seen=''
-    : "${src_port}" "${dest_port}"
 
     for port_type in src_port dest_port; do
         config_get port "$config" "$port_type"
