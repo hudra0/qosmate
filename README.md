@@ -33,6 +33,10 @@ QoSmate allows you to prioritize specific traffic types, but it's crucial to use
 
 > Remember that for every packet given preferential treatment, others may experience increased delay or even drops. The goal is to create a balanced, efficient network environment, not to prioritize everything.
 
+## Requirements
+
+QoSmate requires OpenWrt version 23.05 or later, utilizing Firewall 4 and nftables. While OpenWrt 22.03 offers nftables support, it lacks certain features essential for QoSmate's full functionality. A legacy branch is available for 22.03 compatibility, but I strongly recommend upgrading to the latest OpenWrt version, as there is generally no compelling reason to remain on 22.03.
+
 ## 1. Installation
 
 Before installing QoSmate, ensure that:
