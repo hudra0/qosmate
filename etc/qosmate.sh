@@ -271,11 +271,8 @@ SETS=$(create_nft_sets)
 # Create rules
 create_nft_rule() {
     local config="$1"
-    local src_ip src_port dest_ip dest_port proto class counter name enabled trace
-    config_get src_ip "$config" src_ip
-    config_get src_port "$config" src_port
-    config_get dest_ip "$config" dest_ip
-    config_get dest_port "$config" dest_port
+    local proto class counter name enabled trace
+
     config_get proto "$config" proto
     config_get class "$config" class
     config_get_bool counter "$config" counter 0
@@ -300,16 +297,6 @@ create_nft_rule() {
         local setname="$1"
         [ -f /tmp/qosmate_set_families ] && awk -v set="$setname" '$1 == set {print $2}' /tmp/qosmate_set_families
     }
-    
-    # Early check for mixed IPv4/IPv6
-    local has_ipv4=0
-    local has_ipv6=0
-    
-    # Variables to store filtered IPs for mixed rules
-    local src_ip_v4=""
-    local src_ip_v6=""
-    local dest_ip_v4=""
-    local dest_ip_v6=""
     
     # Function to separate IPs by family
     separate_ips_by_family() {
@@ -359,20 +346,24 @@ create_nft_rule() {
         eval "${1}=\"\${ipv4_result}\" ${2}=\"\${ipv6_result}\""
     }
     
-    # Check and separate source IPs
-    if [ -n "$src_ip" ]; then
-        separate_ips_by_family src_ip_v4 src_ip_v6 "$src_ip"
-        [ -n "$src_ip_v4" ] && has_ipv4=1
-        [ -n "$src_ip_v6" ] && has_ipv6=1
-    fi
-    
-    # Check and separate destination IPs
-    if [ -n "$dest_ip" ]; then
-        separate_ips_by_family dest_ip_v4 dest_ip_v6 "$dest_ip"
-        [ -n "$dest_ip_v4" ] && has_ipv4=1
-        [ -n "$dest_ip_v6" ] && has_ipv6=1
-    fi
-    
+    # Check and separate source and destination IPs
+    local src_ip dest_ip \
+        src_ip_v4='' src_ip_v6='' dest_ip_v4='' dest_ip_v6='' \
+        has_ipv4=0 has_ipv6=0 \
+        ip_val ip_type
+
+    for ip_type in src_ip dest_ip; do
+        config_get "${ip_type}" "$config" "${ip_type}"
+        eval "ip_val=\"\${$ip_type}\""
+        if [ -n "$ip_val" ]; then
+            separate_ips_by_family "${ip_type}_v4" "${ip_type}_v6" "$ip_val"
+            eval "
+                [ -n \"\${${ip_type}_v4}\" ] && has_ipv4=1
+                [ -n \"\${${ip_type}_v6}\" ] && has_ipv6=1
+            "
+        fi
+    done
+
     # Log if mixed IPv4/IPv6 addresses are found
     if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then 
         logger -t qosmate "Info: Mixed IPv4/IPv6 addresses in rule '$name' ($config). Splitting into separate rules."
@@ -385,11 +376,24 @@ create_nft_rule() {
         has_ipv6=1
     fi
 
-    # Initialize rule string
-    local rule_cmd=""
-
     # Function to handle multiple values with IP family awareness
     gen_rule() {
+        add_res_rule() {
+            if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
+                logger -t qosmate "Error: no valid $1 found in '$values'. Rule skipped."
+                return 1
+            fi
+
+            if [ -n "$res_set_neg" ]; then
+                result="${result}${result:+ }${prefix} != { ${res_set_neg} }"
+            fi
+
+            if [ -n "$res_set_pos" ]; then
+                result="${result}${result:+ }${prefix} { ${res_set_pos} }"
+            fi
+            :
+        }
+
         local value setname family suffix mask comp_op negation \
             result='' res_set_neg='' res_set_pos='' has_ipv4='' has_ipv6='' set_ref_seen='' ipv6_mask_seen='' reg_val_seen='' \
             values="$1" \
@@ -444,48 +448,32 @@ create_nft_rule() {
                 continue
             fi
 
-            # Collect values based on prefix type
+            # Validate prefix type
             case "$prefix" in 
-                *addr*)
-                    # IP address handling
-                    reg_val_seen=1
-                    if is_ipv6 "$value"; then
-                        has_ipv6=1
-                    else
-                        has_ipv4=1
-                    fi
-                    
-                    if [ -n "$negation" ]; then
-                        res_set_neg="${res_set_neg}${res_set_neg:+,}${value}"
-                    else
-                        res_set_pos="${res_set_pos}${res_set_pos:+,}${value}"
-                    fi
-                    ;;
-                    
-                "th sport"|"th dport")
-                    # Port handling - no IPv4/IPv6 distinction needed
-                    reg_val_seen=1
-                    if [ -n "$negation" ]; then
-                        res_set_neg="${res_set_neg}${res_set_neg:+,}${value}"
-                    else
-                        res_set_pos="${res_set_pos}${res_set_pos:+,}${value}"
-                    fi
-                    ;;
-                    
-                "meta l4proto")
-                    # Protocol handling
-                    reg_val_seen=1
-                    if [ -n "$negation" ]; then
-                        res_set_neg="${res_set_neg}${res_set_neg:+,}${value}"
-                    else
-                        res_set_pos="${res_set_pos}${res_set_pos:+,}${value}"
-                    fi
+                "ip saddr"|"ip daddr"|"ip6 saddr"|"ip6 daddr"|"th sport"|"th dport"|"meta l4proto")
                     ;;
                 *)
-                    logger -t qosmate "Error: unexpected data in '$prefix'."
+                    logger -t qosmate "Error: unexpected prefix '$prefix'."
                     return 1
                     ;;
             esac
+
+            case "$prefix" in *addr*)
+                if is_ipv6 "$value"; then
+                    has_ipv6=1
+                else
+                    has_ipv4=1
+                fi
+            esac
+
+            # Collect values
+            if [ -n "$negation" ]; then
+                res_set_neg="${res_set_neg}${res_set_neg:+,}${value}"
+            else
+                res_set_pos="${res_set_pos}${res_set_pos:+,}${value}"
+            fi
+
+            reg_val_seen=1
         done
 
         if [ -n "$set_ref_seen" ] || [ -n "$ipv6_mask_seen" ]; then
@@ -508,55 +496,25 @@ create_nft_rule() {
         case "$prefix" in
             *addr*)
                 # IP address rules
-                if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
-                    logger -t qosmate "Error: no valid values found in '$values'. Rule skipped."
-                    return 1
-                fi
-
-                if [ -n "$res_set_neg" ]; then
-                    result="${result}${result:+ }${prefix} != { ${res_set_neg} }"
-                fi
-
-                if [ -n "$res_set_pos" ]; then
-                    result="${result}${result:+ }${prefix} { ${res_set_pos} }"
-                fi 
+                add_res_rule addresses || return 1
                 ;;
                 
             "th sport"|"th dport")
                 # Port rules
-                if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
-                    logger -t qosmate "Error: no valid ports found in '$values'. Rule skipped."
-                    return 1
-                fi
-                
-                if [ -n "$res_set_neg" ]; then
-                    result="${result}${result:+ }${prefix} != { ${res_set_neg} }"
-                fi
-                
-                if [ -n "$res_set_pos" ]; then
-                    result="${result}${result:+ }${prefix} { ${res_set_pos} }"
-                fi
+                add_res_rule ports || return 1
                 ;;
                 
             "meta l4proto")
                 # Protocol rules
-                if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
-                    logger -t qosmate "Error: no valid protocols found in '$values'. Rule skipped."
-                    return 1
-                fi
-                
-                if [ -n "$res_set_neg" ]; then
-                    result="${result}${result:+ }${prefix} != { ${res_set_neg} }"
-                fi
-                
-                if [ -n "$res_set_pos" ]; then
-                    result="${result}${result:+ }${prefix} { ${res_set_pos} }"
-                fi
+                add_res_rule protocols || return 1
                 ;;
         esac
 
         printf '%s\n' "$result"
     }
+
+    # Initialize rule string
+    local rule_cmd=""
 
     # Handle multiple protocols
     if [ -n "$proto" ]; then
@@ -568,30 +526,23 @@ create_nft_rule() {
         rule_cmd="$rule_cmd $proto_result"
     fi
 
-    # Note: Source IP handling is now done per-family in the rule generation below
+    # Note: Source and Destination IP handling is now done per-family in the rule generation below
     
-    # Use connection tracking for source port
-    if [ -n "$src_port" ]; then
-        local src_port_result
-        if ! src_port_result="$(gen_rule "$src_port" "th sport")"; then
-            # Skip rule
-            return 0
-        fi
-        rule_cmd="$rule_cmd $src_port_result"
-    fi
+    # Use connection tracking for source and destination ports
+    local src_port dest_port port port_type port_res port_seen=''
 
-    # Note: Destination IP handling is now done per-family in the rule generation below
-    
-    # Use connection tracking for destination port
-    if [ -n "$dest_port" ]; then
-        local dest_port_result
-        if ! dest_port_result="$(gen_rule "$dest_port" "th dport")"; then
-            # Skip rule
-            return 0
+    for port_type in src_port dest_port; do
+        config_get port "$config" "$port_type"
+        if [ -n "$port" ]; then
+            if ! port_res="$(gen_rule "$port" "th ${port_type%%"${port_type#?}"}port")"; then
+                # Skip rule
+                return 0
+            fi
+            rule_cmd="$rule_cmd $port_res"
+            port_seen=1
         fi
-        rule_cmd="$rule_cmd $dest_port_result"
-    fi
-    
+    done
+
     # Build final rule(s) based on has_ipv4 and has_ipv6 flags
     local final_rule_v4=""
     local final_rule_v6=""
@@ -621,7 +572,7 @@ create_nft_rule() {
         fi
         
         # Ensure we only add parts if there's something to match on (IP/Port/Proto)
-        if [ -n "$proto" ] || [ -n "$src_ip_v4" ] || [ -n "$dest_ip_v4" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
+        if [ -n "$proto" ] || [ -n "$src_ip_v4" ] || [ -n "$dest_ip_v4" ] || [ -n "$port_seen" ]; then
             rule_cmd_v4="$rule_cmd_v4 ip dscp set $class"
         fi
         [ "$counter" -eq 1 ] && rule_cmd_v4="$rule_cmd_v4 counter"
@@ -658,7 +609,7 @@ create_nft_rule() {
         fi
         
         # Ensure we only add parts if there's something to match on (IP/Port/Proto)
-        if [ -n "$proto" ] || [ -n "$src_ip_v6" ] || [ -n "$dest_ip_v6" ] || [ -n "$src_port" ] || [ -n "$dest_port" ]; then
+        if [ -n "$proto" ] || [ -n "$src_ip_v6" ] || [ -n "$dest_ip_v6" ] || [ -n "$port_seen" ]; then
             rule_cmd_v6="$rule_cmd_v6 ip6 dscp set $class"
         fi
         [ "$counter" -eq 1 ] && rule_cmd_v6="$rule_cmd_v6 counter"
