@@ -124,7 +124,7 @@ Before starting with QoSmate configuration:
 2. Enable WASH in both directions (WASHDSCPUP and WASHDSCPDOWN)
 3. Choose your Root Queueing Discipline:
    - For older/less powerful routers, use HFSC as it requires fewer system resources
-   - Hybrid mode uses HFSC + fq_codel for realtime and bulk classes while CAKE manages all other traffic
+   - Hybrid mode uses HFSC + gameqdisc for realtime and HFSC + fq_codel for bulk classes while CAKE manages all other traffic
 4. Consider overhead settings:
    - Default settings are conservative to cover most use cases
    - It's better to overestimate overhead than to underestimate it
@@ -161,7 +161,7 @@ Remember that these are starting points - optimal settings may depend on your sp
 | UPRATE        | Upload rate in kbps. Set this to about 80-90% of your actual upload speed for the same reasons as DOWNRATE.                                                                                                                    | integer           | 45000   |
 | ROOT_QDISC    | Specifies the root queueing discipline. Options are 'hfsc', 'cake', or 'hybrid' | enum (hfsc, cake, hybrid) | hfsc    |
 
-### HFSC Specific Settings
+### HFSC + Hybrid Specific Settings
 
 | Config option       | Description                                                                                                                                                                                                                                                                                          | Type                                         | Default                 |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ----------------------- |
