@@ -1498,11 +1498,13 @@ status_service() {
         fi
     elif tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc hfsc"; then
         print_msg "Traffic shaping (HFSC) is active on the egress interface ($WAN)."
+    elif tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc htb"; then
+        print_msg "Traffic shaping (HTB) is active on the egress interface ($WAN)."
     else
         print_msg "No traffic shaping is active on the egress interface ($WAN)."
     fi
 
-    if tc qdisc show dev "$IFB" 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; then
+    if tc qdisc show dev "$IFB" 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc\|qdisc htb"; then
         print_msg "Traffic shaping is active on the ingress interface ($IFB)."
     else
         print_msg "No traffic shaping is active on the ingress interface ($IFB)."
@@ -1511,7 +1513,7 @@ status_service() {
     print_msg "==== Overall Status ===="
     # Determine if the service is actually running
     if [ "$(uci -q get qosmate.global.enabled)" = "1" ] && { tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc hfsc" ||
-            tc qdisc show dev "$IFB" 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc"; }; then
+            tc qdisc show dev "$IFB" 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc\|qdisc htb"; }; then
             print_msg "qosmate is currently active and managing traffic shaping."
     else
         print_msg "qosmate is not currently active or managing traffic shaping."
@@ -1525,6 +1527,8 @@ status_service() {
         "Game traffic download: $GAMEDOWN kbps"
     if [ "$ROOT_QDISC" = "cake" ]; then
         print_msg "Queue discipline: CAKE (Root qdisc)"
+    elif [ "$ROOT_QDISC" = "htb" ]; then
+        print_msg "Queue discipline: HTB (Root qdisc)"
     else
         print_msg "Queue discipline: $gameqdisc (for game traffic in HFSC)"
     fi
@@ -1984,7 +1988,7 @@ health_check() {
     fi
     
     # Check tc configuration on WAN interface
-    if [ -n "$WAN" ] && tc qdisc show dev "$WAN" 2>/dev/null | grep -E -q "hfsc|cake"; then
+    if [ -n "$WAN" ] && tc qdisc show dev "$WAN" 2>/dev/null | grep -E -q "hfsc|cake|htb"; then
         status="${status}tc:ok;"
     else
         status="${status}tc:failed;"
