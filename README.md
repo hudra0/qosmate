@@ -159,7 +159,7 @@ Remember that these are starting points - optimal settings may depend on your sp
 | WAN           | Specifies the WAN interface. This is crucial for applying QoS rules to the correct network interface. It's typically the interface connected to your ISP.                                                                      | string            | eth1    |
 | DOWNRATE      | Download rate in kbps. Set this to about 80-90% of your actual download speed to allow for overhead and prevent bufferbloat. This creates a buffer that helps maintain low latency even when the connection is fully utilized. | integer           | 90000   |
 | UPRATE        | Upload rate in kbps. Set this to about 80-90% of your actual upload speed for the same reasons as DOWNRATE.                                                                                                                    | integer           | 45000   |
-| ROOT_QDISC    | Specifies the root queueing discipline. Options are 'hfsc', 'cake', or 'hybrid' | enum (hfsc, cake, hybrid) | hfsc    |
+| ROOT_QDISC    | Specifies the root queueing discipline. Options are 'hfsc', 'cake', 'hybrid', or 'htb' | enum (hfsc, cake, hybrid, htb) | hfsc    |
 
 ### HFSC + Hybrid Specific Settings
 
@@ -953,9 +953,9 @@ git clone https://github.com/hudra0/qosmate.git package/qosmate
 `mkdir -p package/luci-app-qosmate
 git clone https://github.com/hudra0/luci-app-qosmate.git package/luci-app-qosmate`
 
-## QoSmate Traffic Shaping: HFSC and CAKE
+## QoSmate Traffic Shaping: HFSC, HTB and CAKE
 
-QoSmate supports two traffic shaping systems: HFSC and CAKE. Each combines queueing disciplines (qdiscs) with bandwidth control mechanisms to provide different approaches to traffic management and prioritization.
+QoSmate supports three traffic shaping systems: HFSC, HTB and CAKE. Each combines queueing disciplines (qdiscs) with bandwidth control mechanisms to provide different approaches to traffic management and prioritization.
 
 ### HFSC (Hierarchical Fair Service Curve)
 
@@ -1029,7 +1029,7 @@ tc class add dev $WAN parent 1:1 classid 1:15 hfsc ls m1 "$((RATE*3/100))kbit" d
 
 ### Hybrid Mode (HFSC + CAKE)
 
-Hybrid mode sets HFSC as the root scheduler and uses three classes with fq_codel:
+Hybrid mode sets HFSC as the root scheduler and uses three classes:
 
 1. **Realtime Class (1:11)**
    - Handles EF/CS5/CS6/CS7 traffic with the selected `gameqdisc`.
@@ -1039,6 +1039,38 @@ Hybrid mode sets HFSC as the root scheduler and uses three classes with fq_codel
    - Uses HFSC with `fq_codel` for CS1 bulk traffic.
 
 This approach keeps latency low for realtime flows while benefiting from CAKE's advanced features for general traffic.
+
+### HTB (Hierarchical Token Bucket)
+
+HTB in QoSmate creates a hierarchical queueing structure with three classes using FQ-CoDel as leaf qdiscs.
+
+#### HTB Queue Structure
+
+QoSmate's HTB implementation organizes traffic into 3 main classes:
+
+1. **Priority Class (1:11)** - Highest priority for realtime/gaming traffic
+   - Handles packets marked with DSCP values EF, CS5, CS6, CS7
+   - Guaranteed minimum rate scaling with bandwidth (5-40% hyperbolic curve, min 800 kbit)
+   - Uses FQ-CoDel with aggressive settings (lower target/interval)
+
+2. **Best Effort Class (1:13)** - Default for general traffic
+   - Handles unmarked packets and most traffic
+   - Guaranteed ~16% rate, can use up to almost full bandwidth
+   - Uses FQ-CoDel with standard settings
+
+3. **Background Class (1:15)** - Lowest priority for bulk traffic
+   - Handles packets marked with DSCP CS1
+   - Guaranteed ~16% rate, can use up to almost full bandwidth
+   - Uses FQ-CoDel with relaxed settings (higher target/interval)
+
+#### How HTB Prioritization Works
+
+- Dynamic scaling of class rates and parameters based on total bandwidth
+- Burst allowances for brief speed increases without bufferbloat
+- Priority-based scheduling: Higher priority classes get excess bandwidth first (borrowing from unused capacity)
+- Fair sharing within classes using FQ-CoDel
+
+HTB provides simple 3-tier prioritization with automatic parameter tuning for different connection speeds.
 
 ### CAKE (Common Applications Kept Enhanced)
 
