@@ -1097,25 +1097,97 @@ load_config() {
     config_get WAN settings 'WAN' 'eth1'
 }
 
-validate_custom_rules() {
-    local tmp_file="/tmp/qosmate_custom_rules_validation.txt"
-    local rules_file="/etc/qosmate.d/custom_rules.nft"
+# Validate a single nftables file
+# Args: $1=file_path, $2=file_type, $3=tmp_file
+# Returns: 0 on success, 1 on failure
+validate_nft_file() {
+    local file_path="$1" file_type="$2" tmp_file="$3"
+    
+    echo "Validating $file_type ($file_path):" >> "$tmp_file"
+    
+    if [ ! -s "$file_path" ]; then
+        echo "  - File is empty or does not exist. Skipping." >> "$tmp_file"
+        return 0
+    fi
+    
+    case "$file_type" in
+        "full table rules")
+            if nft --check --file "$file_path" >> "$tmp_file" 2>&1; then
+                echo "  - Syntax check PASSED." >> "$tmp_file"
+                return 0
+            else
+                echo "  - Syntax check FAILED." >> "$tmp_file"
+                return 1
+            fi
+            ;;
+        "inline rules")
+            validate_inline_rules "$file_path" "$tmp_file"
+            ;;
+        *)
+            echo "  - ERROR: Unknown file type '$file_type'." >> "$tmp_file"
+            return 1
+            ;;
+    esac
+}
 
-    if [ ! -f "$rules_file" ]; then
-        print_msg "Custom rules file not found." | tee "$tmp_file"
+# Validate inline rules with context wrapping
+# Args: $1=file_path, $2=tmp_file
+validate_inline_rules() {
+    local file_path="$1" tmp_file="$2"
+    local check_file="/tmp/qosmate_inline_init_check.nft"
+    
+    echo "  - Checking for forbidden keywords (table, chain, hook, priority)..." >> "$tmp_file"
+    
+    if grep -Eq '^[[:space:]]*(table|chain|type|hook|priority)[[:space:]]+' "$file_path"; then
+        echo "  - Keyword check FAILED. Forbidden keyword found." >> "$tmp_file"
         return 1
     fi
-
-    nft_output=$(nft --check --file "$rules_file" 2>&1)
-    nft_exit_code=$?
-
-    echo "$nft_output" | tee "$tmp_file"
-
-    if [ $nft_exit_code -eq 0 ]; then
-        echo "Custom rules validation successful." | tee -a "$tmp_file"
+    
+    echo "  - Keyword check PASSED." >> "$tmp_file"
+    echo "  - Checking NFT syntax (within context)..." >> "$tmp_file"
+    
+    # Create temporary file with context
+    printf "%s\n" "table inet __qosmate_validation_ctx {" > "$check_file"
+    printf "\t%s\n" "chain __dscptag_init_ctx {" >> "$check_file"
+    cat "$file_path" >> "$check_file"
+    printf "\n\t%s\n" "}" >> "$check_file"
+    printf "%s\n" "}" >> "$check_file"
+    
+    if nft --check --file "$check_file" 2>>"$tmp_file"; then
+        echo "  - Syntax check PASSED." >> "$tmp_file"
+        rm -f "$check_file"
         return 0
     else
-        echo "Custom rules validation failed." | tee -a "$tmp_file"
+        echo "  - Syntax check FAILED." >> "$tmp_file"
+        rm -f "$check_file"
+        return 1
+    fi
+}
+
+validate_custom_rules() {
+    local tmp_file="/tmp/qosmate_custom_rules_validation.txt"
+    local fail=0
+    
+    # Clear previous validation results
+    true > "$tmp_file"
+    
+    # Validate both rule types
+    if ! validate_nft_file "/etc/qosmate.d/custom_rules.nft" "full table rules" "$tmp_file"; then
+        fail=$((fail + 1))
+    fi
+    
+    if ! validate_nft_file "/etc/qosmate.d/inline_dscptag.nft" "inline rules" "$tmp_file"; then
+        fail=$((fail + 1))
+    fi
+    
+    # Report final result
+    if [ $fail -eq 0 ]; then
+        echo "" >> "$tmp_file"
+        echo "Overall validation: PASSED" >> "$tmp_file"
+        return 0
+    else
+        echo "" >> "$tmp_file"
+        echo "Overall validation: FAILED" >> "$tmp_file"
         return 1
     fi
 }
@@ -1326,13 +1398,15 @@ manage_custom_rules_file() {
             # Ensure the directory exists
             try_mkdir -p "/etc/qosmate.d"
             
-            # Create the file if it doesn't exist
+            # Create the files if they don't exist
             [ ! -f "/etc/qosmate.d/custom_rules.nft" ] && touch "/etc/qosmate.d/custom_rules.nft"
+            [ ! -f "/etc/qosmate.d/inline_dscptag.nft" ] && touch "/etc/qosmate.d/inline_dscptag.nft"
 
             ;;
         delete)
             # Not used at the moment...
             rm -f "/etc/qosmate.d/custom_rules.nft"
+            rm -f "/etc/qosmate.d/inline_dscptag.nft"
             ;;
     esac
 }
