@@ -452,15 +452,87 @@ ef 192.168 3074  # Shows connections matching IP "192.168" AND port "3074" AND D
 The table view can be customized using the zoom control, allowing you to adjust the display density based on your preferences and screen size.
 
 ## Custom Rules Configuration
-QoSmate allows advanced users to create custom rules using nftables syntax. These rules are processed in addition to QoSmate's default rules and enable granular control over traffic prioritization. Custom rules can be used to implement advanced features like rate limit or domain-based traffic marking.
+Custom rules can be used to implement advanced features like rate limiting, domain-based traffic marking, or DSCP marking based on traffic rates and throughput thresholds using nftables syntax. QoSmate offers two distinct approaches for implementing custom nftables rules, each suited for different use cases and requirements:
 
-Before using custom rules, ensure you are familiar with nftables syntax and basic networking concepts. Rules are processed in order of their priority values, with lower numbers being processed first.
+### Rule Types Overview
 
+#### 1. Custom Rules (Full Table)
+Custom Rules create a completely separate nftables table (`qosmate_custom`) where you can use independent chains, hooks, and priorities.
+
+**Advantages:**
+- Define custom hooks (input, output, ingress, forward, postrouting) and priorities
+- Completely separate from QoSmate's main logic
+
+**Disadvantages:**
+- **No QoSmate Integration**: Custom rules bypass some of QoSmate's core features:
+  - No automatic DSCP conntrack writing
+  - No priority map integration (necessary when using HFSC, Hybrid and HTB)
+  - Washing has to be done manually (at least when using non CAKE root qdisc)
+- **More Complex Setup**: Requires understanding of nftables table/chain/hook/priority structure
+
+#### 2. Inline Rules (Integrated)
+Inline Rules are directly integrated into QoSmate's main `dscptag` chain, running at the same hook and priority as QoSmate's core logic. They are inserted right before the user defined rules which means they can be overwritten by user-defined rules.
+
+**Advantages:**
+  - Automatic DSCP conntrack writing/restoring
+  - Priority map integration (Only necessary when using HFSC, Hybrid and HTB)
+  - Washing functionality
+   - No need to define tables, chains, or hooks
+
+
+**Disadvantages:**
+- Cannot use custom hooks/priorities or define custom chain structures
+
+**Best for**: Users who want to add specific/special DSCP markings, rate limits, or packet matching that should integrate with QoSmate's main traffic processing logic.
+
+### Technical Implementation
+
+Before using either approach, ensure you are familiar with nftables syntax and basic networking concepts. Rules are processed in order of their priority values, with lower numbers being processed first.
+
+#### Custom Rules (Full Table)
 > **Note**: QoSmate automatically wraps your custom rules in `table inet qosmate_custom { ... }`. You only need to define the sets and chains within this table.
 
 Custom rules are stored in `/etc/qosmate.d/custom_rules.nft` and are validated before being applied. Any syntax errors will prevent the rules from being activated.
 
-### Example 1: Rate Limiting Marking
+#### Inline Rules (Integrated)
+Inline rules are stored in `/etc/qosmate.d/inline_dscptag.nft` and contain only nftables statements (no table/chain definitions). These rules are directly included in QoSmate's `dscptag` chain and run at hook `$NFT_HOOK` with priority `$NFT_PRIORITY`.
+
+> **Important**: Inline rules must contain only nftables statements. Do not include `table`, `chain`, `type`, `hook`, or `priority` keywords as they will cause validation errors.
+
+### Inline Rules Examples
+
+#### Example 1: Simple DSCP Marking (Inline)
+Mark traffic from a specific gaming device with high priority:
+
+```bash
+# Mark gaming traffic from specific IP as high priority
+ip saddr 192.168.1.100 ip dscp set cs5 comment "Gaming PC priority"
+
+# Rate limit / mark bulk TCP traffic 
+meta l4proto tcp limit rate 100/second ip dscp set cs1 comment "Bulk TCP limit"
+
+# Mark VoIP traffic from specific port range
+udp sport 5060-5070 ip dscp set ef comment "SIP/RTP VoIP traffic"
+```
+
+#### Example 2: Advanced Traffic Shaping (Inline)
+Apply different DSCP markings based on packet rates and protocols:
+
+```bash
+# Mark high-volume TCP connections as bulk traffic
+tcp flags & (fin|syn|rst|ack) != 0 limit rate over 200/second ip dscp set cs1 comment "High-rate TCP to bulk"
+
+# Prioritize low-latency UDP gaming traffic
+udp sport 3074 limit rate under 150/second ip dscp set cs5 comment "Gaming UDP priority"
+udp dport 3074 limit rate under 150/second ip dscp set cs5 comment "Gaming UDP priority"
+
+# Mark streaming video traffic  
+tcp dport 443 ct bytes > 10000000 ip dscp set af41 comment "HTTPS video streaming"
+```
+
+### Custom Rules Examples (Full Table)
+
+#### Example 3: Rate Limiting Marking
 This example demonstrates how to mark traffic from a specific IP address when it exceeds a certain packet rate:
 
 ```bash
@@ -474,7 +546,7 @@ chain forward {
     comment "Mark TCP traffic from 192.168.138.100 exceeding 300 pps as CS1"
 }
 ```
-### Example 2: Domain-Based marking
+#### Example 4: Domain-Based marking
 To mark connections based on their FQDN (Fully Qualified Domain Name), you can utilize IP sets (nftsets) in conjunction with DNS resolution. This approach allows for dynamic DSCP marking of traffic to specific domains. 
 
 **⚠️ Important:** Requires the dnsmasq-full package.
@@ -516,17 +588,26 @@ This setup:
 
 The postrouting priority (10) ensures these rules run after QoSmate's default rules.
 
-#### Management via LuCI:
-1. Navigate to **Network → QoSmate → Custom Rules** to manage nftables rules
-2. Use **Network → DHCP and DNS → IP Sets** to configure domain-based rules
-3. After adding rules, verify they are active:
-   ```bash
-   nft list table qosmate_custom  # View custom rules
-   nft list set inet qosmate_custom domain_ips  # View IP set contents
-   ```
-4. Monitor rule effectiveness using the Connections tab
+### Management via LuCI Interface
 
-### Example 3: Bandwidth Limiting with Custom Rules
+Both Custom Rules and Inline Rules can be managed through the QoSmate web interface:
+
+1. Navigate to **Network → QoSmate → Custom Rules**
+2. **Custom Rules (Full Table)**: Use the first textarea for complete nftables table definitions with chains and hooks
+3. **Inline Rules**: Use the second textarea for simple nftables statements that integrate with QoSmate's dscptag chain
+4. **Validation**: Both rule types are automatically validated before being applied
+5. **Examples**: Each textarea includes collapsible examples to guide rule creation
+
+Additional management options:
+- Use **Network → DHCP and DNS → IP Sets** to configure domain-based rules
+- After adding rules, verify they are active:
+  ```bash
+  nft list table qosmate_custom    # View custom rules (full table)
+  nft list table inet dscptag     # View dscptag table (shows inline rules)
+  ```
+- Monitor rule effectiveness using the **Connections** tab
+
+#### Example 5: Bandwidth Limiting with Custom Rules
 
 QoSmate allows you to implement targeted bandwidth limiting for specific devices, applications, or ports using custom nftables rules. This functionality is particularly useful for restricting the network usage of certain clients or preventing bandwidth-intensive applications from impacting network performance.
 
