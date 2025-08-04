@@ -764,6 +764,27 @@ else
 fi
 
 ##############################
+# Inline Rules Check
+##############################
+INLINE_FILE="/etc/qosmate.d/inline_dscptag.nft"
+INLINE_INCLUDE=""
+
+if [ -s "$INLINE_FILE" ]; then
+    TMP_CHECK_FILE="/tmp/qosmate_inline_sh_check.nft"
+
+    printf "%s\n" "table inet __qosmate_sh_ctx {" > "$TMP_CHECK_FILE"
+    printf "\t%s\n" "chain __dscptag_sh_ctx {" >> "$TMP_CHECK_FILE"
+    cat "$INLINE_FILE" >> "$TMP_CHECK_FILE"
+    printf "\n\t%s\n" "}" >> "$TMP_CHECK_FILE"
+    printf "%s\n" "}" >> "$TMP_CHECK_FILE"
+
+    if nft --check --file "$TMP_CHECK_FILE" 2>/dev/null; then
+        INLINE_INCLUDE="include \"$INLINE_FILE\""
+    fi
+    rm -f "$TMP_CHECK_FILE"
+fi
+
+##############################
 #       dscptag.nft
 ##############################
 
@@ -908,6 +929,10 @@ ${SETS}
         $downprio_sustained_rules
 
         $tcp_upgrade_rules
+        
+        # --- user inline rules begin ---
+        $INLINE_INCLUDE
+        # --- user inline rules end   ---
         
 ${DYNAMIC_RULES}
 
