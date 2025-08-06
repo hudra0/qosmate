@@ -55,10 +55,15 @@ load_config() {
     config_get NFT_PRIORITY advanced NFT_PRIORITY 0
     config_get TCP_DOWNPRIO_INITIAL_ENABLED advanced TCP_DOWNPRIO_INITIAL_ENABLED 1
     config_get TCP_DOWNPRIO_SUSTAINED_ENABLED advanced TCP_DOWNPRIO_SUSTAINED_ENABLED 1
+    
+    # Link Layer Settings (moved from CAKE, now used by all QDiscs)
+    config_get COMMON_LINK_PRESETS advanced COMMON_LINK_PRESETS ethernet
+    config_get OVERHEAD advanced OVERHEAD  # No default - helper functions handle defaults per preset
+    config_get MPU advanced MPU
+    config_get LINK_COMPENSATION advanced LINK_COMPENSATION
+    config_get ETHER_VLAN_KEYWORD advanced ETHER_VLAN_KEYWORD
 
     # HFSC specific settings
-    config_get LINKTYPE hfsc LINKTYPE ethernet
-    config_get OH hfsc OH $DEFAULT_OH
     config_get gameqdisc hfsc gameqdisc pfifo
     config_get GAMEUP hfsc GAMEUP $((UPRATE*15/100+400))
     config_get GAMEDOWN hfsc GAMEDOWN $((DOWNRATE*15/100+400))
@@ -74,11 +79,6 @@ load_config() {
     config_get pktlossp hfsc pktlossp none
 
     # CAKE specific settings
-    config_get COMMON_LINK_PRESETS cake COMMON_LINK_PRESETS ethernet
-    config_get OVERHEAD cake OVERHEAD
-    config_get MPU cake MPU
-    config_get LINK_COMPENSATION cake LINK_COMPENSATION
-    config_get ETHER_VLAN_KEYWORD cake ETHER_VLAN_KEYWORD
     config_get PRIORITY_QUEUE_INGRESS cake PRIORITY_QUEUE_INGRESS diffserv4
     config_get PRIORITY_QUEUE_EGRESS cake PRIORITY_QUEUE_EGRESS diffserv4
     config_get HOST_ISOLATION cake HOST_ISOLATION 1
@@ -96,6 +96,58 @@ load_config() {
 }
 
 load_config
+
+# Get tc stab parameters for HFSC/HTB/Hybrid
+get_tc_overhead_params() {
+    local preset="${COMMON_LINK_PRESETS:-ethernet}"
+    local overhead="$OVERHEAD"
+    
+    # Detect ATM-based presets
+    case "$preset" in
+        *atm*|*adsl*|*pppoa*|*pppoe*|*bridged*|*ipoa*|conservative)
+            printf "stab mtu 2047 tsize 512 mpu 68 overhead ${overhead:-44} linklayer atm"
+            ;;
+        docsis)
+            printf "stab overhead ${overhead:-25} linklayer ethernet"
+            ;;
+        cake-ethernet)
+            printf "stab overhead ${overhead:-38} linklayer ethernet"
+            ;;
+        raw)
+            printf "stab overhead ${overhead:-0} linklayer ethernet"
+            ;;
+        *)
+            printf "stab overhead ${overhead:-40} linklayer ethernet"
+            ;;
+    esac
+}
+
+# Get CAKE parameters from common link settings
+# $1 = "hybrid" to force manual overhead for consistency with HFSC
+get_cake_link_params() {
+    local preset="${COMMON_LINK_PRESETS:-ethernet}"
+    local oh="${OVERHEAD}"
+    local base=""
+    
+    # Determine base keyword and default overhead
+    case "$preset" in
+        *atm*|*adsl*|*pppoa*|*pppoe*|*bridged*|*ipoa*|conservative)
+            [ "$1" = "hybrid" ] && base="atm" || base="${preset}"
+            : ${oh:=44}
+            ;;
+        docsis)       base="docsis";   : ${oh:=25} ;;
+        cake-ethernet) base="ethernet"; [ "$1" != "hybrid" ] && oh="" || : ${oh:=38} ;;
+        raw)          base="raw";      : ${oh:=0} ;;
+        ethernet|*)   base="ethernet"; : ${oh:=40} ;;
+    esac
+    
+    # Build parameters
+    printf "%s%s%s%s" \
+        "$base" \
+        "${oh:+ overhead $oh}" \
+        "${MPU:+ mpu $MPU}" \
+        "${ETHER_VLAN_KEYWORD:+ $ETHER_VLAN_KEYWORD}"
+}
 
 validate_and_adjust_rates() {
     if [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; then
@@ -1161,19 +1213,10 @@ setup_hfsc() {
 
     tc qdisc del dev "$DEV" root > /dev/null 2>&1
 
-    # Overhead logic
-    local TC_OH_PARAMS=""
-    case $LINKTYPE in
-        "atm")
-            TC_OH_PARAMS="stab mtu 2047 tsize 512 mpu 68 overhead ${OH} linklayer atm"
-            ;;
-        "DOCSIS")
-            TC_OH_PARAMS="stab overhead 25 linklayer ethernet"
-            ;;
-        *)
-            TC_OH_PARAMS="stab overhead 40 linklayer ethernet"
-            ;;
-    esac
+    # Get overhead parameters from CAKE configuration
+    local TC_OH_PARAMS
+    TC_OH_PARAMS=$(get_tc_overhead_params)
+    
     # Apply root qdisc
     tc qdisc replace dev "$DEV" handle 1: root ${TC_OH_PARAMS} hfsc default 13
 
@@ -1237,12 +1280,14 @@ setup_cake() {
     tc qdisc del dev "$WAN" root > /dev/null 2>&1
     tc qdisc del dev "$LAN" root > /dev/null 2>&1
     
+    # Get CAKE link parameters
+    local cake_link_params=$(get_cake_link_params)
+    
     # Egress (Upload) CAKE setup
     EGRESS_CAKE_OPTS="bandwidth ${UPRATE}kbit"
     [ -n "$PRIORITY_QUEUE_EGRESS" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $PRIORITY_QUEUE_EGRESS"
     [ "$HOST_ISOLATION" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS dual-srchost"
     [ "$NAT_EGRESS" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nat" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nonat"
-    
     [ "$WASHDSCPUP" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS wash" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nowash"
     
     if [ "$ACK_FILTER_EGRESS" = "auto" ]; then
@@ -1258,10 +1303,9 @@ setup_cake() {
     fi
     
     [ -n "$RTT" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS rtt ${RTT}ms"
-    [ -n "$COMMON_LINK_PRESETS" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $COMMON_LINK_PRESETS"
-    [ -n "$LINK_COMPENSATION" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $LINK_COMPENSATION" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS noatm"
-    [ -n "$OVERHEAD" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS overhead $OVERHEAD"
-    [ -n "$MPU" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS mpu $MPU"
+    [ -n "$cake_link_params" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $cake_link_params"
+    # Only add LINK_COMPENSATION if explicitly set (don't add noatm as ADSL presets already set atm)
+    [ -n "$LINK_COMPENSATION" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $LINK_COMPENSATION"
     [ -n "$EXTRA_PARAMETERS_EGRESS" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $EXTRA_PARAMETERS_EGRESS"
     
     tc qdisc add dev $WAN root cake $EGRESS_CAKE_OPTS
@@ -1272,14 +1316,12 @@ setup_cake() {
     [ -n "$PRIORITY_QUEUE_INGRESS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $PRIORITY_QUEUE_INGRESS"
     [ "$HOST_ISOLATION" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS dual-dsthost"
     [ "$NAT_INGRESS" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nat" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nonat"
-    
     [ "$WASHDSCPDOWN" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS wash" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nowash"
     
     [ -n "$RTT" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS rtt ${RTT}ms"
-    [ -n "$COMMON_LINK_PRESETS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $COMMON_LINK_PRESETS"
-    [ -n "$LINK_COMPENSATION" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $LINK_COMPENSATION" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS noatm"
-    [ -n "$OVERHEAD" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS overhead $OVERHEAD"
-    [ -n "$MPU" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS mpu $MPU"
+    [ -n "$cake_link_params" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $cake_link_params"
+    # Only add LINK_COMPENSATION if explicitly set (don't add noatm as ADSL presets already set atm)
+    [ -n "$LINK_COMPENSATION" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $LINK_COMPENSATION"
     [ -n "$EXTRA_PARAMETERS_INGRESS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $EXTRA_PARAMETERS_INGRESS"
     
     tc qdisc add dev $LAN root cake $INGRESS_CAKE_OPTS
@@ -1296,12 +1338,9 @@ setup_hybrid() {
     local gameburst=$((GAMERATE*10)); [ $gameburst -gt $((RATE*97/100)) ] && gameburst=$((RATE*97/100));
 
     # Setup root HFSC qdisc (default to 1:13 - CAKE class)
-    local TC_OH_PARAMS=""
-    case $LINKTYPE in
-        "atm") TC_OH_PARAMS="stab mtu 2047 tsize 512 mpu 68 overhead ${OH} linklayer atm";;
-        "DOCSIS") TC_OH_PARAMS="stab overhead 25 linklayer ethernet";;
-        *) TC_OH_PARAMS="stab overhead 40 linklayer ethernet";;
-    esac
+    local TC_OH_PARAMS
+    TC_OH_PARAMS=$(get_tc_overhead_params)
+    
     # Ensure previous root is deleted before replacing
     tc qdisc del dev "$DEV" root > /dev/null 2>&1
     tc qdisc replace dev "$DEV" handle 1: root ${TC_OH_PARAMS} hfsc default 13
@@ -1324,18 +1363,19 @@ setup_hybrid() {
     # Class 1:13 - CAKE class (most traffic - default)
     local cake_rate=$((RATE - GAMERATE)); [ $cake_rate -le 0 ] && cake_rate=1
     tc class add dev "$DEV" parent 1:1 classid 1:13 hfsc ls m1 "${cake_rate}kbit" d "${DUR}ms" m2 "${cake_rate}kbit"
-    # Attach CAKE qdisc (using besteffort, allow overrides via EXTRA_PARAMETERS)
+    # Attach CAKE qdisc - use "hybrid" mode to match HFSC overhead
+    local cake_link_params=$(get_cake_link_params "hybrid")
     local CAKE_OPTS=""
+    
     if [ "$DIR" = "wan" ]; then
         CAKE_OPTS="besteffort" # Default for non-realtime in hybrid
         [ "$HOST_ISOLATION" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS dual-srchost"
         [ "$NAT_EGRESS" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS nat" || CAKE_OPTS="$CAKE_OPTS nonat"
         [ "$WASHDSCPUP" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS wash" || CAKE_OPTS="$CAKE_OPTS nowash"
         [ -n "$RTT" ] && CAKE_OPTS="$CAKE_OPTS rtt ${RTT}ms"
-        [ -n "$COMMON_LINK_PRESETS" ] && CAKE_OPTS="$CAKE_OPTS $COMMON_LINK_PRESETS"
-        [ -n "$LINK_COMPENSATION" ] && CAKE_OPTS="$CAKE_OPTS $LINK_COMPENSATION" || CAKE_OPTS="$CAKE_OPTS noatm"
-        [ -n "$OVERHEAD" ] && CAKE_OPTS="$CAKE_OPTS overhead $OVERHEAD"
-        [ -n "$MPU" ] && CAKE_OPTS="$CAKE_OPTS mpu $MPU"
+        [ -n "$cake_link_params" ] && CAKE_OPTS="$CAKE_OPTS $cake_link_params"
+        # Only add LINK_COMPENSATION if explicitly set (don't add noatm as ADSL presets already set atm)
+        [ -n "$LINK_COMPENSATION" ] && CAKE_OPTS="$CAKE_OPTS $LINK_COMPENSATION"
         [ -n "$EXTRA_PARAMETERS_EGRESS" ] && CAKE_OPTS="$CAKE_OPTS $EXTRA_PARAMETERS_EGRESS"
     else # lan (ingress)
         CAKE_OPTS="besteffort ingress" # Default for non-realtime in hybrid
@@ -1343,10 +1383,9 @@ setup_hybrid() {
         [ "$NAT_INGRESS" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS nat" || CAKE_OPTS="$CAKE_OPTS nonat"
         [ "$WASHDSCPDOWN" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS wash" || CAKE_OPTS="$CAKE_OPTS nowash"
         [ -n "$RTT" ] && CAKE_OPTS="$CAKE_OPTS rtt ${RTT}ms"
-        [ -n "$COMMON_LINK_PRESETS" ] && CAKE_OPTS="$CAKE_OPTS $COMMON_LINK_PRESETS"
-        [ -n "$LINK_COMPENSATION" ] && CAKE_OPTS="$CAKE_OPTS $LINK_COMPENSATION" || CAKE_OPTS="$CAKE_OPTS noatm"
-        [ -n "$OVERHEAD" ] && CAKE_OPTS="$CAKE_OPTS overhead $OVERHEAD"
-        [ -n "$MPU" ] && CAKE_OPTS="$CAKE_OPTS mpu $MPU"
+        [ -n "$cake_link_params" ] && CAKE_OPTS="$CAKE_OPTS $cake_link_params"
+        # Only add LINK_COMPENSATION if explicitly set (don't add noatm as ADSL presets already set atm)
+        [ -n "$LINK_COMPENSATION" ] && CAKE_OPTS="$CAKE_OPTS $LINK_COMPENSATION"
         [ -n "$EXTRA_PARAMETERS_INGRESS" ] && CAKE_OPTS="$CAKE_OPTS $EXTRA_PARAMETERS_INGRESS"
     fi
     tc qdisc del dev "$DEV" parent 1:13 handle 13: > /dev/null 2>&1
@@ -1436,19 +1475,9 @@ setup_htb() {
     # Delete existing qdisc
     tc qdisc del dev "$DEV" root > /dev/null 2>&1
     
-    # Calculate overhead parameters like HFSC
-    local TC_OH_PARAMS=""
-    case $LINKTYPE in
-        "atm")
-            TC_OH_PARAMS="stab mtu 2047 tsize 512 mpu 68 overhead ${OH} linklayer atm"
-            ;;
-        "DOCSIS")
-            TC_OH_PARAMS="stab overhead 25 linklayer ethernet"
-            ;;
-        *)
-            TC_OH_PARAMS="stab overhead 40 linklayer ethernet"
-            ;;
-    esac
+    # Get overhead parameters from CAKE configuration
+    local TC_OH_PARAMS
+    TC_OH_PARAMS=$(get_tc_overhead_params)
     
     # Setup HTB root with default to best effort (class 13)
     tc qdisc add dev "$DEV" root handle 1: $TC_OH_PARAMS htb default 13
