@@ -1393,75 +1393,75 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
     local adv_preset=$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)
     
     # Skip if already migrated
-    [ -n "$adv_preset" ] && return 0
+    if [ -n "$adv_preset" ]; then
+        return 0
+    fi
     
-    # Get current root qdisc
+    # Get current root qdisc to determine which settings to migrate
     local root_qdisc=$(uci -q get qosmate.global.ROOT_QDISC)
     local migrated=0
     
-    # Migrate based on active QDisc priority
+    # Migrate based on active QDisc
     case "$root_qdisc" in
         cake)
-            # Migrate from CAKE settings
+            # CAKE active - migrate CAKE settings
             local val
             for setting in COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD; do
                 val=$(uci -q get qosmate.cake.$setting)
                 [ -n "$val" ] && {
                     uci set qosmate.advanced.$setting="$val"
-                    uci -q delete qosmate.cake.$setting
+                    print_msg "Migrated CAKE $setting: $val"
                     migrated=1
                 }
             done
             ;;
             
-        hfsc|hybrid|htb)
-            # Migrate from HFSC settings (used by HFSC, Hybrid, HTB)
+        hfsc|hybrid|htb|*)
+            # HFSC/Hybrid/HTB active - migrate HFSC settings
             local linktype=$(uci -q get qosmate.hfsc.LINKTYPE)
             local oh=$(uci -q get qosmate.hfsc.OH)
             
             if [ -n "$linktype" ]; then
-                # Convert LINKTYPE to preset
                 case "$linktype" in
-                    atm)    uci set qosmate.advanced.COMMON_LINK_PRESETS="atm" ;;
-                    docsis) uci set qosmate.advanced.COMMON_LINK_PRESETS="docsis" ;;
-                    *)      uci set qosmate.advanced.COMMON_LINK_PRESETS="ethernet" ;;
+                    atm)    
+                        uci set qosmate.advanced.COMMON_LINK_PRESETS="atm"
+                        print_msg "Migrated HFSC link type: ATM"
+                        ;;
+                    docsis) 
+                        uci set qosmate.advanced.COMMON_LINK_PRESETS="docsis"
+                        print_msg "Migrated HFSC link type: DOCSIS"
+                        ;;
+                    *)      
+                        uci set qosmate.advanced.COMMON_LINK_PRESETS="ethernet"
+                        print_msg "Migrated HFSC link type: Ethernet"
+                        ;;
                 esac
                 migrated=1
             fi
             
             [ -n "$oh" ] && {
                 uci set qosmate.advanced.OVERHEAD="$oh"
+                print_msg "Migrated HFSC overhead: $oh bytes"
                 migrated=1
             }
             ;;
     esac
     
-    # Clean up all old settings regardless of what was migrated
-    local cleaned=0
-    
-    # Remove CAKE link settings
-    for setting in COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD; do
-        uci -q get qosmate.cake.$setting >/dev/null && {
-            uci -q delete qosmate.cake.$setting
-            cleaned=1
-        }
-    done
-    
-    # Remove HFSC link settings  
-    uci -q get qosmate.hfsc.LINKTYPE >/dev/null && {
-        uci -q delete qosmate.hfsc.LINKTYPE
-        cleaned=1
-    }
-    uci -q get qosmate.hfsc.OH >/dev/null && {
-        uci -q delete qosmate.hfsc.OH
-        cleaned=1
-    }
-    
-    # Commit if anything changed
-    if [ $migrated -eq 1 ] || [ $cleaned -eq 1 ]; then
+    # Commit and clean up if migration happened
+    if [ $migrated -eq 1 ]; then
         uci commit qosmate
-        [ $migrated -eq 1 ] && print_msg "Link layer settings migrated from $root_qdisc to advanced section"
-        [ $cleaned -eq 1 ] && print_msg "Old link layer settings cleaned up"
+        
+        # Clean up ALL old settings after successful migration
+        uci -q delete qosmate.cake.COMMON_LINK_PRESETS 2>/dev/null
+        uci -q delete qosmate.cake.OVERHEAD 2>/dev/null
+        uci -q delete qosmate.cake.MPU 2>/dev/null
+        uci -q delete qosmate.cake.LINK_COMPENSATION 2>/dev/null
+        uci -q delete qosmate.cake.ETHER_VLAN_KEYWORD 2>/dev/null
+        uci -q delete qosmate.hfsc.LINKTYPE 2>/dev/null
+        uci -q delete qosmate.hfsc.OH 2>/dev/null
+        
+        uci commit qosmate
+        print_msg "Old link layer settings cleaned up"
     fi
 }
 
