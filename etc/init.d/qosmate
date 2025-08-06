@@ -1410,7 +1410,6 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
                 val=$(uci -q get qosmate.cake.$setting)
                 [ -n "$val" ] && {
                     uci set qosmate.advanced.$setting="$val"
-                    print_msg "Migrated CAKE $setting: $val"
                     migrated=1
                 }
             done
@@ -1425,15 +1424,12 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
                 case "$linktype" in
                     atm)    
                         uci set qosmate.advanced.COMMON_LINK_PRESETS="atm"
-                        print_msg "Migrated HFSC link type: ATM"
                         ;;
                     docsis) 
                         uci set qosmate.advanced.COMMON_LINK_PRESETS="docsis"
-                        print_msg "Migrated HFSC link type: DOCSIS"
                         ;;
                     *)      
                         uci set qosmate.advanced.COMMON_LINK_PRESETS="ethernet"
-                        print_msg "Migrated HFSC link type: Ethernet"
                         ;;
                 esac
                 migrated=1
@@ -1441,7 +1437,6 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
             
             [ -n "$oh" ] && {
                 uci set qosmate.advanced.OVERHEAD="$oh"
-                print_msg "Migrated HFSC overhead: $oh bytes"
                 migrated=1
             }
             ;;
@@ -1450,6 +1445,13 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
     # Commit and clean up if migration happened
     if [ $migrated -eq 1 ]; then
         uci commit qosmate
+        
+        local new_preset=$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)
+        local new_oh=$(uci -q get qosmate.advanced.OVERHEAD)
+        local msg="Link layer settings migrated from $root_qdisc to advanced section: preset=$new_preset${new_oh:+, overhead=$new_oh}"
+        
+        print_msg "$msg"
+        log_msg "$msg"
         
         # Clean up ALL old settings after successful migration
         uci -q delete qosmate.cake.COMMON_LINK_PRESETS 2>/dev/null
@@ -1461,7 +1463,6 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
         uci -q delete qosmate.hfsc.OH 2>/dev/null
         
         uci commit qosmate
-        print_msg "Old link layer settings cleaned up"
     fi
 }
 
