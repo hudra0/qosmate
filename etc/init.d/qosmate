@@ -1388,6 +1388,81 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
         sed -i "/config qosmate 'custom_rules'/d" $CONFIG_FILE
         print_msg "Incorrect custom_rules section removed."
     fi
+    
+    # Migrate link layer settings to advanced section based on active QDisc
+    local adv_preset=$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)
+    
+    # Skip if already migrated
+    [ -n "$adv_preset" ] && return 0
+    
+    # Get current root qdisc
+    local root_qdisc=$(uci -q get qosmate.global.ROOT_QDISC)
+    local migrated=0
+    
+    # Migrate based on active QDisc priority
+    case "$root_qdisc" in
+        cake)
+            # Migrate from CAKE settings
+            local val
+            for setting in COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD; do
+                val=$(uci -q get qosmate.cake.$setting)
+                [ -n "$val" ] && {
+                    uci set qosmate.advanced.$setting="$val"
+                    uci -q delete qosmate.cake.$setting
+                    migrated=1
+                }
+            done
+            ;;
+            
+        hfsc|hybrid|htb)
+            # Migrate from HFSC settings (used by HFSC, Hybrid, HTB)
+            local linktype=$(uci -q get qosmate.hfsc.LINKTYPE)
+            local oh=$(uci -q get qosmate.hfsc.OH)
+            
+            if [ -n "$linktype" ]; then
+                # Convert LINKTYPE to preset
+                case "$linktype" in
+                    atm)    uci set qosmate.advanced.COMMON_LINK_PRESETS="atm" ;;
+                    docsis) uci set qosmate.advanced.COMMON_LINK_PRESETS="docsis" ;;
+                    *)      uci set qosmate.advanced.COMMON_LINK_PRESETS="ethernet" ;;
+                esac
+                migrated=1
+            fi
+            
+            [ -n "$oh" ] && {
+                uci set qosmate.advanced.OVERHEAD="$oh"
+                migrated=1
+            }
+            ;;
+    esac
+    
+    # Clean up all old settings regardless of what was migrated
+    local cleaned=0
+    
+    # Remove CAKE link settings
+    for setting in COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD; do
+        uci -q get qosmate.cake.$setting >/dev/null && {
+            uci -q delete qosmate.cake.$setting
+            cleaned=1
+        }
+    done
+    
+    # Remove HFSC link settings  
+    uci -q get qosmate.hfsc.LINKTYPE >/dev/null && {
+        uci -q delete qosmate.hfsc.LINKTYPE
+        cleaned=1
+    }
+    uci -q get qosmate.hfsc.OH >/dev/null && {
+        uci -q delete qosmate.hfsc.OH
+        cleaned=1
+    }
+    
+    # Commit if anything changed
+    if [ $migrated -eq 1 ] || [ $cleaned -eq 1 ]; then
+        uci commit qosmate
+        [ $migrated -eq 1 ] && print_msg "Link layer settings migrated from $root_qdisc to advanced section"
+        [ $cleaned -eq 1 ] && print_msg "Old link layer settings cleaned up"
+    fi
 }
 
 manage_custom_rules_file() {
@@ -2031,9 +2106,9 @@ expand_config() {
     # Add options for each section
     add_options global enabled
     add_options settings WAN DOWNRATE UPRATE ROOT_QDISC
-    add_options advanced PRESERVE_CONFIG_FILES WASHDSCPUP WASHDSCPDOWN BWMAXRATIO ACKRATE UDP_RATE_LIMIT_ENABLED UDPBULKPORT TCPBULKPORT VIDCONFPORTS REALTIME4 REALTIME6 LOWPRIOLAN4 LOWPRIOLAN6 TCP_UPGRADE_ENABLED MSS NFT_HOOK NFT_PRIORITY
-    add_options hfsc LINKTYPE OH gameqdisc GAMEUP GAMEDOWN nongameqdisc nongameqdiscoptions MAXDEL PFIFOMIN PACKETSIZE netemdelayms netemjitterms netemdist pktlossp
-    add_options cake COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD PRIORITY_QUEUE_INGRESS PRIORITY_QUEUE_EGRESS HOST_ISOLATION NAT_INGRESS NAT_EGRESS ACK_FILTER_EGRESS RTT AUTORATE_INGRESS EXTRA_PARAMETERS_INGRESS EXTRA_PARAMETERS_EGRESS
+    add_options advanced PRESERVE_CONFIG_FILES WASHDSCPUP WASHDSCPDOWN BWMAXRATIO ACKRATE UDP_RATE_LIMIT_ENABLED UDPBULKPORT TCPBULKPORT VIDCONFPORTS REALTIME4 REALTIME6 LOWPRIOLAN4 LOWPRIOLAN6 TCP_UPGRADE_ENABLED MSS NFT_HOOK NFT_PRIORITY COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD
+    add_options hfsc gameqdisc GAMEUP GAMEDOWN nongameqdisc nongameqdiscoptions MAXDEL PFIFOMIN PACKETSIZE netemdelayms netemjitterms netemdist pktlossp
+    add_options cake PRIORITY_QUEUE_INGRESS PRIORITY_QUEUE_EGRESS HOST_ISOLATION NAT_INGRESS NAT_EGRESS ACK_FILTER_EGRESS RTT AUTORATE_INGRESS EXTRA_PARAMETERS_INGRESS EXTRA_PARAMETERS_EGRESS
 
     print_msg "Configuration expanded successfully. You can now edit all available options in $config_file"
 }
