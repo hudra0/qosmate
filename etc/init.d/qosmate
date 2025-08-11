@@ -1492,22 +1492,21 @@ status_service() {
     fi
 
     # Gather qdiscs info
-    local dir dev qdisc qdiscs active_qdisc multiple_qdiscs \
-        IFB="ifb-$WAN"
+    local dir dev qdisc qdiscs active_qdisc \
+         IFB="ifb-$WAN"
 
     # Check and report if traffic shaping is active
     for dir in egress ingress; do
         case "$dir" in
             egress) dev="$WAN" ;;
-            ingress) dev="$IFB"
+            ingress) dev="$IFB" ;;
         esac
-        qdiscs="$(tc qdisc show dev "$dev" 2>/dev/null | sed -n 's/^qdisc\s\s*\([^ 	]*\).*/\1/p')"
+        qdiscs="$(tc qdisc show dev "$dev" 2>/dev/null | sed -n 's/^qdisc\s\s*\([^ \t]*\).* root .*/\1/p')"
         qdiscs="${qdiscs//$'\n'/ }"
-        multiple_qdiscs='' active_qdisc=''
+        active_qdisc=''
         for qdisc in cake hfsc htb; do
             case "${qdiscs}" in "${qdisc}"|"${qdisc} "*|*" ${qdisc}"|*" ${qdisc} "*)
-                [ -n "$active_qdisc" ] && multiple_qdiscs=1
-                active_qdisc="$qdisc"
+                 active_qdisc="$qdisc"
             esac
         done
 
@@ -1517,9 +1516,7 @@ status_service() {
             htb) qdisc_print=HTB ;;
         esac
 
-        if [ -n "$multiple_qdiscs" ]; then    # IS THIS CHECK NEEDED?
-            error_out "Detected multiple $dir qdiscs: '$qdiscs'."
-        elif [ -n "$active_qdisc" ]; then
+        if [ -n "$active_qdisc" ]; then
             print_msg "Traffic shaping ($qdisc_print) is active on the $dir interface ($dev)$not_managing."
         else
             print_msg "No traffic shaping is active on the $dir interface ($dev)."
