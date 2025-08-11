@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC3060
+# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC3060,SC3003
 
 START=99
 STOP=99
@@ -1630,44 +1630,48 @@ status_service() {
         print_msg "qosmate autostart is not enabled."
     fi
 
+    local global_enabled not_managing=''
+    config_get_bool global_enabled global enabled 0
+
     # Check if the service is enabled in UCI config
-    if [ "$(uci -q get qosmate.global.enabled)" = "1" ]; then
+    if [ "$global_enabled" = "1" ]; then
         print_msg "qosmate service is enabled."
     else
         print_msg "qosmate service is disabled."
+        not_managing=", but qosmate is not managing it"
     fi
 
-    # Check if traffic shaping is active
-    local IFB="ifb-$WAN"
-    
-    if tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc cake"; then
-        if [ "$(uci -q get qosmate.global.enabled)" = "1" ]; then
-            print_msg "Traffic shaping is active on the egress interface ($WAN)."
+    # Gather qdiscs info
+    local dir dev qdisc qdiscs active_qdisc \
+         IFB="ifb-$WAN"
+
+    # Check and report if traffic shaping is active
+    for dir in egress ingress; do
+        case "$dir" in
+            egress) dev="$WAN" ;;
+            ingress) dev="$IFB" ;;
+        esac
+        qdiscs="$(tc qdisc show dev "$dev" 2>/dev/null | sed -n 's/^qdisc\s\s*\([^ \t]*\).* root .*/\1/p')"
+        qdiscs="${qdiscs//$'\n'/ }"
+        active_qdisc=''
+        for qdisc in cake hfsc htb; do
+            case "${qdiscs}" in "${qdisc}"|"${qdisc} "*|*" ${qdisc}"|*" ${qdisc} "*)
+                 active_qdisc="$qdisc"
+            esac
+        done
+
+        case "$active_qdisc" in
+            cake) qdisc_print=CAKE ;;
+            hfsc) qdisc_print=HFSC ;;
+            htb) qdisc_print=HTB ;;
+        esac
+
+        if [ -n "$active_qdisc" ]; then
+            print_msg "Traffic shaping ($qdisc_print) is active on the $dir interface ($dev)$not_managing."
         else
-            print_msg "Default CAKE qdisc is active on the egress interface ($WAN), but qosmate is not managing it."
+            print_msg "No traffic shaping is active on the $dir interface ($dev)."
         fi
-    elif tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc hfsc"; then
-        print_msg "Traffic shaping (HFSC) is active on the egress interface ($WAN)."
-    elif tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc htb"; then
-        print_msg "Traffic shaping (HTB) is active on the egress interface ($WAN)."
-    else
-        print_msg "No traffic shaping is active on the egress interface ($WAN)."
-    fi
-
-    if tc qdisc show dev "$IFB" 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc\|qdisc htb"; then
-        print_msg "Traffic shaping is active on the ingress interface ($IFB)."
-    else
-        print_msg "No traffic shaping is active on the ingress interface ($IFB)."
-    fi
-
-    print_msg "==== Overall Status ===="
-    # Determine if the service is actually running
-    if [ "$(uci -q get qosmate.global.enabled)" = "1" ] && { tc qdisc show dev "$WAN" 2>/dev/null | grep -q "qdisc hfsc" ||
-            tc qdisc show dev "$IFB" 2>/dev/null | grep -q "qdisc cake\|qdisc hfsc\|qdisc htb"; }; then
-            print_msg "qosmate is currently active and managing traffic shaping."
-    else
-        print_msg "qosmate is not currently active or managing traffic shaping."
-    fi
+    done
 
     # Show summary of current settings
     print_msg "==== Current Settings ====" \
