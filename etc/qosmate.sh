@@ -19,15 +19,6 @@ DEFAULT_OH="44"
 
 : "${VERSION}" "${DEFAULT_WAN}" "${DEFAULT_DOWNRATE}" "${DEFAULT_UPRATE}" "${DEFAULT_OH}" "${nongameqdisc:=}" "${nongameqdiscoptions:=}"
 
-# Trim leading and trailing whitespaces and tabs in variable $1
-trim_spaces() {
-    local tr_in tr_out
-    eval "tr_in=\"\${$1}\""
-    tr_out="${tr_in%"${tr_in##*[! 	]}"}"
-    tr_out="${tr_out#"${tr_out%%[! 	]*}"}"
-    eval "$1=\"\${tr_out}\""
-}
-
 load_config() {
     # Global settings
     config_get ROOT_QDISC settings ROOT_QDISC hfsc
@@ -215,34 +206,6 @@ calculate_ack_rates() {
 # Call the function to perform the ACK rates calculations
 calculate_ack_rates
 
-# Function to check if a single IP address is IPv6
-# Note: This assumes the input is a single IP, not a space-separated list
-# Handles CIDR notation (e.g. ::/0 or 192.168.1.0/24)
-is_ipv6() {
-    local ip="${1%/*}"  # Remove CIDR suffix if present
-    case "$ip" in
-        *:*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-# checks whether string is an ipv6 mask
-is_ipv6_mask() {
-    case "$1" in
-        ::*/::*) ;;
-        *) return 1
-    esac
-    local inp="${1#"::"}"
-    case "${inp%"/::"*}" in *"/"*) return 1; esac
-    return 0
-}
-
-# checks whether string is nft set reference
-is_set_ref() {
-    case "$1" in "@"*) return 0; esac
-    return 1
-}
-
 # Debug function
 debug_log() {
     local message="$1"
@@ -253,6 +216,7 @@ debug_log() {
 create_nft_sets() {
     local sets_created=""
     
+	# shellcheck disable=SC2329
     create_set() {
         local section="$1" name ip_list mode timeout set_flags
 
@@ -321,7 +285,44 @@ create_nft_sets() {
 SETS=$(create_nft_sets)
 
 # Create rules
+# shellcheck disable=SC2329
 create_nft_rule() {
+	# Trim leading and trailing whitespaces and tabs in variable $1
+	trim_spaces() {
+		local tr_in tr_out
+		eval "tr_in=\"\${$1}\""
+		tr_out="${tr_in%"${tr_in##*[! 	]}"}"
+		tr_out="${tr_out#"${tr_out%%[! 	]*}"}"
+		eval "$1=\"\${tr_out}\""
+	}
+
+	is_set_ref() {
+		case "$1" in "@"*) return 0; esac
+		return 1
+	}
+
+	# checks whether string is an ipv6 mask
+	is_ipv6_mask() {
+		case "$1" in
+			::*/::*) ;;
+			*) return 1
+		esac
+		local inp="${1#"::"}"
+		case "${inp%"/::"*}" in *"/"*) return 1; esac
+		return 0
+	}
+
+	# Function to check if a single IP address is IPv6
+	# Note: This assumes the input is a single IP, not a space-separated list
+	# Handles CIDR notation (e.g. ::/0 or 192.168.1.0/24)
+	is_ipv6() {
+		local ip="${1%/*}"  # Remove CIDR suffix if present
+		case "$ip" in
+			*:*) return 0 ;;
+			*) return 1 ;;
+		esac
+	}
+
     local config="$1"
     local proto class counter name enabled trace
 
