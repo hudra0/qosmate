@@ -1147,11 +1147,12 @@ validate_inline_rules() {
     echo "  - Checking NFT syntax (within context)..." >> "$tmp_file"
     
     # Create temporary file with context
-    printf "%s\n" "table inet __qosmate_validation_ctx {" > "$check_file"
-    printf "\t%s\n" "chain __dscptag_init_ctx {" >> "$check_file"
-    cat "$file_path" >> "$check_file"
-    printf "\n\t%s\n" "}" >> "$check_file"
-    printf "%s\n" "}" >> "$check_file"
+	{
+		printf '%s\n\t%s\n' "table inet __qosmate_validation_ctx {" \
+			"chain __dscptag_init_ctx {"
+		cat "$file_path"
+		printf '\n\t%s\n%s\n' "}" "}"
+	} > "$check_file"
     
     if nft --check --file "$check_file" 2>>"$tmp_file"; then
         echo "  - Syntax check PASSED." >> "$tmp_file"
