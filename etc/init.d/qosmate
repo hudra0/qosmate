@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC3060,SC3003
+# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC3060,SC3003,SC3015
 
 START=99
 STOP=99
@@ -1391,7 +1391,7 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
     fi
     
     # Migrate link layer settings to advanced section based on active QDisc
-    local adv_preset=$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)
+    local adv_preset="$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)"
     
     # Skip if already migrated
     if [ -n "$adv_preset" ]; then
@@ -1399,7 +1399,7 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
     fi
     
     # Get current root qdisc to determine which settings to migrate
-    local root_qdisc=$(uci -q get qosmate.global.ROOT_QDISC)
+    local root_qdisc="$(uci -q get qosmate.global.ROOT_QDISC)"
     local migrated=0
     
     # Migrate based on active QDisc
@@ -1418,8 +1418,8 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
             
         hfsc|hybrid|htb|*)
             # HFSC/Hybrid/HTB active - migrate HFSC settings
-            local linktype=$(uci -q get qosmate.hfsc.LINKTYPE)
-            local oh=$(uci -q get qosmate.hfsc.OH)
+            local linktype="$(uci -q get qosmate.hfsc.LINKTYPE)"
+            local oh="$(uci -q get qosmate.hfsc.OH)"
             
             if [ -n "$linktype" ]; then
                 case "$linktype" in
@@ -1447,8 +1447,8 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
     if [ $migrated -eq 1 ]; then
         uci commit qosmate
         
-        local new_preset=$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)
-        local new_oh=$(uci -q get qosmate.advanced.OVERHEAD)
+        local new_preset="$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)"
+        local new_oh="$(uci -q get qosmate.advanced.OVERHEAD)"
         local msg="Link layer settings migrated from $root_qdisc to advanced section: preset=$new_preset${new_oh:+, overhead=$new_oh}"
         
         print_msg "$msg"
