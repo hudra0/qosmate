@@ -326,7 +326,37 @@ get_gh_ref_data() {
 			"${component}_prev_upd_channel"='$gh_channel' "${component}_prev_version"='$version'
 	}
 
-	local branch branches='' main_branch grep_ptrn='' \
+	get_and_process_ref()
+	{
+		local branch \
+			channel="$1" ptrn="$2" branches="$3" main_branch="$4" err_file="$5"
+		case "${channel}" in
+			release)
+				uclient-fetch "${gh_url_api}/releases" -O- 2> "$err_file" | {
+					jsonfilter -e '@[@.prerelease=false]' |
+					jsonfilter -a -e "@[@.target_commitish=\"${main_branch}\"].tag_name"
+					cat 1>/dev/null
+				} ;;
+			snapshot|branch=*|commit=*)
+				for branch in ${branches}
+				do
+					uclient-fetch "${gh_url_api}/commits?sha=${branch}" -O- 2> "$err_file" | {
+						jsonfilter -e '@[@.commit]["url"]' |
+						sed 's/.*\///' # only leave the commit hash
+						cat 1>/dev/null
+					}
+				done
+		esac |
+		if [ -n "${ptrn}" ]
+		then
+			grep "${ptrn}"
+		else
+			head -n1 # get latest version or commit
+			cat 1>/dev/null
+		fi
+	}
+
+	local branches='' main_branch grep_ptrn='' \
 		gh_ref='' gh_ver_type='' gh_url_api ref_fetch_tmp_dir="/tmp/qosmate-gh" ref_fetch_rv=0 \
 		prev_ref prev_ver_type prev_upd_channel prev_version \
 		component="$1" gh_channel="$2" version="$3"
@@ -442,33 +472,7 @@ get_gh_ref_data() {
 	esac
 
 	# Get ref via GH API
-	[ -z "$gh_ref" ] && gh_ref="$(
-		case "$gh_channel" in
-			release)
-				uclient-fetch "${gh_url_api}/releases" -O- 2> "$ref_ucl_err_file" | {
-					jsonfilter -e '@[@.prerelease=false]' |
-					jsonfilter -a -e "@[@.target_commitish=\"${main_branch}\"].tag_name"
-					cat 1>/dev/null
-				} ;;
-			snapshot|branch=*|commit=*)
-				for branch in $branches; do
-					ref_fetch_url="${gh_url_api}/commits?sha=${branch}"
-					uclient-fetch "${ref_fetch_url}" -O- 2> "$ref_ucl_err_file" | {
-						jsonfilter -e '@[@.commit]["url"]' |
-						sed 's/.*\///' # only leave the commit hash
-						cat 1>/dev/null
-					}
-				done
-		esac |
-		{
-			if [ -n "$grep_ptrn" ]; then
-				grep "$grep_ptrn"
-			else
-				head -n1 # get latest version or commit
-			fi
-			cat 1>/dev/null
-		}
-	)"
+	[ -z "$gh_ref" ] && gh_ref="$(get_and_process_ref "$gh_channel" "$grep_ptrn" "$branches" "$main_branch" "$ref_ucl_err_file")"
 
 	if [ -z "$gh_ref" ] && [ -f "$ref_ucl_err_file" ] && ! grep -q "Download completed" "$ref_ucl_err_file"; then
 		error_out "Failed to get $component GitHub download URL for $gh_ver_type '$version' (update channel: '$gh_channel')." \
