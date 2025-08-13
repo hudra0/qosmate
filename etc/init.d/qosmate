@@ -973,12 +973,12 @@ install_qosmate_files() {
 		case "$component" in
 			BACKEND)
 				ver_ptrn_prefix=
-				ver_repl_str="VERSION\=\"$version\""
-				upd_ch_repl_str="UPD_CHANNEL\=\"$upd_channel\"" ;;
+				ver_repl_str="VERSION=\"$version\""
+				upd_ch_repl_str="UPD_CHANNEL=\"$upd_channel\"" ;;
 			FRONTEND)
 				ver_ptrn_prefix="const UI_"
-				ver_repl_str="VERSION \= '$version'\;"
-				upd_ch_repl_str="UPD_CHANNEL \= '$upd_channel'\;" ;;
+				ver_repl_str="VERSION = '$version';"
+				upd_ch_repl_str="UPD_CHANNEL = '$upd_channel';" ;;
 		esac
 
 		# set version and update channel in component's main file
