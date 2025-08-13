@@ -1147,8 +1147,8 @@ validate_inline_rules() {
         return 1
     fi
     
-    echo "  - Keyword check PASSED." >> "$tmp_file"
-    echo "  - Checking NFT syntax (within context)..." >> "$tmp_file"
+    printf '%s\n%s\n' "  - Keyword check PASSED." \
+        "  - Checking NFT syntax (within context)..." >> "$tmp_file"
     
     # Create temporary file with context
 	{
@@ -1187,12 +1187,10 @@ validate_custom_rules() {
     
     # Report final result
     if [ $fail -eq 0 ]; then
-        echo "" >> "$tmp_file"
-        echo "Overall validation: PASSED" >> "$tmp_file"
+        printf '\n%s\n' "Overall validation: PASSED" >> "$tmp_file"
         return 0
     else
-        echo "" >> "$tmp_file"
-        echo "Overall validation: FAILED" >> "$tmp_file"
+        printf '\n%s\n' "Overall validation: FAILED" >> "$tmp_file"
         return 1
     fi
 }
