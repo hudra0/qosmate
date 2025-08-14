@@ -263,6 +263,7 @@ post_update_1() {
 
 post_update_2() {
 	# <do something...>
+    migrate_config
     expand_config
 	return $?
 }
@@ -1393,24 +1394,51 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
     fi
     
     # Migrate link layer settings to advanced section based on active QDisc
-    local adv_preset="$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)"
     
-    # Skip if already migrated
+    # Check if old settings exist that need migration
+    local has_old_settings=0
+    local setting val
+    
+    # Check for old CAKE settings
+    for setting in COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD; do
+        val="$(uci -q get qosmate.cake.$setting)"
+        [ -n "$val" ] && { has_old_settings=1; break; }
+    done
+    
+    # Check for old HFSC settings if no CAKE settings found
+    [ $has_old_settings -eq 0 ] && {
+        val="$(uci -q get qosmate.hfsc.LINKTYPE)"
+        [ -n "$val" ] && has_old_settings=1
+    }
+    [ $has_old_settings -eq 0 ] && {
+        val="$(uci -q get qosmate.hfsc.OH)"
+        [ -n "$val" ] && has_old_settings=1
+    }
+    
+    # Skip migration only if NO old settings exist
+    [ $has_old_settings -eq 0 ] && return 0
+    
+    # Check if already migrated + clean up old settings
+    local adv_preset="$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)"
     if [ -n "$adv_preset" ]; then
+        uci -q delete qosmate.cake.COMMON_LINK_PRESETS 2>/dev/null
+        uci -q delete qosmate.cake.OVERHEAD 2>/dev/null
+        uci -q delete qosmate.cake.MPU 2>/dev/null
+        uci -q delete qosmate.cake.LINK_COMPENSATION 2>/dev/null
+        uci -q delete qosmate.cake.ETHER_VLAN_KEYWORD 2>/dev/null
+        uci -q delete qosmate.hfsc.LINKTYPE 2>/dev/null
+        uci -q delete qosmate.hfsc.OH 2>/dev/null
+        uci commit qosmate
         return 0
     fi
     
-    # Get current root qdisc to determine which settings to migrate
-    local root_qdisc="$(uci -q get qosmate.global.ROOT_QDISC)"
+    # Migrate based on active qdisc
+    local root_qdisc="$(uci -q get qosmate.settings.ROOT_QDISC)"
     local migrated=0
-    
-    # Migrate based on active QDisc
     case "$root_qdisc" in
         cake)
-            # CAKE active - migrate CAKE settings
-            local val
             for setting in COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD; do
-                val=$(uci -q get qosmate.cake.$setting)
+                val="$(uci -q get qosmate.cake.$setting)"
                 [ -n "$val" ] && {
                     uci set qosmate.advanced.$setting="$val"
                     migrated=1
@@ -1419,29 +1447,26 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
             ;;
             
         hfsc|hybrid|htb|*)
-            # HFSC/Hybrid/HTB active - migrate HFSC settings
             local linktype="$(uci -q get qosmate.hfsc.LINKTYPE)"
-            local oh="$(uci -q get qosmate.hfsc.OH)"
             
-            if [ -n "$linktype" ]; then
-                case "$linktype" in
-                    atm)    
-                        uci set qosmate.advanced.COMMON_LINK_PRESETS="atm"
-                        ;;
-                    docsis) 
-                        uci set qosmate.advanced.COMMON_LINK_PRESETS="docsis"
-                        ;;
-                    *)      
-                        uci set qosmate.advanced.COMMON_LINK_PRESETS="ethernet"
-                        ;;
-                esac
-                migrated=1
-            fi
+            # Use default "ethernet" if LINKTYPE not set
+            : "${linktype:=ethernet}"
             
-            [ -n "$oh" ] && {
-                uci set qosmate.advanced.OVERHEAD="$oh"
-                migrated=1
-            }
+            case "$linktype" in
+                atm)
+                    uci set qosmate.advanced.COMMON_LINK_PRESETS="atm"
+                    # ATM used the $OH variable - only set if different from default
+                    local oh="$(uci -q get qosmate.hfsc.OH)"
+                    [ -n "$oh" ] && [ "$oh" != "44" ] && uci set qosmate.advanced.OVERHEAD="$oh"
+                    ;;
+                docsis) 
+                    uci set qosmate.advanced.COMMON_LINK_PRESETS="docsis"
+                    ;;
+                *)      
+                    uci set qosmate.advanced.COMMON_LINK_PRESETS="ethernet"
+                    ;;
+            esac
+            migrated=1
             ;;
     esac
     
@@ -1451,9 +1476,10 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
         
         local new_preset="$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)"
         local new_oh="$(uci -q get qosmate.advanced.OVERHEAD)"
-        log_msg "Link layer settings migrated from $root_qdisc to advanced section: preset=$new_preset${new_oh:+, overhead=$new_oh}"
+        local msg="Link layer settings migrated from $root_qdisc to advanced section: preset=$new_preset"
+        [ -n "$new_oh" ] && msg="$msg, overhead=$new_oh"
+        log_msg "$msg"
         
-        # Clean up ALL old settings after successful migration
         uci -q delete qosmate.cake.COMMON_LINK_PRESETS 2>/dev/null
         uci -q delete qosmate.cake.OVERHEAD 2>/dev/null
         uci -q delete qosmate.cake.MPU 2>/dev/null
