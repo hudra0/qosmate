@@ -1,5 +1,5 @@
 #!/bin/sh /etc/rc.common
-# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC3060,SC3003
+# shellcheck disable=SC3043,SC1091,SC2155,SC3020,SC3010,SC2016,SC3060,SC3003,SC3015
 
 START=99
 STOP=99
@@ -326,7 +326,37 @@ get_gh_ref_data() {
 			"${component}_prev_upd_channel"='$gh_channel' "${component}_prev_version"='$version'
 	}
 
-	local branch branches='' main_branch grep_ptrn='' \
+	get_and_process_ref()
+	{
+		local branch \
+			channel="$1" ptrn="$2" branches="$3" main_branch="$4" err_file="$5"
+		case "${channel}" in
+			release)
+				uclient-fetch "${gh_url_api}/releases" -O- 2> "$err_file" | {
+					jsonfilter -e '@[@.prerelease=false]' |
+					jsonfilter -a -e "@[@.target_commitish=\"${main_branch}\"].tag_name"
+					cat 1>/dev/null
+				} ;;
+			snapshot|branch=*|commit=*)
+				for branch in ${branches}
+				do
+					uclient-fetch "${gh_url_api}/commits?sha=${branch}" -O- 2> "$err_file" | {
+						jsonfilter -e '@[@.commit]["url"]' |
+						sed 's/.*\///' # only leave the commit hash
+						cat 1>/dev/null
+					}
+				done
+		esac |
+		if [ -n "${ptrn}" ]
+		then
+			grep "${ptrn}"
+		else
+			head -n1 # get latest version or commit
+			cat 1>/dev/null
+		fi
+	}
+
+	local branches='' main_branch grep_ptrn='' \
 		gh_ref='' gh_ver_type='' gh_url_api ref_fetch_tmp_dir="/tmp/qosmate-gh" ref_fetch_rv=0 \
 		prev_ref prev_ver_type prev_upd_channel prev_version \
 		component="$1" gh_channel="$2" version="$3"
@@ -442,33 +472,7 @@ get_gh_ref_data() {
 	esac
 
 	# Get ref via GH API
-	[ -z "$gh_ref" ] && gh_ref="$(
-		case "$gh_channel" in
-			release)
-				uclient-fetch "${gh_url_api}/releases" -O- 2> "$ref_ucl_err_file" | {
-					jsonfilter -e '@[@.prerelease=false]' |
-					jsonfilter -a -e "@[@.target_commitish=\"${main_branch}\"].tag_name"
-					cat 1>/dev/null
-				} ;;
-			snapshot|branch=*|commit=*)
-				for branch in $branches; do
-					ref_fetch_url="${gh_url_api}/commits?sha=${branch}"
-					uclient-fetch "${ref_fetch_url}" -O- 2> "$ref_ucl_err_file" | {
-						jsonfilter -e '@[@.commit]["url"]' |
-						sed 's/.*\///' # only leave the commit hash
-						cat 1>/dev/null
-					}
-				done
-		esac |
-		{
-			if [ -n "$grep_ptrn" ]; then
-				grep "$grep_ptrn"
-			else
-				head -n1 # get latest version or commit
-			fi
-			cat 1>/dev/null
-		}
-	)"
+	[ -z "$gh_ref" ] && gh_ref="$(get_and_process_ref "$gh_channel" "$grep_ptrn" "$branches" "$main_branch" "$ref_ucl_err_file")"
 
 	if [ -z "$gh_ref" ] && [ -f "$ref_ucl_err_file" ] && ! grep -q "Download completed" "$ref_ucl_err_file"; then
 		error_out "Failed to get $component GitHub download URL for $gh_ver_type '$version' (update channel: '$gh_channel')." \
@@ -969,12 +973,12 @@ install_qosmate_files() {
 		case "$component" in
 			BACKEND)
 				ver_ptrn_prefix=
-				ver_repl_str="VERSION\=\"$version\""
-				upd_ch_repl_str="UPD_CHANNEL\=\"$upd_channel\"" ;;
+				ver_repl_str="VERSION=\"$version\""
+				upd_ch_repl_str="UPD_CHANNEL=\"$upd_channel\"" ;;
 			FRONTEND)
 				ver_ptrn_prefix="const UI_"
-				ver_repl_str="VERSION \= '$version'\;"
-				upd_ch_repl_str="UPD_CHANNEL \= '$upd_channel'\;" ;;
+				ver_repl_str="VERSION = '$version';"
+				upd_ch_repl_str="UPD_CHANNEL = '$upd_channel';" ;;
 		esac
 
 		# set version and update channel in component's main file
@@ -1143,15 +1147,16 @@ validate_inline_rules() {
         return 1
     fi
     
-    echo "  - Keyword check PASSED." >> "$tmp_file"
-    echo "  - Checking NFT syntax (within context)..." >> "$tmp_file"
+    printf '%s\n%s\n' "  - Keyword check PASSED." \
+        "  - Checking NFT syntax (within context)..." >> "$tmp_file"
     
     # Create temporary file with context
-    printf "%s\n" "table inet __qosmate_validation_ctx {" > "$check_file"
-    printf "\t%s\n" "chain __dscptag_init_ctx {" >> "$check_file"
-    cat "$file_path" >> "$check_file"
-    printf "\n\t%s\n" "}" >> "$check_file"
-    printf "%s\n" "}" >> "$check_file"
+	{
+		printf '%s\n\t%s\n' "table inet __qosmate_validation_ctx {" \
+			"chain __dscptag_init_ctx {"
+		cat "$file_path"
+		printf '\n\t%s\n%s\n' "}" "}"
+	} > "$check_file"
     
     if nft --check --file "$check_file" 2>>"$tmp_file"; then
         echo "  - Syntax check PASSED." >> "$tmp_file"
@@ -1182,12 +1187,10 @@ validate_custom_rules() {
     
     # Report final result
     if [ $fail -eq 0 ]; then
-        echo "" >> "$tmp_file"
-        echo "Overall validation: PASSED" >> "$tmp_file"
+        printf '\n%s\n' "Overall validation: PASSED" >> "$tmp_file"
         return 0
     else
-        echo "" >> "$tmp_file"
-        echo "Overall validation: FAILED" >> "$tmp_file"
+        printf '\n%s\n' "Overall validation: FAILED" >> "$tmp_file"
         return 1
     fi
 }
@@ -1390,7 +1393,7 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
     fi
     
     # Migrate link layer settings to advanced section based on active QDisc
-    local adv_preset=$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)
+    local adv_preset="$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)"
     
     # Skip if already migrated
     if [ -n "$adv_preset" ]; then
@@ -1398,7 +1401,7 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
     fi
     
     # Get current root qdisc to determine which settings to migrate
-    local root_qdisc=$(uci -q get qosmate.global.ROOT_QDISC)
+    local root_qdisc="$(uci -q get qosmate.global.ROOT_QDISC)"
     local migrated=0
     
     # Migrate based on active QDisc
@@ -1417,8 +1420,8 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
             
         hfsc|hybrid|htb|*)
             # HFSC/Hybrid/HTB active - migrate HFSC settings
-            local linktype=$(uci -q get qosmate.hfsc.LINKTYPE)
-            local oh=$(uci -q get qosmate.hfsc.OH)
+            local linktype="$(uci -q get qosmate.hfsc.LINKTYPE)"
+            local oh="$(uci -q get qosmate.hfsc.OH)"
             
             if [ -n "$linktype" ]; then
                 case "$linktype" in
@@ -1446,12 +1449,9 @@ config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
     if [ $migrated -eq 1 ]; then
         uci commit qosmate
         
-        local new_preset=$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)
-        local new_oh=$(uci -q get qosmate.advanced.OVERHEAD)
-        local msg="Link layer settings migrated from $root_qdisc to advanced section: preset=$new_preset${new_oh:+, overhead=$new_oh}"
-        
-        print_msg "$msg"
-        log_msg "$msg"
+        local new_preset="$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)"
+        local new_oh="$(uci -q get qosmate.advanced.OVERHEAD)"
+        log_msg "Link layer settings migrated from $root_qdisc to advanced section: preset=$new_preset${new_oh:+, overhead=$new_oh}"
         
         # Clean up ALL old settings after successful migration
         uci -q delete qosmate.cake.COMMON_LINK_PRESETS 2>/dev/null

@@ -19,15 +19,6 @@ DEFAULT_OH="44"
 
 : "${VERSION}" "${DEFAULT_WAN}" "${DEFAULT_DOWNRATE}" "${DEFAULT_UPRATE}" "${DEFAULT_OH}" "${nongameqdisc:=}" "${nongameqdiscoptions:=}"
 
-# Trim leading and trailing whitespaces and tabs in variable $1
-trim_spaces() {
-    local tr_in tr_out
-    eval "tr_in=\"\${$1}\""
-    tr_out="${tr_in%"${tr_in##*[! 	]}"}"
-    tr_out="${tr_out#"${tr_out%%[! 	]*}"}"
-    eval "$1=\"\${tr_out}\""
-}
-
 load_config() {
     # Global settings
     config_get ROOT_QDISC settings ROOT_QDISC hfsc
@@ -105,19 +96,19 @@ get_tc_overhead_params() {
     # Detect ATM-based presets
     case "$preset" in
         *atm*|*adsl*|*pppoa*|*pppoe*|*bridged*|*ipoa*|conservative)
-            printf "stab mtu 2047 tsize 512 mpu 68 overhead ${overhead:-44} linklayer atm"
+            printf '%s' "stab mtu 2047 tsize 512 mpu 68 overhead ${overhead:-44} linklayer atm"
             ;;
         docsis)
-            printf "stab overhead ${overhead:-25} linklayer ethernet"
+            printf '%s' "stab overhead ${overhead:-25} linklayer ethernet"
             ;;
         cake-ethernet)
-            printf "stab overhead ${overhead:-38} linklayer ethernet"
+            printf '%s' "stab overhead ${overhead:-38} linklayer ethernet"
             ;;
         raw)
-            printf "stab overhead ${overhead:-0} linklayer ethernet"
+            printf '%s' "stab overhead ${overhead:-0} linklayer ethernet"
             ;;
         *)
-            printf "stab overhead ${overhead:-40} linklayer ethernet"
+            printf '%s' "stab overhead ${overhead:-40} linklayer ethernet"
             ;;
     esac
 }
@@ -133,12 +124,12 @@ get_cake_link_params() {
     case "$preset" in
         *atm*|*adsl*|*pppoa*|*pppoe*|*bridged*|*ipoa*|conservative)
             [ "$1" = "hybrid" ] && base="atm" || base="${preset}"
-            : ${oh:=44}
+            : "${oh:=44}"
             ;;
-        docsis)       base="docsis";   : ${oh:=25} ;;
-        cake-ethernet) base="ethernet"; [ "$1" != "hybrid" ] && oh="" || : ${oh:=38} ;;
-        raw)          base="raw";      : ${oh:=0} ;;
-        ethernet|*)   base="ethernet"; : ${oh:=40} ;;
+        docsis)       base="docsis";   : "${oh:=25}" ;;
+        cake-ethernet) base="ethernet"; [ "$1" != "hybrid" ] && oh="" || : "${oh:=38}" ;;
+        raw)          base="raw";      : "${oh:=0}" ;;
+        ethernet|*)   base="ethernet"; : "${oh:=40}" ;;
     esac
     
     # Build parameters
@@ -182,7 +173,7 @@ preserve_config_files() {
             echo "/etc/qosmate.sh"
             echo "/etc/init.d/qosmate"
             echo "/etc/hotplug.d/iface/13-qosmateHotplug" 
-        } | while read LINE; do
+        } | while read -r LINE; do
             grep -qxF "$LINE" /etc/sysupgrade.conf || echo "$LINE" >> /etc/sysupgrade.conf
         done
         echo "Config files have been added to sysupgrade.conf for preservation."
@@ -207,41 +198,13 @@ calculate_ack_rates() {
     if [ -n "$ACKRATE" ] && [ "$ACKRATE" -gt 0 ]; then
         SLOWACKRATE=$ACKRATE
         MEDACKRATE=$ACKRATE
-        FASTACKRATE=$(($ACKRATE * 10))
-        XFSTACKRATE=$(($ACKRATE * 100))
+        FASTACKRATE=$((ACKRATE * 10))
+        XFSTACKRATE=$((ACKRATE * 100))
     fi
 }
 
 # Call the function to perform the ACK rates calculations
 calculate_ack_rates
-
-# Function to check if a single IP address is IPv6
-# Note: This assumes the input is a single IP, not a space-separated list
-# Handles CIDR notation (e.g. ::/0 or 192.168.1.0/24)
-is_ipv6() {
-    local ip="${1%/*}"  # Remove CIDR suffix if present
-    case "$ip" in
-        *:*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-# checks whether string is an ipv6 mask
-is_ipv6_mask() {
-    case "$1" in
-        ::*/::*) ;;
-        *) return 1
-    esac
-    local inp="${1#"::"}"
-    case "${inp%"/::"*}" in *"/"*) return 1; esac
-    return 0
-}
-
-# checks whether string is nft set reference
-is_set_ref() {
-    case "$1" in "@"*) return 0; esac
-    return 1
-}
 
 # Debug function
 debug_log() {
@@ -253,6 +216,7 @@ debug_log() {
 create_nft_sets() {
     local sets_created=""
     
+	# shellcheck disable=SC2329
     create_set() {
         local section="$1" name ip_list mode timeout set_flags
 
@@ -321,7 +285,44 @@ create_nft_sets() {
 SETS=$(create_nft_sets)
 
 # Create rules
+# shellcheck disable=SC2329
 create_nft_rule() {
+	# Trim leading and trailing whitespaces and tabs in variable $1
+	trim_spaces() {
+		local tr_in tr_out
+		eval "tr_in=\"\${$1}\""
+		tr_out="${tr_in%"${tr_in##*[! 	]}"}"
+		tr_out="${tr_out#"${tr_out%%[! 	]*}"}"
+		eval "$1=\"\${tr_out}\""
+	}
+
+	is_set_ref() {
+		case "$1" in "@"*) return 0; esac
+		return 1
+	}
+
+	# checks whether string is an ipv6 mask
+	is_ipv6_mask() {
+		case "$1" in
+			::*/::*) ;;
+			*) return 1
+		esac
+		local inp="${1#"::"}"
+		case "${inp%"/::"*}" in *"/"*) return 1; esac
+		return 0
+	}
+
+	# Function to check if a single IP address is IPv6
+	# Note: This assumes the input is a single IP, not a space-separated list
+	# Handles CIDR notation (e.g. ::/0 or 192.168.1.0/24)
+	is_ipv6() {
+		local ip="${1%/*}"  # Remove CIDR suffix if present
+		case "$ip" in
+			*:*) return 0 ;;
+			*) return 1 ;;
+		esac
+	}
+
     local config="$1"
     local proto class counter name enabled trace
 
@@ -581,7 +582,7 @@ create_nft_rule() {
     # Note: Source and Destination IP handling is now done per-family in the rule generation below
     
     # Use connection tracking for source and destination ports
-    local src_port dest_port port port_type port_res port_seen=''
+    local port port_type port_res port_seen=''
 
     for port_type in src_port dest_port; do
         config_get port "$config" "$port_type"
@@ -824,11 +825,11 @@ INLINE_INCLUDE=""
 if [ -s "$INLINE_FILE" ]; then
     TMP_CHECK_FILE="/tmp/qosmate_inline_sh_check.nft"
 
-    printf "%s\n" "table inet __qosmate_sh_ctx {" > "$TMP_CHECK_FILE"
-    printf "\t%s\n" "chain __dscptag_sh_ctx {" >> "$TMP_CHECK_FILE"
-    cat "$INLINE_FILE" >> "$TMP_CHECK_FILE"
-    printf "\n\t%s\n" "}" >> "$TMP_CHECK_FILE"
-    printf "%s\n" "}" >> "$TMP_CHECK_FILE"
+    {
+        printf '%s\n\t%s\n' "table inet __qosmate_sh_ctx {" "chain __dscptag_sh_ctx {"
+        cat "$INLINE_FILE"
+        printf "\n\t%s\n%s\n" "}" "}"
+    } > "$TMP_CHECK_FILE"
 
     if nft --check --file "$TMP_CHECK_FILE" 2>/dev/null; then
         INLINE_INCLUDE="include \"$INLINE_FILE\""
@@ -1008,14 +1009,14 @@ DSCPEOF
 ## Set up ctinfo downstream shaping
 
 # Set up ingress handle for WAN interface
-tc qdisc add dev $WAN handle ffff: ingress
+tc qdisc add dev "$WAN" handle ffff: ingress
 
 # Create IFB interface
-ip link add name ifb-$WAN type ifb
-ip link set ifb-$WAN up
+ip link add name "ifb-$WAN" type ifb
+ip link set "ifb-$WAN" up
 
 # Redirect ingress traffic from WAN to IFB and restore DSCP from conntrack
-tc filter add dev $WAN parent ffff: protocol all matchall action ctinfo dscp 63 128 mirred egress redirect dev ifb-$WAN
+tc filter add dev "$WAN" parent ffff: protocol all matchall action ctinfo dscp 63 128 mirred egress redirect dev "ifb-$WAN"
 LAN=ifb-$WAN
 
 cat <<EOF
@@ -1101,6 +1102,7 @@ add_tc_filter() {
             ;;
     esac
 
+    # shellcheck disable=SC2086
     tc filter add dev "$dev" parent 1: protocol "$proto" prio "$prio" u32 match $match_str classid "$class_id"
 }
 
@@ -1133,20 +1135,20 @@ setup_game_qdisc() {
         "drr")
             tc qdisc add dev "$DEV" parent 1:11 handle 10: drr
             tc class add dev "$DEV" parent 10: classid 10:1 drr quantum 8000
-            tc qdisc add dev "$DEV" parent 10:1 handle 11: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth ${RATE}kbit probability 1.0 burst $BURST
+            tc qdisc add dev "$DEV" parent 10:1 handle 11: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth "${RATE}kbit" probability 1.0 burst $BURST
             tc class add dev "$DEV" parent 10: classid 10:2 drr quantum 4000
-            tc qdisc add dev "$DEV" parent 10:2 handle 12: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth ${RATE}kbit probability 1.0 burst $BURST
+            tc qdisc add dev "$DEV" parent 10:2 handle 12: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth "${RATE}kbit" probability 1.0 burst $BURST
             tc class add dev "$DEV" parent 10: classid 10:3 drr quantum 1000
-            tc qdisc add dev "$DEV" parent 10:3 handle 13: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth ${RATE}kbit probability 1.0 burst $BURST
+            tc qdisc add dev "$DEV" parent 10:3 handle 13: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth "${RATE}kbit" probability 1.0 burst $BURST
         ;;
         "qfq")
             tc qdisc add dev "$DEV" parent 1:11 handle 10: qfq
             tc class add dev "$DEV" parent 10: classid 10:1 qfq weight 8000
-            tc qdisc add dev "$DEV" parent 10:1 handle 11: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth ${RATE}kbit probability 1.0 burst $BURST
+            tc qdisc add dev "$DEV" parent 10:1 handle 11: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth "${RATE}kbit" probability 1.0 burst $BURST
             tc class add dev "$DEV" parent 10: classid 10:2 qfq weight 4000
-            tc qdisc add dev "$DEV" parent 10:2 handle 12: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth ${RATE}kbit probability 1.0 burst $BURST
+            tc qdisc add dev "$DEV" parent 10:2 handle 12: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth "${RATE}kbit" probability 1.0 burst $BURST
             tc class add dev "$DEV" parent 10: classid 10:3 qfq weight 1000
-            tc qdisc add dev "$DEV" parent 10:3 handle 13: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth ${RATE}kbit probability 1.0 burst $BURST
+            tc qdisc add dev "$DEV" parent 10:3 handle 13: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth "${RATE}kbit" probability 1.0 burst $BURST
         ;;
         "pfifo")
             tc qdisc add dev "$DEV" parent 1:11 handle 10: pfifo limit $((PFIFOMIN+MAXDEL*RATE/8/PACKETSIZE))
@@ -1156,7 +1158,7 @@ setup_game_qdisc() {
             #tc qdisc add dev "$DEV" parent 1:11 handle 10: bfifo limit $((MAXDEL * RATE / 8))
         ;;
         "red")
-            tc qdisc add dev "$DEV" parent 1:11 handle 10: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth ${RATE}kbit burst $BURST probability 1.0
+            tc qdisc add dev "$DEV" parent 1:11 handle 10: red limit 150000 min $REDMIN max $REDMAX avpkt 500 bandwidth "${RATE}kbit" burst $BURST probability 1.0
             ## send game packets to 10:, they're all treated the same
         ;;
         "fq_codel")
@@ -1208,7 +1210,7 @@ setup_game_qdisc() {
 # Function to setup HFSC qdisc structure
 # Arguments: $1:DEV, $2:RATE, $3:GAMERATE, $4:GAME_QDISC_TYPE, $5:DIR
 setup_hfsc() {
-    local DEV=$1 RATE=$2 GAMERATE=$3 GAME_QDISC_TYPE=$4 DIR=$5
+    local DEV="$1" RATE="$2" GAMERATE="$3" GAME_QDISC_TYPE="$4" DIR="$5"
     local MTU=1500
 
     tc qdisc del dev "$DEV" root > /dev/null 2>&1
@@ -1218,6 +1220,7 @@ setup_hfsc() {
     TC_OH_PARAMS=$(get_tc_overhead_params)
     
     # Apply root qdisc
+    # shellcheck disable=SC2086
     tc qdisc replace dev "$DEV" handle 1: root ${TC_OH_PARAMS} hfsc default 13
 
     # DUR calculation
@@ -1281,7 +1284,7 @@ setup_cake() {
     tc qdisc del dev "$LAN" root > /dev/null 2>&1
     
     # Get CAKE link parameters
-    local cake_link_params=$(get_cake_link_params)
+    local cake_link_params="$(get_cake_link_params)"
     
     # Egress (Upload) CAKE setup
     EGRESS_CAKE_OPTS="bandwidth ${UPRATE}kbit"
@@ -1308,7 +1311,8 @@ setup_cake() {
     [ -n "$LINK_COMPENSATION" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $LINK_COMPENSATION"
     [ -n "$EXTRA_PARAMETERS_EGRESS" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $EXTRA_PARAMETERS_EGRESS"
     
-    tc qdisc add dev $WAN root cake $EGRESS_CAKE_OPTS
+    # shellcheck disable=SC2086
+    tc qdisc add dev "$WAN" root cake $EGRESS_CAKE_OPTS
     
     # Ingress (Download) CAKE setup
     INGRESS_CAKE_OPTS="bandwidth ${DOWNRATE}kbit ingress"
@@ -1324,13 +1328,14 @@ setup_cake() {
     [ -n "$LINK_COMPENSATION" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $LINK_COMPENSATION"
     [ -n "$EXTRA_PARAMETERS_INGRESS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $EXTRA_PARAMETERS_INGRESS"
     
-    tc qdisc add dev $LAN root cake $INGRESS_CAKE_OPTS
+    # shellcheck disable=SC2086
+    tc qdisc add dev "$LAN" root cake $INGRESS_CAKE_OPTS
 }
 
 # Helper function to set up hybrid qdisc on an interface
 # Arguments: $1:DEV, $2:RATE, $3:GAMERATE, $4:DIR
 setup_hybrid() {
-    local DEV=$1 RATE=$2 GAMERATE=$3 DIR=$4
+    local DEV="$1" RATE="$2" GAMERATE="$3" DIR="$4"
     local MTU=1500
 
     # Calculate parameters
@@ -1364,7 +1369,7 @@ setup_hybrid() {
     local cake_rate=$((RATE - GAMERATE)); [ $cake_rate -le 0 ] && cake_rate=1
     tc class add dev "$DEV" parent 1:1 classid 1:13 hfsc ls m1 "${cake_rate}kbit" d "${DUR}ms" m2 "${cake_rate}kbit"
     # Attach CAKE qdisc - use "hybrid" mode to match HFSC overhead
-    local cake_link_params=$(get_cake_link_params "hybrid")
+    local cake_link_params="$(get_cake_link_params "hybrid")"
     local CAKE_OPTS=""
     
     if [ "$DIR" = "wan" ]; then
@@ -1389,6 +1394,7 @@ setup_hybrid() {
         [ -n "$EXTRA_PARAMETERS_INGRESS" ] && CAKE_OPTS="$CAKE_OPTS $EXTRA_PARAMETERS_INGRESS"
     fi
     tc qdisc del dev "$DEV" parent 1:13 handle 13: > /dev/null 2>&1
+    # shellcheck disable=SC2086
     tc qdisc replace dev "$DEV" parent 1:13 handle 13: cake $CAKE_OPTS
 
     # Class 1:15 - Bulk traffic (HFSC LS + fq_codel)
@@ -1428,8 +1434,8 @@ setup_hybrid() {
 # Helper functions for HTB dynamic parameter calculation
 # Calculate optimal HTB quantum based on rate
 calculate_htb_quantum() {
-    local rate=$1
-    local duration_us=${2:-1000}  # Default 1ms = 1000µs
+    local rate="$1"
+    local duration_us="${2:-1000}"  # Default 1ms = 1000µs
     local MTU=1500
     
     # Duration-based calculation (SQM-style)
@@ -1452,8 +1458,8 @@ calculate_htb_quantum() {
 
 # Calculate HTB burst size based on rate and target latency
 calculate_htb_burst() {
-    local rate=$1
-    local duration_us=${2:-10000}  # Default 10ms = 10000µs
+    local rate="$1"
+    local duration_us="${2:-10000}"  # Default 10ms = 10000µs
     
     # burst in bytes for given duration
     local burst=$(((duration_us * rate) / 8000))
@@ -1466,36 +1472,36 @@ calculate_htb_burst() {
 
 # Function to setup HTB qdisc (simple.qos style with 3 classes)
 setup_htb() {
-    local DEV=$1 RATE=$2 DIR=$3
+    local DEV="$1" RATE="$2" DIR="$3"
     local MTU=1500
-    
+
     # Ensure rate is valid
     [ "$RATE" -le 0 ] && RATE=1
-    
+
     # Delete existing qdisc
     tc qdisc del dev "$DEV" root > /dev/null 2>&1
-    
+
     # Get overhead parameters from CAKE configuration
     local TC_OH_PARAMS
     TC_OH_PARAMS=$(get_tc_overhead_params)
-    
+
     # Setup HTB root with default to best effort (class 13)
     tc qdisc add dev "$DEV" root handle 1: $TC_OH_PARAMS htb default 13
-    
+
     # Calculate HTB quantum for root (all use same quantum)
-    local HTB_QUANTUM=$(calculate_htb_quantum $RATE)
-    
+    local HTB_QUANTUM="$(calculate_htb_quantum "$RATE")"
+
     # Root class gets modest burst since we typically configure 80-90% of physical rate
     # This allows brief bursts into the headroom without causing bufferbloat
-    local ROOT_BURST=$(calculate_htb_burst $RATE 1000)   # 1ms burst
-    local ROOT_CBURST=$(calculate_htb_burst $RATE 1000)  # 1ms cburst
-    
+    local ROOT_BURST="$(calculate_htb_burst "$RATE" 1000)"   # 1ms burst
+    local ROOT_CBURST="$(calculate_htb_burst "$RATE" 1000)"  # 1ms cburst
+
     # Create main rate limiting class
     tc class add dev "$DEV" parent 1: classid 1:1 htb \
-        quantum $HTB_QUANTUM \
+        quantum "$HTB_QUANTUM" \
         rate "${RATE}kbit" ceil "${RATE}kbit" \
-        burst $ROOT_BURST cburst $ROOT_CBURST
-    
+        burst "$ROOT_BURST" cburst "$ROOT_CBURST"
+
     # Smart calculation that scales smoothly across all bandwidths
     # Formula: percent = 15 + (50000 / RATE), capped between 5-40%
     #
@@ -1524,30 +1530,30 @@ setup_htb() {
     # Two safety mechanisms ensure adequate priority bandwidth:
     # 1. Percentage-based: Scales with total bandwidth
     # 2. Absolute minimum: 800 kbit for gaming/VoIP needs
-    
+
     # Calculate sliding percentage (higher % for lower rates)
     local percent=$((15 + 50000 / RATE))
     [ $percent -gt 40 ] && percent=40  # Cap at 40%
     [ $percent -lt 5 ] && percent=5     # Floor at 5%
-    
+
     local percent_based=$((RATE * percent / 100))
     local absolute_min=800              # Gaming/VoIP minimum
-    
+
     # Take the maximum of percentage-based and absolute minimum
     local PRIO_RATE_MIN=$percent_based
     [ $absolute_min -gt $PRIO_RATE_MIN ] && PRIO_RATE_MIN=$absolute_min
-    
+
     # Calculate ceiling - ensure it's at least min + some headroom
     local PRIO_CEIL=$((RATE / 3))  # Start with 33%
-    
+
     # Ensure ceiling is at least min rate + 10%
     local min_ceiling=$((PRIO_RATE_MIN * 110 / 100))
     [ $PRIO_CEIL -lt $min_ceiling ] && PRIO_CEIL=$min_ceiling
-    
+
     # Calculate BE and BK rates
     local BE_MIN_RATE=$((RATE / 6))    # 16% guaranteed
     local BK_MIN_RATE=$((RATE / 6))    # 16% guaranteed
-    
+
     # Adjust if total mins exceed available bandwidth
     local total_min=$((PRIO_RATE_MIN + BE_MIN_RATE + BK_MIN_RATE))
     if [ $total_min -gt $((RATE * 90 / 100)) ]; then
@@ -1555,77 +1561,77 @@ setup_htb() {
         BE_MIN_RATE=$((BE_MIN_RATE * RATE * 90 / 100 / total_min))
         BK_MIN_RATE=$((BK_MIN_RATE * RATE * 90 / 100 / total_min))
     fi
-    
+
     # BE/BK ceiling - almost full rate minus a small reserve
     local BE_CEIL=$((RATE - 16))
-    
+
     # Calculate individual burst values for each class
     # Priority class burst - based on its own rate
-    local PRIO_BURST=$(calculate_htb_burst $PRIO_RATE_MIN 10000)  # 10ms burst for rate
-    local PRIO_CBURST=$(calculate_htb_burst $PRIO_RATE_MIN 5000)  # 5ms burst for ceiling
-    [ $PRIO_CBURST -lt 1500 ] && PRIO_CBURST=1500
-    
+    local PRIO_BURST="$(calculate_htb_burst $PRIO_RATE_MIN 10000)"  # 10ms burst for rate
+    local PRIO_CBURST="$(calculate_htb_burst $PRIO_RATE_MIN 5000)"  # 5ms burst for ceiling
+    [ "$PRIO_CBURST" -lt 1500 ] && PRIO_CBURST=1500
+
     # Priority class (1:11) - for realtime/gaming traffic
     tc class add dev "$DEV" parent 1:1 classid 1:11 htb \
-        quantum $HTB_QUANTUM \
+        quantum "$HTB_QUANTUM" \
         rate "${PRIO_RATE_MIN}kbit" ceil "${PRIO_CEIL}kbit" \
-        burst $PRIO_BURST cburst $PRIO_CBURST prio 1
-    
+        burst "$PRIO_BURST" cburst "$PRIO_CBURST" prio 1
+
     # Calculate BE burst values - based on its own guaranteed rate
-    local BE_BURST=$(calculate_htb_burst $BE_MIN_RATE 10000)  # 10ms burst for rate
-    local BE_CBURST=$(calculate_htb_burst $BE_MIN_RATE 5000)  # 5ms burst for ceiling
-    [ $BE_CBURST -lt 1500 ] && BE_CBURST=1500
-    
+    local BE_BURST="$(calculate_htb_burst $BE_MIN_RATE 10000)"  # 10ms burst for rate
+    local BE_CBURST="$(calculate_htb_burst $BE_MIN_RATE 5000)"  # 5ms burst for ceiling
+    [ "$BE_CBURST" -lt 1500 ] && BE_CBURST=1500
+
     # Best Effort class (1:13) - default traffic
     tc class add dev "$DEV" parent 1:1 classid 1:13 htb \
-        quantum $HTB_QUANTUM \
+        quantum "$HTB_QUANTUM" \
         rate "${BE_MIN_RATE}kbit" ceil "${BE_CEIL}kbit" \
-        burst $BE_BURST cburst $BE_CBURST prio 2
-    
+        burst "$BE_BURST" cburst "$BE_CBURST" prio 2
+
     # Calculate BK burst values - based on its own guaranteed rate
-    local BK_BURST=$(calculate_htb_burst $BK_MIN_RATE 10000)  # 10ms burst for rate
-    local BK_CBURST=$(calculate_htb_burst $BK_MIN_RATE 5000)  # 5ms burst for ceiling
-    [ $BK_CBURST -lt 1500 ] && BK_CBURST=1500
-    
+    local BK_BURST="$(calculate_htb_burst $BK_MIN_RATE 10000)"  # 10ms burst for rate
+    local BK_CBURST="$(calculate_htb_burst $BK_MIN_RATE 5000)"  # 5ms burst for ceiling
+    [ "$BK_CBURST" -lt 1500 ] && BK_CBURST=1500
+
     # Background/Bulk class (1:15) - low priority
     tc class add dev "$DEV" parent 1:1 classid 1:15 htb \
-        quantum $HTB_QUANTUM \
+        quantum "$HTB_QUANTUM" \
         rate "${BK_MIN_RATE}kbit" ceil "${BE_CEIL}kbit" \
-        burst $BK_BURST cburst $BK_CBURST prio 3
-    
+        burst "$BK_BURST" cburst "$BK_CBURST" prio 3
+
     # Attach leaf qdiscs
     # Calculate fq_codel parameters
     local INTVL=$((100+2*1500*8/RATE))
     local TARG=$((540*8/RATE+4))
-    
+
     # Priority class gets fq_codel with aggressive settings
     tc qdisc add dev "$DEV" parent 1:11 handle 110: fq_codel \
         interval "${INTVL}ms" target "${TARG}ms" \
         quantum 300
-    
+
     # Best effort with standard settings
     tc qdisc add dev "$DEV" parent 1:13 handle 130: fq_codel \
         interval "${INTVL}ms" target "${TARG}ms" \
         quantum 1500
-    
+
     # Background with larger target
     tc qdisc add dev "$DEV" parent 1:15 handle 150: fq_codel \
         interval "$((INTVL*2))ms" target "$((TARG*2))ms" \
         quantum 300
-    
+
     # Apply DSCP filters only on ingress (LAN/IFB)
     if [ "$DIR" = "lan" ]; then
         # Delete existing filters
         tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
         tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1
-        
+
         # IPv4 filters (prio 1)
         # Priority class: EF, CS5, CS6, CS7 -> 1:11
         # Background class: CS1 -> 1:15
         for class_enum in ef cs5 cs6 cs7 cs1; do
             add_tc_filter "$DEV" "$class_enum" "ipv4"
         done
-        
+
         # IPv6 filters (prio 2)
         for class_enum in ef cs5 cs6 cs7 cs1 cs0; do
             add_tc_filter "$DEV" "$class_enum" "ipv6"
