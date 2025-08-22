@@ -47,6 +47,10 @@ MAIN_BRANCH_FRONTEND=main
 
 ### Local paths
 
+QOSMATE_CFG_FILE=/etc/config/qosmate
+TMP_CFG_DIR="/tmp/qosmate_tmp"
+TMP_CFG_FILE="$TMP_CFG_DIR/qosmate"
+
 # Local path of JS files
 QOSMATE_UPD_DIR=/var/run/qosmate-update
 
@@ -123,6 +127,18 @@ QOSMATE_EXEC_FILES_FRONTEND="
 
 
 ### Utility functions
+
+uci_tmp() {
+    uci -c "$TMP_CFG_DIR" "$@"
+}
+
+commit_tmp_config() {
+    uci_tmp commit qosmate &&
+    cp "$TMP_CFG_FILE" "$QOSMATE_CFG_FILE"
+    local rv=$?
+    rm -rf "$TMP_CFG_DIR"
+    return $rv
+}
 
 # 1 - string
 # 2 - path to file
@@ -1342,10 +1358,9 @@ EOF
 }
 
 check_and_download_config() {
-    local config_path="/etc/config/qosmate"
-    if [ ! -f "$config_path" ]; then
+    if [ ! -f "$QOSMATE_CFG_FILE" ]; then
         print_msg "Configuration file not found, downloading the latest version..."
-        wget -O $config_path "${QOSMATE_GH_RAW_URL_BACKEND_MAIN}/etc/config/qosmate" || {
+        wget -O "$QOSMATE_CFG_FILE" "${QOSMATE_GH_RAW_URL_BACKEND_MAIN}${QOSMATE_CFG_FILE}" || {
             error_out "Failed to download config. Please check your internet connection and try again."
             return 1
         }
@@ -1356,140 +1371,180 @@ check_and_download_config() {
 }
 
 migrate_config() {
-    CONFIG_FILE="/etc/config/qosmate"
+    try_migrate_config
+    local rv=$?
+    [ $rv = 0 ] || {
+        error_out "Failed to migrate config."
+        uci -c "$TMP_CFG_DIR" revert qosmate 2>/dev/null
+    }
+    rm -rf "$TMP_CFG_DIR"
+    return $rv
+}
+
+try_migrate_config() {
+    report_migration() {
+        local msg="Link layer settings migrated from settings for qdisc '$1' to advanced section: preset=$2"
+        [ -n "$3" ] && msg="$msg, overhead=$3"
+        log_msg "$msg"
+    }
+
+    delete_premigration_settings() {
+        local qdisc old_settings
+        for qdisc in cake hfsc; do
+            eval "old_settings=\"\${${qdisc}_old_settings}\""
+            for setting in $old_settings; do
+                uci_tmp -q delete "qosmate.$qdisc.$setting"
+            done
+        done
+    }
+
+    . /lib/functions.sh
+
+    local commit_req=''
+
+    [ -f "$QOSMATE_CFG_FILE" ] &&
+    try_mkdir -p "$TMP_CFG_DIR" &&
+    cp "$QOSMATE_CFG_FILE" "$TMP_CFG_FILE" || return 1
 
     # Function to add the global enabled option if it does not exist
-    if ! grep -q "config global 'global'" $CONFIG_FILE; then
+    if ! uci_tmp get qosmate.global 2>/dev/null 1>&2; then
+        commit_req=1
         print_msg "Adding global configuration section..."
-        sed -i '1i\
-config global '\''global'\''\n    option enabled '\''1'\''\n' $CONFIG_FILE
+        uci_tmp set qosmate.global=global &&
+        uci_tmp set qosmate.global.enabled=1 &&
+        uci_tmp reorder qosmate.global=0 ||
+            return 1
         print_msg "Global configuration section added."
     else
         print_msg "Global configuration section already exists."
     fi
 
     # Ensure the enabled option is present in the global section
-    if ! grep -q "option enabled" $CONFIG_FILE; then
+    if ! uci_tmp get qosmate.global.enabled 2>/dev/null 1>&2; then
+        commit_req=1
         print_msg "Adding enabled option to global section..."
-        sed -i "/config global 'global'/a\\
-    option enabled '1'
-" $CONFIG_FILE
+        uci_tmp set qosmate.global.enabled=1 || return 1
         print_msg "Enabled option added."
     else
         print_msg "Enabled option already exists."
     fi
 
     # Check for and correct the custom_rules section
-    if grep -q "config qosmate 'custom_rules'" $CONFIG_FILE; then
-        print_msg "Incorrect custom_rules section found. Correcting..."
-        sed -i "s/config qosmate 'custom_rules'/config custom_rules 'custom_rules'/" $CONFIG_FILE
-        print_msg "custom_rules section corrected."
-    fi
+    awk "
+        BEGIN{cor=3; inc=3}
+        /^[  ]*config[  ]+qosmate[  ]+'custom_rules'[  ]*$/{inc=4}
+        /^[  ]*config[  ]+custom_rules[  ]+'custom_rules'[  ]*$/{cor=4}
+        END{exit cor inc}
+    "  "$TMP_CFG_FILE"
 
-    # Remove duplicate custom_rules sections if both incorrect and correct versions exist
-    if grep -q "config qosmate 'custom_rules'" $CONFIG_FILE && grep -q "config custom_rules 'custom_rules'" $CONFIG_FILE; then
-        print_msg "Both incorrect and correct custom_rules sections found. Removing the incorrect one..."
-        sed -i "/config qosmate 'custom_rules'/d" $CONFIG_FILE
-        print_msg "Incorrect custom_rules section removed."
-    fi
-    
-    # Migrate link layer settings to advanced section based on active QDisc
-    
-    # Check if old settings exist that need migration
-    local has_old_settings=0
-    local setting val
-    
-    # Check for old CAKE settings
-    for setting in COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD; do
-        val="$(uci -q get qosmate.cake.$setting)"
-        [ -n "$val" ] && { has_old_settings=1; break; }
-    done
-    
-    # Check for old HFSC settings if no CAKE settings found
-    [ $has_old_settings -eq 0 ] && {
-        val="$(uci -q get qosmate.hfsc.LINKTYPE)"
-        [ -n "$val" ] && has_old_settings=1
-    }
-    [ $has_old_settings -eq 0 ] && {
-        val="$(uci -q get qosmate.hfsc.OH)"
-        [ -n "$val" ] && has_old_settings=1
-    }
-    
-    # Skip migration only if NO old settings exist
-    [ $has_old_settings -eq 0 ] && return 0
-    
-    # Check if already migrated + clean up old settings
-    local adv_preset="$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)"
-    if [ -n "$adv_preset" ]; then
-        uci -q delete qosmate.cake.COMMON_LINK_PRESETS 2>/dev/null
-        uci -q delete qosmate.cake.OVERHEAD 2>/dev/null
-        uci -q delete qosmate.cake.MPU 2>/dev/null
-        uci -q delete qosmate.cake.LINK_COMPENSATION 2>/dev/null
-        uci -q delete qosmate.cake.ETHER_VLAN_KEYWORD 2>/dev/null
-        uci -q delete qosmate.hfsc.LINKTYPE 2>/dev/null
-        uci -q delete qosmate.hfsc.OH 2>/dev/null
-        uci commit qosmate
-        return 0
-    fi
-    
-    # Migrate based on active qdisc
-    local root_qdisc="$(uci -q get qosmate.settings.ROOT_QDISC)"
-    local migrated=0
-    case "$root_qdisc" in
-        cake)
-            for setting in COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD; do
-                val="$(uci -q get qosmate.cake.$setting)"
-                [ -n "$val" ] && {
-                    uci set qosmate.advanced.$setting="$val"
-                    migrated=1
-                }
-            done
+    case "$?" in
+        33)
+            # No custom_rules section found
             ;;
-            
-        hfsc|hybrid|htb|*)
-            local linktype="$(uci -q get qosmate.hfsc.LINKTYPE)"
-            
-            # Use default "ethernet" if LINKTYPE not set
-            : "${linktype:=ethernet}"
-            
-            case "$linktype" in
-                atm)
-                    uci set qosmate.advanced.COMMON_LINK_PRESETS="atm"
-                    # ATM used the $OH variable - only set if different from default
-                    local oh="$(uci -q get qosmate.hfsc.OH)"
-                    [ -n "$oh" ] && [ "$oh" != "44" ] && uci set qosmate.advanced.OVERHEAD="$oh"
-                    ;;
-                docsis) 
-                    uci set qosmate.advanced.COMMON_LINK_PRESETS="docsis"
-                    ;;
-                *)      
-                    uci set qosmate.advanced.COMMON_LINK_PRESETS="ethernet"
-                    ;;
-            esac
-            migrated=1
+        43)
+            # Only correct section found
+            ;;
+        34)
+            # Only incorrect section found - correct it
+            commit_req=1
+            print_msg "Incorrect custom_rules section found. Correcting..."
+            sed -i "s/config qosmate 'custom_rules'/config custom_rules 'custom_rules'/" "$TMP_CFG_FILE"
+            print_msg "custom_rules section corrected."
+            ;;
+        44)
+            # Both correct and incorrect sections found - remove duplicate
+            commit_req=1
+            print_msg "Both incorrect and correct custom_rules sections found. Removing the incorrect one..."
+            uci_tmp -q delete qosmate.@qosmate[0] || return 1
+            print_msg "Incorrect custom_rules section removed."
+            ;;
+        *)
+            error_out "Unexpected return code '$?' when checking the 'custom_rules' section."
+            return 1
             ;;
     esac
-    
-    # Commit and clean up if migration happened
-    if [ $migrated -eq 1 ]; then
-        uci commit qosmate
-        
-        local new_preset="$(uci -q get qosmate.advanced.COMMON_LINK_PRESETS)"
-        local new_oh="$(uci -q get qosmate.advanced.OVERHEAD)"
-        local msg="Link layer settings migrated from $root_qdisc to advanced section: preset=$new_preset"
-        [ -n "$new_oh" ] && msg="$msg, overhead=$new_oh"
-        log_msg "$msg"
-        
-        uci -q delete qosmate.cake.COMMON_LINK_PRESETS 2>/dev/null
-        uci -q delete qosmate.cake.OVERHEAD 2>/dev/null
-        uci -q delete qosmate.cake.MPU 2>/dev/null
-        uci -q delete qosmate.cake.LINK_COMPENSATION 2>/dev/null
-        uci -q delete qosmate.cake.ETHER_VLAN_KEYWORD 2>/dev/null
-        uci -q delete qosmate.hfsc.LINKTYPE 2>/dev/null
-        uci -q delete qosmate.hfsc.OH 2>/dev/null
-        
-        uci commit qosmate
+
+    # Migrate link layer settings to advanced section based on active QDisc
+
+    local root_qdisc qdisc settings setting val adv_preset \
+        has_old_settings=0 \
+        cake_old_settings="COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD" \
+        hfsc_old_settings="LINKTYPE OH"
+    : "$cake_old_settings" "$hfsc_old_settings"
+
+    UCI_CONFIG_DIR="$TMP_CFG_DIR" config_load qosmate || return 1
+    config_get root_qdisc settings ROOT_QDISC
+    config_get adv_preset advanced COMMON_LINK_PRESETS
+
+    # Check for old settings, migrate settings for CAKE or set $migration_req for HFSC
+    for qdisc in cake hfsc; do
+        eval "settings=\"\${${qdisc}_old_settings}\""
+        for setting in $settings; do
+            config_get val "$qdisc" "$setting"
+            [ -n "$val" ] || continue
+
+            has_old_settings=1
+
+            if [ "$qdisc" = "$root_qdisc" ]; then
+                eval "OLD_${setting}=\"${val}\""
+                # Immediately migrate CAKE settings
+                [ "$qdisc" = cake ] && { uci_tmp set "qosmate.advanced.$setting=$val" || return 1; }
+            fi
+        done
+    done
+
+    # Skip migration if not needed
+    if [ -n "$adv_preset" ]; then
+        if [ "$has_old_settings" = 0 ]; then
+            [ -n "$commit_req" ] || return 0
+            commit_tmp_config
+            return $?
+        fi
+        delete_premigration_settings
+        commit_tmp_config
+        return $?
     fi
+
+    # Clean up old settings
+    delete_premigration_settings
+
+    # Finalize CAKE migration
+    [ "$root_qdisc" = cake ] && {
+        if [ -n "$OLD_COMMON_LINK_PRESETS" ]; then
+            commit_tmp_config || return 1
+            report_migration cake "$OLD_COMMON_LINK_PRESETS" "$OLD_OVERHEAD"
+        else
+            uci_tmp set qosmate.advanced.COMMON_LINK_PRESETS=ethernet &&
+            commit_tmp_config || return 1
+            log_msg "Added missing link layer preset: ethernet."
+        fi
+        return 0
+    }
+
+    # Migrate settings for non-cake root qdiscs
+
+    # Use default "ethernet" if LINKTYPE not set
+    case "${OLD_LINKTYPE:-ethernet}" in
+        atm)
+            COMMON_LINK_PRESETS=atm
+            # ATM used the $OH variable - only set if different from default
+            [ -n "$OLD_OH" ] && [ "$OLD_OH" != "44" ] && {
+                OH="$OLD_OH"
+                uci_tmp set qosmate.advanced.OVERHEAD="$OLD_OH" || return 1
+            }
+            ;;
+        docsis)
+            COMMON_LINK_PRESETS=docsis
+            ;;
+        *)
+            COMMON_LINK_PRESETS=ethernet
+            ;;
+    esac
+
+    uci_tmp set qosmate.advanced.COMMON_LINK_PRESETS="$COMMON_LINK_PRESETS" &&
+    commit_tmp_config || return 1
+    report_migration "$root_qdisc" "$COMMON_LINK_PRESETS" "$OH"
+    :
 }
 
 manage_custom_rules_file() {
@@ -1763,7 +1818,7 @@ status_service() {
 
     # Display QoSmate configuration
     print_msg "==== QoSmate Configuration ===="
-    cat /etc/config/qosmate
+    cat "$QOSMATE_CFG_FILE"
 
     print_msg "==== Package Status ===="
 
@@ -2006,7 +2061,7 @@ auto_setup() {
         # Validate IP address format
         if [[ $gaming_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
             # Check if rules for this IP already exist
-            if grep -q "option src_ip '$gaming_ip'" /etc/config/qosmate || grep -q "option dest_ip '$gaming_ip'" /etc/config/qosmate; then
+            if grep -q "option src_ip '$gaming_ip'" "$QOSMATE_CFG_FILE" || grep -q "option dest_ip '$gaming_ip'" "$QOSMATE_CFG_FILE"; then
                 print_msg "Rules for IP $gaming_ip already exist. Skipping addition of new rules."
                 gaming_ip=
             fi
@@ -2017,10 +2072,10 @@ auto_setup() {
     fi
 
     local temp_config_file="/tmp/qosmate_config.tmp"
-    if [ -f /etc/config/qosmate ]; then
-        cp /etc/config/qosmate "$temp_config_file"
+    if [ -f "$QOSMATE_CFG_FILE" ]; then
+        cp "$QOSMATE_CFG_FILE" "$temp_config_file"
     else
-        error_out "config file '/etc/config/qosmate' not found."
+        error_out "config file '$QOSMATE_CFG_FILE' not found."
         return 1
     fi
 
@@ -2055,14 +2110,14 @@ EOF
         print_msg "No gaming device IP added."
         :
     fi &&
-    mv "$temp_config_file" /etc/config/qosmate ||
+    mv "$temp_config_file" "$QOSMATE_CFG_FILE" ||
     {
-        error_out "Failed to modify the config. Please check the file /etc/config/qosmate"
+        error_out "Failed to modify the config. Please check the file $QOSMATE_CFG_FILE"
         return 1
     }
 
     print_msg "Configuration updated. New settings:"
-    grep -E "option (WAN|DOWNRATE|UPRATE)" /etc/config/qosmate
+    grep -E "option (WAN|DOWNRATE|UPRATE)" "$QOSMATE_CFG_FILE"
 
 
     print_msg "Auto-setup complete. qosmate has been configured with detected settings." \
@@ -2081,16 +2136,15 @@ auto_setup_noninteractive() {
 }
 
 expand_config() {
-    local config_file="/etc/config/qosmate"
     local main_script="/etc/qosmate.sh"
     
     log_msg "" "Expanding qosmate configuration with all possible options..."
 
     # Ensure all sections exist
     for section in global settings advanced hfsc cake custom_rules; do
-        if ! grep -q "config $section '$section'" "$config_file"; then
-            echo >> "$config_file"  # Add a newline before the new section
-            echo "config $section '$section'" >> "$config_file"
+        if ! grep -q "config $section '$section'" "$QOSMATE_CFG_FILE"; then
+            echo >> "$QOSMATE_CFG_FILE"  # Add a newline before the new section
+            echo "config $section '$section'" >> "$QOSMATE_CFG_FILE"
             print_msg "Added section: $section"
         fi
     done
@@ -2126,9 +2180,9 @@ expand_config() {
         local section="$1"
         shift
         for option in "$@"; do
-            if ! grep -q "option $option" "$config_file"; then
+            if ! grep -q "option $option" "$QOSMATE_CFG_FILE"; then
                 default_value=$(get_default_value "$option")
-                sed -i "/config $section/a\\    option $option '$default_value'" "$config_file"
+                sed -i "/config $section/a\\    option $option '$default_value'" "$QOSMATE_CFG_FILE"
                 print_msg "Added option $option to section $section with value: $default_value"
             fi
         done
@@ -2141,7 +2195,7 @@ expand_config() {
     add_options hfsc gameqdisc GAMEUP GAMEDOWN nongameqdisc nongameqdiscoptions MAXDEL PFIFOMIN PACKETSIZE netemdelayms netemjitterms netemdist pktlossp
     add_options cake PRIORITY_QUEUE_INGRESS PRIORITY_QUEUE_EGRESS HOST_ISOLATION NAT_INGRESS NAT_EGRESS ACK_FILTER_EGRESS RTT AUTORATE_INGRESS EXTRA_PARAMETERS_INGRESS EXTRA_PARAMETERS_EGRESS
 
-    print_msg "Configuration expanded successfully. You can now edit all available options in $config_file"
+    print_msg "Configuration expanded successfully. You can now edit all available options in $QOSMATE_CFG_FILE"
 }
 
 health_check() {
@@ -2176,7 +2230,7 @@ health_check() {
     fi
     
     # Check if essential config file exists
-    if [ -f "/etc/config/qosmate" ]; then
+    if [ -f "$QOSMATE_CFG_FILE" ]; then
         status="${status}config:ok;"
     else
         status="${status}config:missing;"
