@@ -837,15 +837,10 @@ Please use this template when reporting issues with QoSmate. Providing complete 
 
 ### System Information and Configuration
 
-Please run these commands and provide their complete output:
+Please run this command and provide the complete output:
 
 ```bash
-ubus call system board
-/etc/init.d/qosmate check_version
 /etc/init.d/qosmate status
-/etc/init.d/qosmate health_check
-cat /etc/config/qosmate
-ifstatus wan | grep -e device
 ```
 
 ### Connection Details
