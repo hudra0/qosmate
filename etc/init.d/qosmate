@@ -1406,29 +1406,6 @@ try_migrate_config() {
     try_mkdir -p "$TMP_CFG_DIR" &&
     cp "$QOSMATE_CFG_FILE" "$TMP_CFG_FILE" || return 1
 
-    # Add the global enabled option if it does not exist
-    if ! uci_tmp get qosmate.global 2>/dev/null 1>&2; then
-        commit_req=1
-        print_msg "Adding global configuration section..."
-        uci_tmp set qosmate.global=global &&
-        uci_tmp set qosmate.global.enabled=1 &&
-        uci_tmp reorder qosmate.global=0 ||
-            return 1
-        print_msg "Global configuration section added."
-    else
-        print_msg "Global configuration section already exists."
-    fi
-
-    # Ensure the enabled option is present in the global section
-    if ! uci_tmp get qosmate.global.enabled 2>/dev/null 1>&2; then
-        commit_req=1
-        print_msg "Adding enabled option to global section..."
-        uci_tmp set qosmate.global.enabled=1 || return 1
-        print_msg "Enabled option added."
-    else
-        print_msg "Enabled option already exists."
-    fi
-
     # Check for and correct the custom_rules section
     awk "
         BEGIN{cor=3; inc=3}
@@ -1463,6 +1440,29 @@ try_migrate_config() {
             return 1
             ;;
     esac
+
+    # Add the global enabled option if it does not exist
+    if ! uci_tmp get qosmate.global 2>/dev/null 1>&2; then
+        commit_req=1
+        print_msg "Adding global configuration section..."
+        uci_tmp set qosmate.global=global &&
+        uci_tmp set qosmate.global.enabled=1 &&
+        uci_tmp reorder qosmate.global=0 ||
+            return 1
+        print_msg "Global configuration section added."
+    else
+        print_msg "Global configuration section already exists."
+    fi
+
+    # Ensure the enabled option is present in the global section
+    if ! uci_tmp get qosmate.global.enabled 2>/dev/null 1>&2; then
+        commit_req=1
+        print_msg "Adding enabled option to global section..."
+        uci_tmp set qosmate.global.enabled=1 || return 1
+        print_msg "Enabled option added."
+    else
+        print_msg "Enabled option already exists."
+    fi
 
     # Migrate link layer settings to advanced section based on active QDisc
 
