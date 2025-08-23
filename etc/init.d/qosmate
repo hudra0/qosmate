@@ -1375,7 +1375,7 @@ migrate_config() {
     local rv=$?
     [ $rv = 0 ] || {
         error_out "Failed to migrate config."
-        uci -c "$TMP_CFG_DIR" revert qosmate 2>/dev/null
+        uci_tmp revert qosmate 2>/dev/null
     }
     rm -rf "$TMP_CFG_DIR"
     return $rv
@@ -1406,7 +1406,7 @@ try_migrate_config() {
     try_mkdir -p "$TMP_CFG_DIR" &&
     cp "$QOSMATE_CFG_FILE" "$TMP_CFG_FILE" || return 1
 
-    # Function to add the global enabled option if it does not exist
+    # Add the global enabled option if it does not exist
     if ! uci_tmp get qosmate.global 2>/dev/null 1>&2; then
         commit_req=1
         print_msg "Adding global configuration section..."
@@ -1476,7 +1476,7 @@ try_migrate_config() {
     config_get root_qdisc settings ROOT_QDISC
     config_get adv_preset advanced COMMON_LINK_PRESETS
 
-    # Check for old settings, migrate settings for CAKE or set $migration_req for HFSC
+    # Check for old settings, migrate settings for CAKE or set OLD_${setting} vars for HFSC
     for qdisc in cake hfsc; do
         eval "settings=\"\${${qdisc}_old_settings}\""
         for setting in $settings; do
