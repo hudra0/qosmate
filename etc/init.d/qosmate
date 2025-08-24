@@ -2195,6 +2195,7 @@ expand_config() {
         for option in "$@"; do
             if ! grep -q "option $option" "$QOSMATE_CFG_FILE"; then
                 default_value=$(get_default_value "$option")
+                [ -n "$default_value" ] || continue
                 sed -i "/config $section/a\\    option $option '$default_value'" "$QOSMATE_CFG_FILE"
                 print_msg "Added option $option to section $section with value: $default_value"
             fi
