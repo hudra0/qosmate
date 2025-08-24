@@ -2155,9 +2155,8 @@ expand_config() {
 
     # Ensure all sections exist
     for section in global settings advanced hfsc cake custom_rules; do
-        if ! grep -q "config $section '$section'" "$QOSMATE_CFG_FILE"; then
-            echo >> "$QOSMATE_CFG_FILE"  # Add a newline before the new section
-            echo "config $section '$section'" >> "$QOSMATE_CFG_FILE"
+        if ! uci get "qosmate.$section" 2>/dev/null 1>&2; then
+            uci set "qosmate.$section=$section"
             print_msg "Added section: $section"
         fi
     done
@@ -2193,21 +2192,32 @@ expand_config() {
         local section="$1"
         shift
         for option in "$@"; do
-            if ! grep -q "option $option" "$QOSMATE_CFG_FILE"; then
+            if ! uci get "qosmate.${section}.${option}" 2>/dev/null 1>&2; then
                 default_value=$(get_default_value "$option")
                 [ -n "$default_value" ] || continue
-                sed -i "/config $section/a\\    option $option '$default_value'" "$QOSMATE_CFG_FILE"
-                print_msg "Added option $option to section $section with value: $default_value"
+                print_msg "Adding option $option to section $section with value: $default_value"
+                uci set "qosmate.${section}.${option}=${default_value}" || return 1
             fi
         done
+        :
     }
 
     # Add options for each section
-    add_options global enabled
-    add_options settings WAN DOWNRATE UPRATE ROOT_QDISC
-    add_options advanced PRESERVE_CONFIG_FILES WASHDSCPUP WASHDSCPDOWN BWMAXRATIO ACKRATE UDP_RATE_LIMIT_ENABLED UDPBULKPORT TCPBULKPORT VIDCONFPORTS REALTIME4 REALTIME6 LOWPRIOLAN4 LOWPRIOLAN6 TCP_UPGRADE_ENABLED MSS NFT_HOOK NFT_PRIORITY COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD
-    add_options hfsc gameqdisc GAMEUP GAMEDOWN nongameqdisc nongameqdiscoptions MAXDEL PFIFOMIN PACKETSIZE netemdelayms netemjitterms netemdist pktlossp
-    add_options cake PRIORITY_QUEUE_INGRESS PRIORITY_QUEUE_EGRESS HOST_ISOLATION NAT_INGRESS NAT_EGRESS ACK_FILTER_EGRESS RTT AUTORATE_INGRESS EXTRA_PARAMETERS_INGRESS EXTRA_PARAMETERS_EGRESS
+    add_options global enabled &&
+    add_options settings WAN DOWNRATE UPRATE ROOT_QDISC &&
+    add_options advanced PRESERVE_CONFIG_FILES WASHDSCPUP WASHDSCPDOWN BWMAXRATIO ACKRATE \
+        UDP_RATE_LIMIT_ENABLED UDPBULKPORT TCPBULKPORT VIDCONFPORTS REALTIME4 REALTIME6 \
+        LOWPRIOLAN4 LOWPRIOLAN6 TCP_UPGRADE_ENABLED MSS NFT_HOOK NFT_PRIORITY \
+        COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD &&
+    add_options hfsc gameqdisc GAMEUP GAMEDOWN nongameqdisc nongameqdiscoptions MAXDEL PFIFOMIN \
+        PACKETSIZE netemdelayms netemjitterms netemdist pktlossp &&
+    add_options cake PRIORITY_QUEUE_INGRESS PRIORITY_QUEUE_EGRESS HOST_ISOLATION NAT_INGRESS NAT_EGRESS \
+        ACK_FILTER_EGRESS RTT AUTORATE_INGRESS EXTRA_PARAMETERS_INGRESS EXTRA_PARAMETERS_EGRESS &&
+    uci commit qosmate ||
+    {
+        error_out "Failed to add config options."
+        return 1
+    }
 
     print_msg "Configuration expanded successfully. You can now edit all available options in $QOSMATE_CFG_FILE"
 }
