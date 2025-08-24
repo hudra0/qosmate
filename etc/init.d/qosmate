@@ -137,6 +137,7 @@ commit_tmp_config() {
     cp "$TMP_CFG_FILE" "$QOSMATE_CFG_FILE"
     local rv=$?
     rm -rf "$TMP_CFG_DIR"
+    [ $rv = 0 ] || error_out "Failed to save the new config."
     return $rv
 }
 
@@ -1882,8 +1883,27 @@ parse_speedtest_output() {
     :
 }
 
-# for non-interactive setup, call with '-n [gaming_ip_address]'
 auto_setup() {
+    try_auto_setup "$@"
+    local rv=$?
+    [ $rv = 0 ] || {
+        error_out "auto-setup failed."
+        uci revert qosmate 2>/dev/null
+    }
+    return $rv
+}
+
+# for non-interactive setup, call with '-n [gaming_ip_address]'
+try_auto_setup() {
+    # shellcheck disable=SC2329
+    is_ip_configured() {
+        local ip ip_type section_id="$1" gaming_ip="$2"
+        for ip_type in src_ip dest_ip; do
+            config_get ip "$section_id" "$ip_type"
+            [ "$ip" = "$gaming_ip" ] && { ip_configured=1; break; }
+        done
+    }
+
     local L3_DEVICE WAN_INTERFACE FINAL_INTERFACE SPEEDTEST_CMD FREE_SPACE SPEED_RESULT DOWNLOAD_SPEED UPLOAD_SPEED
     local gaming_ip='' noninteractive='' speed_choice response speedtest_req direction
 
@@ -2047,6 +2067,16 @@ auto_setup() {
         "DOWNRATE: $DOWNRATE kbps (90% of measured download speed)" \
         "UPRATE: $UPRATE kbps (90% of measured upload speed)"
 
+    [ -f "$QOSMATE_CFG_FILE" ] || {
+        error_out "config file '$QOSMATE_CFG_FILE' not found."
+        return 1
+    }
+
+    config_load qosmate &&
+    uci set qosmate.settings.WAN="$FINAL_INTERFACE" &&
+    uci set qosmate.settings.DOWNRATE="$DOWNRATE" &&
+    uci set qosmate.settings.UPRATE="$UPRATE" || return 1
+
     # Section for gaming device IP
     if [ -z "$noninteractive" ]; then
         print_msg "Would you like to add a gaming device IP for prioritization? [y/N]"
@@ -2061,7 +2091,10 @@ auto_setup() {
         # Validate IP address format
         if [[ $gaming_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
             # Check if rules for this IP already exist
-            if grep -q "option src_ip '$gaming_ip'" "$QOSMATE_CFG_FILE" || grep -q "option dest_ip '$gaming_ip'" "$QOSMATE_CFG_FILE"; then
+            local ip_configured=
+            config_foreach is_ip_configured rule "$gaming_ip"
+            # $ip_configured is set in is_ip_configured()
+            if [ -n "$ip_configured" ]; then
                 print_msg "Rules for IP $gaming_ip already exist. Skipping addition of new rules."
                 gaming_ip=
             fi
@@ -2071,50 +2104,29 @@ auto_setup() {
         fi
     fi
 
-    local temp_config_file="/tmp/qosmate_config.tmp"
-    if [ -f "$QOSMATE_CFG_FILE" ]; then
-        cp "$QOSMATE_CFG_FILE" "$temp_config_file"
-    else
-        error_out "config file '$QOSMATE_CFG_FILE' not found."
-        return 1
-    fi
-
-    # TODO: all of this should be rewritten with UCI commands
-    sed -i "/option WAN/c\    option WAN '$FINAL_INTERFACE'
-        /option DOWNRATE/c\    option DOWNRATE '$DOWNRATE'
-        /option UPRATE/c\    option UPRATE '$UPRATE'" \
-            "$temp_config_file" &&
-    if [ -n "$gaming_ip" ] && cat << EOF >> "$temp_config_file"
-config rule
-    option name 'Game_Console_Outbound'
-    option proto 'udp'
-    option src_ip '$gaming_ip'
-    list dest_port '!=80'
-    list dest_port '!=443'
-    option class 'cs5'
-    option counter '1'
-
-config rule
-    option name 'Game_Console_Inbound'
-    option proto 'udp'
-    option dest_ip '$gaming_ip'
-    list src_port '!=80'
-    list src_port '!=443'
-    option class 'cs5'
-    option counter '1'
-EOF
-    then
+    if [ -n "$gaming_ip" ]; then
+        local direction ip_dir port_dir
+        for direction in Inbound Outbound; do
+            case "$direction" in
+                Inbound) ip_dir=dest port_dir=src ;;
+                Outbound) ip_dir=src port_dir=dest ;;
+            esac
+            uci add qosmate rule 1>/dev/null &&
+            uci set "qosmate.@rule[-1].name=Game_Console_${direction}" &&
+            uci set "qosmate.@rule[-1].proto=udp" &&
+            uci set "qosmate.@rule[-1].${ip_dir}_ip=${gaming_ip}" &&
+            uci add_list "qosmate.@rule[-1].${port_dir}_port=!=80" &&
+            uci add_list "qosmate.@rule[-1].${port_dir}_port=!=443" &&
+            uci set "qosmate.@rule[-1].class=cs5" &&
+            uci set "qosmate.@rule[-1].counter=1" ||
+                return 1
+        done
         print_msg "Gaming device rules added for IP: $gaming_ip"
-        :
     else
         print_msg "No gaming device IP added."
-        :
-    fi &&
-    mv "$temp_config_file" "$QOSMATE_CFG_FILE" ||
-    {
-        error_out "Failed to modify the config. Please check the file $QOSMATE_CFG_FILE"
-        return 1
-    }
+    fi
+
+    uci commit qosmate || return 1
 
     print_msg "Configuration updated. New settings:"
     grep -E "option (WAN|DOWNRATE|UPRATE)" "$QOSMATE_CFG_FILE"
@@ -2122,6 +2134,7 @@ EOF
 
     print_msg "Auto-setup complete. qosmate has been configured with detected settings." \
         "To apply these changes, please restart qosmate by running: /etc/init.d/qosmate restart"
+    :
 }
 
 auto_setup_noninteractive() {
