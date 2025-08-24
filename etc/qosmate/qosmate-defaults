@@ -1,3 +1,4 @@
+# options set here are mandatory for every qosmate installation (values are not)
 config settings 'settings'
 	option WAN 'eth1'
 	option DOWNRATE '90000'
