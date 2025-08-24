@@ -1884,13 +1884,10 @@ parse_speedtest_output() {
 }
 
 auto_setup() {
-    try_auto_setup "$@"
-    local rv=$?
-    [ $rv = 0 ] || {
-        error_out "auto-setup failed."
-        uci revert qosmate 2>/dev/null
-    }
-    return $rv
+    try_auto_setup "$@" && return 0
+    error_out "auto-setup failed."
+    uci revert qosmate 2>/dev/null
+    return 1
 }
 
 # for non-interactive setup, call with '-n [gaming_ip_address]'
@@ -2149,16 +2146,23 @@ auto_setup_noninteractive() {
 }
 
 expand_config() {
-    local main_script="/etc/qosmate.sh"
+    try_expand_config && return 0
+    error_out "Failed to expand config."
+    uci revert qosmate 2>/dev/null
+    return 1
+}
+
+try_expand_config() {
+    local main_script="/etc/qosmate.sh" options_added=''
     
     log_msg "" "Expanding qosmate configuration with all possible options..."
 
     # Ensure all sections exist
     for section in global settings advanced hfsc cake custom_rules; do
-        if ! uci get "qosmate.$section" 2>/dev/null 1>&2; then
-            uci set "qosmate.$section=$section"
-            print_msg "Added section: $section"
-        fi
+        uci get "qosmate.$section" 2>/dev/null 1>&2 && continue
+        print_msg "Adding config section: $section"
+        uci set "qosmate.$section=$section" || return 1
+        options_added=1
     done
 
     # Function to get default value from main script
@@ -2187,17 +2191,18 @@ expand_config() {
             echo "$default_value"
         fi
     }
+
     # Define options for each section
     add_options() {
         local section="$1"
         shift
         for option in "$@"; do
-            if ! uci get "qosmate.${section}.${option}" 2>/dev/null 1>&2; then
-                default_value=$(get_default_value "$option")
-                [ -n "$default_value" ] || continue
-                print_msg "Adding option $option to section $section with value: $default_value"
-                uci set "qosmate.${section}.${option}=${default_value}" || return 1
-            fi
+            uci get "qosmate.${section}.${option}" 2>/dev/null 1>&2 && continue
+            default_value=$(get_default_value "$option")
+            [ -n "$default_value" ] || continue
+            options_added=1
+            print_msg "Adding option $option to section $section with value: $default_value"
+            uci set "qosmate.${section}.${option}=${default_value}" || return 1
         done
         :
     }
@@ -2219,7 +2224,9 @@ expand_config() {
         return 1
     }
 
-    print_msg "Configuration expanded successfully. You can now edit all available options in $QOSMATE_CFG_FILE"
+    [ -n "$options_added" ] &&
+        print_msg "Configuration expanded successfully. You can now edit all available options in $QOSMATE_CFG_FILE"
+    :
 }
 
 health_check() {
