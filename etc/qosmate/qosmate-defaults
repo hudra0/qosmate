@@ -1,0 +1,4 @@
+config settings 'settings'
+	option WAN 'eth1'
+	option DOWNRATE '90000'
+	option UPRATE '45000'
