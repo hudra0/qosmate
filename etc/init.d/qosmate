@@ -2155,55 +2155,59 @@ expand_config() {
 }
 
 try_expand_config() {
-    # Define options for each section
-    add_options() {
-        local section option def_val section="$1"
-        shift
-        for option in "$@"; do
-            uci get "qosmate.${section}.${option}" 2>/dev/null 1>&2 && continue
-            def_val="$(
-                uci -c "${QOSMATE_DEFAULTS_FILE%/*}" get "${QOSMATE_DEFAULTS_FILE##*/}.${section}.${option}" 2>/dev/null
-            )" || continue
-            options_added=1
-            print_msg "Adding option $option to section $section with value: $def_val"
-            uci set "qosmate.${section}.${option}=${def_val}" || return 1
-        done
-        :
-    }
-
-    local section options_added=''
-    
     log_msg "" "Expanding qosmate configuration with all possible options..."
 
     [ -f "$QOSMATE_DEFAULTS_FILE" ] || { error_out "$QOSMATE_DEFAULTS_FILE is missing."; return 1; }
 
-    # Ensure all sections exist
-    for section in global settings advanced hfsc cake custom_rules; do
-        uci get "qosmate.$section" 2>/dev/null 1>&2 && continue
-        print_msg "Adding config section: $section"
-        uci set "qosmate.$section=$section" || return 1
-        options_added=1
-    done
+    # Subshell to isolate the namespace
+    (
+        # option_cb() is called when processing each option in config_load()
+        # shellcheck disable=SC2329
+        option_cb() {
+            # $CONFIG_SECTION is set by the callback handler
+            [ -n "$CONFIG_SECTION" ] && [ -n "$1" ] && [ -n "$2" ] || return 0 # make sure section, option and val are set
+            def_options="${def_options}${CONFIG_SECTION}.${1} "
+        }
 
-    # Add options for each section
-    add_options global enabled &&
-    add_options settings WAN DOWNRATE UPRATE ROOT_QDISC &&
-    add_options advanced PRESERVE_CONFIG_FILES WASHDSCPUP WASHDSCPDOWN BWMAXRATIO ACKRATE \
-        UDP_RATE_LIMIT_ENABLED UDPBULKPORT TCPBULKPORT VIDCONFPORTS REALTIME4 REALTIME6 \
-        LOWPRIOLAN4 LOWPRIOLAN6 TCP_UPGRADE_ENABLED MSS NFT_HOOK NFT_PRIORITY \
-        COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD &&
-    add_options hfsc gameqdisc GAMEUP GAMEDOWN nongameqdisc nongameqdiscoptions MAXDEL PFIFOMIN \
-        PACKETSIZE netemdelayms netemjitterms netemdist pktlossp &&
-    add_options cake PRIORITY_QUEUE_INGRESS PRIORITY_QUEUE_EGRESS HOST_ISOLATION NAT_INGRESS NAT_EGRESS \
-        ACK_FILTER_EGRESS RTT AUTORATE_INGRESS EXTRA_PARAMETERS_INGRESS EXTRA_PARAMETERS_EGRESS &&
-    uci commit qosmate ||
-    {
-        error_out "Failed to add config options."
-        return 1
-    }
+        options_added=''
+        # Ensure all sections exist
+        for section_spec in "global 0" "settings 1" "advanced 2" "hfsc 3" "cake 4" "custom_rules 5"; do
+            section="${section_spec%% *}"
+            index="${section_spec#* }"
+            uci get "qosmate.${section}" 2>/dev/null 1>&2 && continue
 
-    [ -n "$options_added" ] &&
-        print_msg "Configuration expanded successfully. You can now edit all available options in $QOSMATE_CFG_FILE"
+            print_msg "Adding config section '$section'."
+            uci set "qosmate.${section}=${section}" &&
+            uci reorder "qosmate.${section}=${index}" ||
+                { error_out "Failed to add section."; return 1; }
+            options_added=1
+        done
+
+        # Add options for each section
+
+        UCI_CONFIG_DIR="${QOSMATE_DEFAULTS_FILE%/*}" config_load "${QOSMATE_DEFAULTS_FILE##*/}" &&
+            [ -n "$def_options" ] || { error_out "Failed to get default config options."; exit 1; }
+
+        for option_path in $def_options; do
+            uci get "qosmate.${option_path}" 2>/dev/null 1>&2 && continue
+            section="${option_path%.*}"
+            option_name="${option_path##*.}"
+            config_get val "$section" "$option_name"
+            [ -n "$val" ] || continue
+            options_added=1
+            print_msg "Adding option '$option_name' to section '$section' with default value '$val'."
+            uci set "qosmate.${option_path}=${val}" ||
+                { error_out "Failed to add config option."; return 1; }
+        done
+
+        if [ -n "$options_added" ]; then
+            uci commit qosmate || return 1
+            print_msg "Configuration expanded successfully. You can now edit all available options in $QOSMATE_CFG_FILE"
+        else
+            print_msg "All required options are already set."
+        fi
+        :
+    ) || return 1
     :
 }
 
