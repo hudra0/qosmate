@@ -3,28 +3,82 @@
 
 VERSION="1.2.0" # will become obsolete in future releases as version string is now in the init script
 
+QOSMATE_DEFAULTS_FILE=/etc/qosmate/qosmate-defaults
+
 _NL_='
 '
 DEFAULT_IFS=" 	${_NL_}"
 IFS="$DEFAULT_IFS"
 
 . /lib/functions.sh
-config_load 'qosmate'
 
-# Default values
-DEFAULT_WAN="eth1"
-DEFAULT_DOWNRATE="90000"
-DEFAULT_UPRATE="45000"
-DEFAULT_OH="44"
+error_out() { log_msg -err "${@}"; }
 
-: "${VERSION}" "${DEFAULT_WAN}" "${DEFAULT_DOWNRATE}" "${DEFAULT_UPRATE}" "${DEFAULT_OH}" "${nongameqdisc:=}" "${nongameqdiscoptions:=}"
+# prints each argument to a separate line
+print_msg() {
+	local _arg
+	for _arg in "$@"
+	do
+		case "${_arg}" in
+			'') printf '\n' ;; # print out empty lines
+			*) printf '%s\n' "${_arg}"
+		esac
+	done
+	:
+}
+
+# logs each argument separately and prints to a separate line
+# optional arguments: '-err', '-warn' to set logged error level
+log_msg() {
+	local msgs_prefix='' _arg err_l=info msgs_dest
+
+	local IFS="$DEFAULT_IFS"
+	for _arg in "$@"
+	do
+		case "${_arg}" in
+			"-err") err_l=err msgs_prefix="Error: " ;;
+			"-warn") err_l=warn msgs_prefix="Warning: " ;;
+			'') printf '\n' ;; # print out empty lines
+			*)
+				case "$err_l" in
+					err|warn) msgs_dest="/dev/stderr" ;;
+					*) msgs_dest="/dev/stdout"
+				esac
+				printf '%s\n' "${msgs_prefix}${_arg}" > "$msgs_dest"
+				logger -t qosmate -p user."$err_l" "${msgs_prefix}${_arg}"
+				msgs_prefix=''
+		esac
+	done
+	:
+}
+
+get_defaults() {
+	# option_cb() is called when processing each option in config_load()
+	# shellcheck disable=SC2329
+	option_cb() {
+		# $CONFIG_SECTION is set by the callback handler
+		[ -n "$CONFIG_SECTION" ] && [ -n "$1" ] && [ -n "$2" ] || return 0 # make sure section, option and val are set
+		eval "DEFAULT_${1}=\"${2}\""
+		defaults_set=1
+	}
+
+	local defaults_set=
+	UCI_CONFIG_DIR="${QOSMATE_DEFAULTS_FILE%/*}" config_load "${QOSMATE_DEFAULTS_FILE##*/}" &&
+		[ -n "$defaults_set" ] || exit 1
+
+	reset_cb # reset callback function to no-op
+
+	# Non-mandatory options are not set in qosmate-defaults
+	DEFAULT_OH=44 # IS THIS VARIABLE NEEDED?
+	:
+}
 
 load_config() {
     # Global settings
     config_get ROOT_QDISC settings ROOT_QDISC hfsc
-    config_get WAN settings WAN $DEFAULT_WAN
-    config_get DOWNRATE settings DOWNRATE $DEFAULT_DOWNRATE
-    config_get UPRATE settings UPRATE $DEFAULT_UPRATE
+    config_get WAN settings WAN "$DEFAULT_WAN"
+    config_get DOWNRATE settings DOWNRATE "$DEFAULT_DOWNRATE"
+    config_get UPRATE settings UPRATE "$DEFAULT_UPRATE"
 
     # Advanced settings
     config_get PRESERVE_CONFIG_FILES advanced PRESERVE_CONFIG_FILES 0
@@ -85,6 +139,13 @@ load_config() {
     FIRST500MS=$((DOWNRATE * 500 / 8))
     FIRST10S=$((DOWNRATE * 10000 / 8))
 }
+
+# Set $DEFAULT_* variables
+get_defaults || { error_out "Failed to get defaults."; exit 1; }
+
+config_load 'qosmate' || { error_out "Failed to get UCI config."; exit 1; }
+
+: "${VERSION}" "${DEFAULT_WAN}" "${DEFAULT_DOWNRATE}" "${DEFAULT_UPRATE}" "${DEFAULT_OH}" "${nongameqdisc:=}" "${nongameqdiscoptions:=}"
 
 load_config
 
