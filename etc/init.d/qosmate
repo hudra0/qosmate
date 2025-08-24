@@ -48,8 +48,9 @@ MAIN_BRANCH_FRONTEND=main
 ### Local paths
 
 QOSMATE_CFG_FILE=/etc/config/qosmate
-TMP_CFG_DIR="/tmp/qosmate_tmp"
-TMP_CFG_FILE="$TMP_CFG_DIR/qosmate"
+TMP_CFG_DIR=/tmp/qosmate_tmp
+TMP_CFG_FILE=$TMP_CFG_DIR/qosmate
+QOSMATE_DEFAULTS_FILE=/etc/qosmate/qosmate-defaults
 
 # Local path of JS files
 QOSMATE_UPD_DIR=/var/run/qosmate-update
@@ -68,6 +69,7 @@ QOSMATE_MAIN_FILE_BACKEND=$QOSMATE_SERVICE_PATH
 QOSMATE_FILE_TYPES_BACKEND="GEN EXTRA" # change the value if adding more types
 QOSMATE_GEN_FILES_BACKEND="
 	$QOSMATE_SERVICE_PATH
+    $QOSMATE_DEFAULTS_FILE
 	/etc/qosmate.sh
 	/usr/lib/tc/experimental.dist
 	/usr/lib/tc/normal.dist
@@ -2153,9 +2155,27 @@ expand_config() {
 }
 
 try_expand_config() {
-    local main_script="/etc/qosmate.sh" options_added=''
+    # Define options for each section
+    add_options() {
+        local section option def_val section="$1"
+        shift
+        for option in "$@"; do
+            uci get "qosmate.${section}.${option}" 2>/dev/null 1>&2 && continue
+            def_val="$(
+                uci -c "${QOSMATE_DEFAULTS_FILE%/*}" get "${QOSMATE_DEFAULTS_FILE##*/}.${section}.${option}" 2>/dev/null
+            )" || continue
+            options_added=1
+            print_msg "Adding option $option to section $section with value: $def_val"
+            uci set "qosmate.${section}.${option}=${def_val}" || return 1
+        done
+        :
+    }
+
+    local section options_added=''
     
     log_msg "" "Expanding qosmate configuration with all possible options..."
+
+    [ -f "$QOSMATE_DEFAULTS_FILE" ] || { error_out "$QOSMATE_DEFAULTS_FILE is missing."; return 1; }
 
     # Ensure all sections exist
     for section in global settings advanced hfsc cake custom_rules; do
@@ -2164,48 +2184,6 @@ try_expand_config() {
         uci set "qosmate.$section=$section" || return 1
         options_added=1
     done
-
-    # Function to get default value from main script
-    get_default_value() {
-        local option="$1"
-        local default_value
-
-        # Map options to their DEFAULT_ counterparts
-        case "$option" in
-            OH) option="DEFAULT_OH" ;;
-            WAN) option="DEFAULT_WAN" ;;
-            DOWNRATE) option="DEFAULT_DOWNRATE" ;;
-            UPRATE) option="DEFAULT_UPRATE" ;;
-        esac
-
-        # Try to find a direct assignment
-        default_value=$(grep "^${option}=" "$main_script" | cut -d'=' -f2- | tr -d '"')
-
-        # Remove any remaining shell expansions and trim whitespace
-        default_value=$(echo "$default_value" | sed -e 's/\$([^)]*)//g' -e 's/^ *//g' -e 's/ *$//g' -e 's/\${{.*}}//g')
-
-        # Check for dynamic calculations and return empty string if found
-        if echo "$default_value" | grep -qE '[[($]|\)$'; then
-            echo ""
-        else
-            echo "$default_value"
-        fi
-    }
-
-    # Define options for each section
-    add_options() {
-        local section="$1"
-        shift
-        for option in "$@"; do
-            uci get "qosmate.${section}.${option}" 2>/dev/null 1>&2 && continue
-            default_value=$(get_default_value "$option")
-            [ -n "$default_value" ] || continue
-            options_added=1
-            print_msg "Adding option $option to section $section with value: $default_value"
-            uci set "qosmate.${section}.${option}=${default_value}" || return 1
-        done
-        :
-    }
 
     # Add options for each section
     add_options global enabled &&
