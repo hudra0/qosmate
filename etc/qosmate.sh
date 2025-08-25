@@ -16,12 +16,16 @@ error_out() { log_msg -err "${@}"; }
 
 # prints each argument to a separate line
 print_msg() {
-	local _arg
+	local _arg msgs_dest="/dev/stdout" msgs_prefix=''
 	for _arg in "$@"
 	do
 		case "${_arg}" in
+			-err) msgs_dest="/dev/stderr" msgs_prefix="Error: " ;;
+			-warn) msgs_dest="/dev/stderr" msgs_prefix="Warning: " ;;
 			'') printf '\n' ;; # print out empty lines
-			*) printf '%s\n' "${_arg}"
+			*)
+				printf '%s\n' "${msgs_prefix}${_arg}" > "$msgs_dest"
+				msgs_prefix=''
 		esac
 	done
 	:
@@ -204,12 +208,12 @@ get_cake_link_params() {
 validate_and_adjust_rates() {
     if [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; then
         if [ -z "$DOWNRATE" ] || [ "$DOWNRATE" -eq 0 ]; then
-            echo "Warning: DOWNRATE is zero or not set for $ROOT_QDISC. Setting to minimum value of 1000 kbps."
+            print_msg -warn "DOWNRATE is zero or not set for $ROOT_QDISC. Setting to minimum value of 1000 kbps."
             DOWNRATE=1000
             uci set qosmate.settings.DOWNRATE=1000
         fi
         if [ -z "$UPRATE" ] || [ "$UPRATE" -eq 0 ]; then
-            echo "Warning: UPRATE is zero or not set for $ROOT_QDISC. Setting to minimum value of 1000 kbps."
+            print_msg -warn "UPRATE is zero or not set for $ROOT_QDISC. Setting to minimum value of 1000 kbps."
             UPRATE=1000
             uci set qosmate.settings.UPRATE=1000
         fi
@@ -221,7 +225,7 @@ validate_and_adjust_rates
 
 # Adjust DOWNRATE based on BWMAXRATIO
 if [ "$UPRATE" -gt 0 ] && [ $((DOWNRATE > UPRATE*BWMAXRATIO)) -eq 1 ]; then
-    echo "We limit the downrate to at most $BWMAXRATIO times the upstream rate to ensure no upstream ACK floods occur which can cause game packet drops"
+    print_msg "We limit the downrate to at most $BWMAXRATIO times the upstream rate to ensure no upstream ACK floods occur which can cause game packet drops"
     DOWNRATE=$((BWMAXRATIO*UPRATE))
 fi
 
@@ -237,9 +241,9 @@ preserve_config_files() {
         } | while read -r LINE; do
             grep -qxF "$LINE" /etc/sysupgrade.conf || echo "$LINE" >> /etc/sysupgrade.conf
         done
-        echo "Config files have been added to sysupgrade.conf for preservation."
+        print_msg "Config files have been added to sysupgrade.conf for preservation."
     else
-        echo "Preservation of config files is disabled."
+        print_msg "Preservation of config files is disabled."
              
         # Remove the config files from sysupgrade.conf if they exist
         sed -i '\|/etc/qosmate.sh|d' /etc/sysupgrade.conf
@@ -402,7 +406,7 @@ create_nft_rule() {
 
     # Ensure class is not empty
     if [ -z "$class" ]; then
-        echo "Error: Class for rule '$config' is empty."
+        print_msg -err "Class for rule '$config' is empty."
         return 1
     fi
     
@@ -1261,7 +1265,7 @@ setup_game_qdisc() {
             fi
         ;;
         *)
-            echo "Error: Unsupported game qdisc type '$QDISC_TYPE'. Using pfifo fallback." >&2
+            print_msg -err "Unsupported game qdisc type '$QDISC_TYPE'. Using pfifo fallback."
             # pfifo fallback limit calculation
             tc qdisc add dev "$DEV" parent 1:11 handle 10: pfifo limit $((PFIFOMIN+MAXDEL*RATE/8/PACKETSIZE))
         ;;
@@ -1318,7 +1322,7 @@ setup_hfsc() {
         elif [ "$nongameqdisc" = "fq_codel" ]; then
             tc qdisc add dev "$DEV" parent "1:$i" fq_codel memory_limit $((RATE*200/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
         else
-            echo "Unsupported qdisc for non-game traffic: $nongameqdisc"
+            print_msg -err "Unsupported qdisc for non-game traffic: $nongameqdisc"
             exit 1
         fi
     done
@@ -1710,7 +1714,7 @@ if [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; then
     case "$gameqdisc" in
         drr|qfq|pfifo|bfifo|red|fq_codel|netem) ;; # Supported qdiscs
         *)
-            echo "Warning: Unsupported gameqdisc '$gameqdisc' selected in config. Reverting to 'pfifo'." >&2
+            print_msg -warn "Unsupported gameqdisc '$gameqdisc' selected in config. Reverting to 'pfifo'."
             gameqdisc="pfifo" # Revert to a simple default as fallback
             ;;
     esac
@@ -1719,29 +1723,29 @@ fi
 # Main logic for selecting and applying the QoS system
 case "$ROOT_QDISC" in
     hfsc)
-        echo "Applying HFSC queueing discipline."
+        print_msg "Applying HFSC queueing discipline."
         # Call the renamed function (formerly setqdisc)
         setup_hfsc "$WAN" "$UPRATE" "$GAMEUP" "$gameqdisc" wan
         setup_hfsc "$LAN" "$DOWNRATE" "$GAMEDOWN" "$gameqdisc" lan
         ;;
     hybrid)
-        echo "Applying Hybrid (HFSC+CAKE) queueing discipline."
+        print_msg "Applying Hybrid (HFSC+CAKE) queueing discipline."
         # Setup WAN (egress/upload) and LAN (ingress/download) directly
         setup_hybrid "$WAN" "$UPRATE" "$GAMEUP" "wan"
         setup_hybrid "$LAN" "$DOWNRATE" "$GAMEDOWN" "lan"
         ;;
     cake)
-        echo "Applying CAKE queueing discipline."
+        print_msg "Applying CAKE queueing discipline."
         setup_cake
         ;;
     htb)
-        echo "Applying HTB queueing discipline."
+        print_msg "Applying HTB queueing discipline."
         setup_htb "$WAN" "$UPRATE" "wan"
         setup_htb "$LAN" "$DOWNRATE" "lan"
         ;;
     *) # Fallback for unsupported ROOT_QDISC
-        echo "Error: Unsupported ROOT_QDISC: '$ROOT_QDISC'. Check /etc/config/qosmate." >&2
-        echo "Warning: Falling back to default HFSC mode with pfifo game qdisc." >&2
+        print_msg -err "Unsupported ROOT_QDISC: '$ROOT_QDISC'. Check /etc/config/qosmate."
+        print_msg -warn "Falling back to default HFSC mode with pfifo game qdisc."
         ROOT_QDISC="hfsc"
         gameqdisc="pfifo" # Safe default for fallback
         # Apply the fallback configuration using the renamed function
@@ -1750,23 +1754,23 @@ case "$ROOT_QDISC" in
         ;;
 esac
 
-echo "DONE!"
+print_msg "DONE!"
 
 # Conditional output of tc status
 if [ "$ROOT_QDISC" = "hfsc" ] && [ "$gameqdisc" = "red" ]; then
-   echo "Can not output tc -s qdisc because it crashes on OpenWrt when using RED qdisc, but things are working!"
+   print_msg "Can not output tc -s qdisc because it crashes on OpenWrt when using RED qdisc, but things are working!"
 # Add check for hybrid mode with red gameqdisc
 elif [ "$ROOT_QDISC" = "hybrid" ] && [ "$gameqdisc" = "red" ]; then
-   echo "Can not output tc -s qdisc because it crashes on OpenWrt when using RED qdisc in hybrid mode, but things are working!"
+   print_msg "Can not output tc -s qdisc because it crashes on OpenWrt when using RED qdisc in hybrid mode, but things are working!"
 else
    # Check if tc command exists before trying to run it
    if command -v tc >/dev/null; then
-       echo "--- Egress ($WAN) ---"
+       print_msg "--- Egress ($WAN) ---"
        tc -s qdisc show dev "$WAN"
-       echo "--- Ingress ($LAN) ---"
+       print_msg "--- Ingress ($LAN) ---"
        tc -s qdisc show dev "$LAN"
    else
-        echo "Warning: 'tc' command not found. Cannot display QoS status."
+        print_msg "Warning: 'tc' command not found. Cannot display QoS status."
    fi
 fi
 
