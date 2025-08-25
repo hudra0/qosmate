@@ -233,23 +233,47 @@ fi
 # Function to preserve configuration files
 ##############################
 preserve_config_files() {
-    if [ "$PRESERVE_CONFIG_FILES" -eq 1 ]; then
-        {
-            echo "/etc/qosmate.sh"
-            echo "/etc/init.d/qosmate"
-            echo "/etc/hotplug.d/iface/13-qosmateHotplug" 
-        } | while read -r LINE; do
-            grep -qxF "$LINE" /etc/sysupgrade.conf || echo "$LINE" >> /etc/sysupgrade.conf
+    local path save_req='' \
+        paths="/etc/qosmate.sh /etc/init.d/qosmate /etc/hotplug.d/iface/13-qosmateHotplug" \
+        tmp_file="/tmp/qosmate_sysupgr" \
+        sysupgr_file="/etc/sysupgrade.conf"
+
+    rm -f "$tmp_file"
+
+    if [ "$PRESERVE_CONFIG_FILES" = 1 ]; then
+        for path in $paths; do
+            grep -qxF "$path" "$sysupgr_file" && continue
+            echo "$path" >> "$tmp_file" || return 1
+            save_req=1
         done
-        print_msg "Config files have been added to sysupgrade.conf for preservation."
+        if [ -n "$save_req" ]; then
+            cat "$tmp_file" >> "$sysupgr_file" &&
+            print_msg "Config files have been added to $sysupgr_file for preservation."
+        else
+            print_msg "$sysupgr_file already lists qosmate config files."
+        fi
     else
         print_msg "Preservation of config files is disabled."
-             
+
         # Remove the config files from sysupgrade.conf if they exist
-        sed -i '\|/etc/qosmate.sh|d' /etc/sysupgrade.conf
-        sed -i '\|/etc/init.d/qosmate|d' /etc/sysupgrade.conf
-        sed -i '\|/etc/hotplug.d/iface/13-qosmateHotplug|d' /etc/sysupgrade.conf
+        [ -f "$sysupgr_file" ] || return 0
+        cp "$sysupgr_file" "$tmp_file" || return 1
+        for path in $paths; do
+            grep -qxF "$path" "$tmp_file" || continue
+            sed -i "\|^$path$|d" "$tmp_file" || return 1
+            save_req=1
+        done
+
+        if [ -n "$save_req" ]; then
+            mv "$tmp_file" "$sysupgr_file" &&
+            print_msg "Config files have been removed from $sysupgr_file."
+        else
+            print_msg "$sysupgr_file does not list qosmate config files."
+        fi
     fi
+
+    rm -f "$tmp_file"
+    :
 }
 
 preserve_config_files
