@@ -508,7 +508,7 @@ create_nft_rule() {
 
     # Log if mixed IPv4/IPv6 addresses are found
     if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then 
-        logger -t qosmate "Info: Mixed IPv4/IPv6 addresses in rule '$name' ($config). Splitting into separate rules."
+        log_msg "Info: Mixed IPv4/IPv6 addresses in rule '$name' ($config). Splitting into separate rules."
     fi
 
     # If no IP address was specified, we assume the rule applies to both IPv4 and IPv6
@@ -522,7 +522,7 @@ create_nft_rule() {
     gen_rule() {
         add_res_rule() {
             if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
-                logger -t qosmate "Error: no valid $1 found in '$values'. Rule skipped."
+                error_out "no valid $1 found in '$values'. Rule skipped."
                 return 1
             fi
 
@@ -543,7 +543,7 @@ create_nft_rule() {
         
         for value in $values; do
             if [ -n "$set_ref_seen" ] || [ -n "$ipv6_mask_seen" ]; then
-                logger -t qosmate "Error: invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
+                error_out "invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
                 return 1
             fi
 
@@ -559,7 +559,7 @@ create_nft_rule() {
             # Handle set references (@setname)
             if is_set_ref "$value"; then
                 if [ -n "$reg_val_seen" ]; then
-                    logger -t qosmate "Error: invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
+                    error_out "invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
                     return 1
                 fi
                 set_ref_seen=1
@@ -577,7 +577,7 @@ create_nft_rule() {
             # Check for IPv6 suffix format (::suffix/::mask)
             if is_ipv6_mask "$value"; then
                 if [ -n "$reg_val_seen" ]; then
-                    logger -t qosmate "Error: invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
+                    error_out "invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
                     return 1
                 fi
                 ipv6_mask_seen=1
@@ -595,7 +595,7 @@ create_nft_rule() {
                 "ip saddr"|"ip daddr"|"ip6 saddr"|"ip6 daddr"|"th sport"|"th dport"|"meta l4proto")
                     ;;
                 *)
-                    logger -t qosmate "Error: unexpected prefix '$prefix'."
+                    error_out "unexpected prefix '$prefix'."
                     return 1
                     ;;
             esac
@@ -625,7 +625,7 @@ create_nft_rule() {
 
         # If mixed, log and signal error
         if [ -n "$has_ipv4" ] && [ -n "$has_ipv6" ]; then
-            logger -t qosmate "Error: Mixed IPv4/IPv6 addresses within a set: { $values }. Rule skipped."
+            error_out "Mixed IPv4/IPv6 addresses within a set: { $values }. Rule skipped."
             return 1
         fi
 
