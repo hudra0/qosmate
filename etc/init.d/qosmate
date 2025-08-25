@@ -48,8 +48,9 @@ MAIN_BRANCH_FRONTEND=main
 ### Local paths
 
 QOSMATE_CFG_FILE=/etc/config/qosmate
-TMP_CFG_DIR="/tmp/qosmate_tmp"
-TMP_CFG_FILE="$TMP_CFG_DIR/qosmate"
+TMP_CFG_DIR=/tmp/qosmate_tmp
+TMP_CFG_FILE=$TMP_CFG_DIR/qosmate
+QOSMATE_DEFAULTS_FILE=/etc/qosmate/qosmate-defaults
 
 # Local path of JS files
 QOSMATE_UPD_DIR=/var/run/qosmate-update
@@ -68,6 +69,7 @@ QOSMATE_MAIN_FILE_BACKEND=$QOSMATE_SERVICE_PATH
 QOSMATE_FILE_TYPES_BACKEND="GEN EXTRA" # change the value if adding more types
 QOSMATE_GEN_FILES_BACKEND="
 	$QOSMATE_SERVICE_PATH
+    $QOSMATE_DEFAULTS_FILE
 	/etc/qosmate.sh
 	/usr/lib/tc/experimental.dist
 	/usr/lib/tc/normal.dist
@@ -137,6 +139,7 @@ commit_tmp_config() {
     cp "$TMP_CFG_FILE" "$QOSMATE_CFG_FILE"
     local rv=$?
     rm -rf "$TMP_CFG_DIR"
+    [ $rv = 0 ] || error_out "Failed to save the new config."
     return $rv
 }
 
@@ -1375,7 +1378,7 @@ migrate_config() {
     local rv=$?
     [ $rv = 0 ] || {
         error_out "Failed to migrate config."
-        uci -c "$TMP_CFG_DIR" revert qosmate 2>/dev/null
+        uci_tmp revert qosmate 2>/dev/null
     }
     rm -rf "$TMP_CFG_DIR"
     return $rv
@@ -1405,29 +1408,6 @@ try_migrate_config() {
     [ -f "$QOSMATE_CFG_FILE" ] &&
     try_mkdir -p "$TMP_CFG_DIR" &&
     cp "$QOSMATE_CFG_FILE" "$TMP_CFG_FILE" || return 1
-
-    # Function to add the global enabled option if it does not exist
-    if ! uci_tmp get qosmate.global 2>/dev/null 1>&2; then
-        commit_req=1
-        print_msg "Adding global configuration section..."
-        uci_tmp set qosmate.global=global &&
-        uci_tmp set qosmate.global.enabled=1 &&
-        uci_tmp reorder qosmate.global=0 ||
-            return 1
-        print_msg "Global configuration section added."
-    else
-        print_msg "Global configuration section already exists."
-    fi
-
-    # Ensure the enabled option is present in the global section
-    if ! uci_tmp get qosmate.global.enabled 2>/dev/null 1>&2; then
-        commit_req=1
-        print_msg "Adding enabled option to global section..."
-        uci_tmp set qosmate.global.enabled=1 || return 1
-        print_msg "Enabled option added."
-    else
-        print_msg "Enabled option already exists."
-    fi
 
     # Check for and correct the custom_rules section
     awk "
@@ -1464,6 +1444,29 @@ try_migrate_config() {
             ;;
     esac
 
+    # Add the global enabled option if it does not exist
+    if ! uci_tmp get qosmate.global 2>/dev/null 1>&2; then
+        commit_req=1
+        print_msg "Adding global configuration section..."
+        uci_tmp set qosmate.global=global &&
+        uci_tmp set qosmate.global.enabled=1 &&
+        uci_tmp reorder qosmate.global=0 ||
+            return 1
+        print_msg "Global configuration section added."
+    else
+        print_msg "Global configuration section already exists."
+    fi
+
+    # Ensure the enabled option is present in the global section
+    if ! uci_tmp get qosmate.global.enabled 2>/dev/null 1>&2; then
+        commit_req=1
+        print_msg "Adding enabled option to global section..."
+        uci_tmp set qosmate.global.enabled=1 || return 1
+        print_msg "Enabled option added."
+    else
+        print_msg "Enabled option already exists."
+    fi
+
     # Migrate link layer settings to advanced section based on active QDisc
 
     local root_qdisc qdisc settings setting val adv_preset \
@@ -1476,7 +1479,7 @@ try_migrate_config() {
     config_get root_qdisc settings ROOT_QDISC
     config_get adv_preset advanced COMMON_LINK_PRESETS
 
-    # Check for old settings, migrate settings for CAKE or set $migration_req for HFSC
+    # Check for old settings, migrate settings for CAKE or set OLD_${setting} vars for HFSC
     for qdisc in cake hfsc; do
         eval "settings=\"\${${qdisc}_old_settings}\""
         for setting in $settings; do
@@ -1882,8 +1885,24 @@ parse_speedtest_output() {
     :
 }
 
-# for non-interactive setup, call with '-n [gaming_ip_address]'
 auto_setup() {
+    try_auto_setup "$@" && return 0
+    error_out "auto-setup failed."
+    uci revert qosmate 2>/dev/null
+    return 1
+}
+
+# for non-interactive setup, call with '-n [gaming_ip_address]'
+try_auto_setup() {
+    # shellcheck disable=SC2329
+    is_ip_configured() {
+        local ip ip_type section_id="$1" gaming_ip="$2"
+        for ip_type in src_ip dest_ip; do
+            config_get ip "$section_id" "$ip_type"
+            [ "$ip" = "$gaming_ip" ] && { ip_configured=1; break; }
+        done
+    }
+
     local L3_DEVICE WAN_INTERFACE FINAL_INTERFACE SPEEDTEST_CMD FREE_SPACE SPEED_RESULT DOWNLOAD_SPEED UPLOAD_SPEED
     local gaming_ip='' noninteractive='' speed_choice response speedtest_req direction
 
@@ -2047,6 +2066,16 @@ auto_setup() {
         "DOWNRATE: $DOWNRATE kbps (90% of measured download speed)" \
         "UPRATE: $UPRATE kbps (90% of measured upload speed)"
 
+    [ -f "$QOSMATE_CFG_FILE" ] || {
+        error_out "config file '$QOSMATE_CFG_FILE' not found."
+        return 1
+    }
+
+    config_load qosmate &&
+    uci set qosmate.settings.WAN="$FINAL_INTERFACE" &&
+    uci set qosmate.settings.DOWNRATE="$DOWNRATE" &&
+    uci set qosmate.settings.UPRATE="$UPRATE" || return 1
+
     # Section for gaming device IP
     if [ -z "$noninteractive" ]; then
         print_msg "Would you like to add a gaming device IP for prioritization? [y/N]"
@@ -2061,7 +2090,10 @@ auto_setup() {
         # Validate IP address format
         if [[ $gaming_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
             # Check if rules for this IP already exist
-            if grep -q "option src_ip '$gaming_ip'" "$QOSMATE_CFG_FILE" || grep -q "option dest_ip '$gaming_ip'" "$QOSMATE_CFG_FILE"; then
+            local ip_configured=
+            config_foreach is_ip_configured rule "$gaming_ip"
+            # $ip_configured is set in is_ip_configured()
+            if [ -n "$ip_configured" ]; then
                 print_msg "Rules for IP $gaming_ip already exist. Skipping addition of new rules."
                 gaming_ip=
             fi
@@ -2071,50 +2103,29 @@ auto_setup() {
         fi
     fi
 
-    local temp_config_file="/tmp/qosmate_config.tmp"
-    if [ -f "$QOSMATE_CFG_FILE" ]; then
-        cp "$QOSMATE_CFG_FILE" "$temp_config_file"
-    else
-        error_out "config file '$QOSMATE_CFG_FILE' not found."
-        return 1
-    fi
-
-    # TODO: all of this should be rewritten with UCI commands
-    sed -i "/option WAN/c\    option WAN '$FINAL_INTERFACE'
-        /option DOWNRATE/c\    option DOWNRATE '$DOWNRATE'
-        /option UPRATE/c\    option UPRATE '$UPRATE'" \
-            "$temp_config_file" &&
-    if [ -n "$gaming_ip" ] && cat << EOF >> "$temp_config_file"
-config rule
-    option name 'Game_Console_Outbound'
-    option proto 'udp'
-    option src_ip '$gaming_ip'
-    list dest_port '!=80'
-    list dest_port '!=443'
-    option class 'cs5'
-    option counter '1'
-
-config rule
-    option name 'Game_Console_Inbound'
-    option proto 'udp'
-    option dest_ip '$gaming_ip'
-    list src_port '!=80'
-    list src_port '!=443'
-    option class 'cs5'
-    option counter '1'
-EOF
-    then
+    if [ -n "$gaming_ip" ]; then
+        local direction ip_dir port_dir
+        for direction in Inbound Outbound; do
+            case "$direction" in
+                Inbound) ip_dir=dest port_dir=src ;;
+                Outbound) ip_dir=src port_dir=dest ;;
+            esac
+            uci add qosmate rule 1>/dev/null &&
+            uci set "qosmate.@rule[-1].name=Game_Console_${direction}" &&
+            uci set "qosmate.@rule[-1].proto=udp" &&
+            uci set "qosmate.@rule[-1].${ip_dir}_ip=${gaming_ip}" &&
+            uci add_list "qosmate.@rule[-1].${port_dir}_port=!=80" &&
+            uci add_list "qosmate.@rule[-1].${port_dir}_port=!=443" &&
+            uci set "qosmate.@rule[-1].class=cs5" &&
+            uci set "qosmate.@rule[-1].counter=1" ||
+                return 1
+        done
         print_msg "Gaming device rules added for IP: $gaming_ip"
-        :
     else
         print_msg "No gaming device IP added."
-        :
-    fi &&
-    mv "$temp_config_file" "$QOSMATE_CFG_FILE" ||
-    {
-        error_out "Failed to modify the config. Please check the file $QOSMATE_CFG_FILE"
-        return 1
-    }
+    fi
+
+    uci commit qosmate || return 1
 
     print_msg "Configuration updated. New settings:"
     grep -E "option (WAN|DOWNRATE|UPRATE)" "$QOSMATE_CFG_FILE"
@@ -2122,6 +2133,7 @@ EOF
 
     print_msg "Auto-setup complete. qosmate has been configured with detected settings." \
         "To apply these changes, please restart qosmate by running: /etc/init.d/qosmate restart"
+    :
 }
 
 auto_setup_noninteractive() {
@@ -2136,66 +2148,67 @@ auto_setup_noninteractive() {
 }
 
 expand_config() {
-    local main_script="/etc/qosmate.sh"
-    
+    try_expand_config && return 0
+    error_out "Failed to expand config."
+    uci revert qosmate 2>/dev/null
+    return 1
+}
+
+try_expand_config() {
     log_msg "" "Expanding qosmate configuration with all possible options..."
 
-    # Ensure all sections exist
-    for section in global settings advanced hfsc cake custom_rules; do
-        if ! grep -q "config $section '$section'" "$QOSMATE_CFG_FILE"; then
-            echo >> "$QOSMATE_CFG_FILE"  # Add a newline before the new section
-            echo "config $section '$section'" >> "$QOSMATE_CFG_FILE"
-            print_msg "Added section: $section"
-        fi
-    done
+    [ -f "$QOSMATE_DEFAULTS_FILE" ] || { error_out "$QOSMATE_DEFAULTS_FILE is missing."; return 1; }
 
-    # Function to get default value from main script
-    get_default_value() {
-        local option="$1"
-        local default_value
+    # Subshell to isolate the namespace
+    (
+        # option_cb() is called when processing each option in config_load()
+        # shellcheck disable=SC2329
+        option_cb() {
+            # $CONFIG_SECTION is set by the callback handler
+            [ -n "$CONFIG_SECTION" ] && [ -n "$1" ] && [ -n "$2" ] || return 0 # make sure section, option and val are set
+            def_options="${def_options}${CONFIG_SECTION}.${1} "
+        }
 
-        # Map options to their DEFAULT_ counterparts
-        case "$option" in
-            OH) option="DEFAULT_OH" ;;
-            WAN) option="DEFAULT_WAN" ;;
-            DOWNRATE) option="DEFAULT_DOWNRATE" ;;
-            UPRATE) option="DEFAULT_UPRATE" ;;
-        esac
+        options_added=''
+        # Ensure all sections exist
+        for section_spec in "global 0" "settings 1" "advanced 2" "hfsc 3" "cake 4" "custom_rules 5"; do
+            section="${section_spec%% *}"
+            index="${section_spec#* }"
+            uci get "qosmate.${section}" 2>/dev/null 1>&2 && continue
 
-        # Try to find a direct assignment
-        default_value=$(grep "^${option}=" "$main_script" | cut -d'=' -f2- | tr -d '"')
-
-        # Remove any remaining shell expansions and trim whitespace
-        default_value=$(echo "$default_value" | sed -e 's/\$([^)]*)//g' -e 's/^ *//g' -e 's/ *$//g' -e 's/\${{.*}}//g')
-
-        # Check for dynamic calculations and return empty string if found
-        if echo "$default_value" | grep -qE '[[($]|\)$'; then
-            echo ""
-        else
-            echo "$default_value"
-        fi
-    }
-    # Define options for each section
-    add_options() {
-        local section="$1"
-        shift
-        for option in "$@"; do
-            if ! grep -q "option $option" "$QOSMATE_CFG_FILE"; then
-                default_value=$(get_default_value "$option")
-                sed -i "/config $section/a\\    option $option '$default_value'" "$QOSMATE_CFG_FILE"
-                print_msg "Added option $option to section $section with value: $default_value"
-            fi
+            print_msg "Adding config section '$section'."
+            uci set "qosmate.${section}=${section}" &&
+            uci reorder "qosmate.${section}=${index}" ||
+                { error_out "Failed to add section."; return 1; }
+            options_added=1
         done
-    }
 
-    # Add options for each section
-    add_options global enabled
-    add_options settings WAN DOWNRATE UPRATE ROOT_QDISC
-    add_options advanced PRESERVE_CONFIG_FILES WASHDSCPUP WASHDSCPDOWN BWMAXRATIO ACKRATE UDP_RATE_LIMIT_ENABLED UDPBULKPORT TCPBULKPORT VIDCONFPORTS REALTIME4 REALTIME6 LOWPRIOLAN4 LOWPRIOLAN6 TCP_UPGRADE_ENABLED MSS NFT_HOOK NFT_PRIORITY COMMON_LINK_PRESETS OVERHEAD MPU LINK_COMPENSATION ETHER_VLAN_KEYWORD
-    add_options hfsc gameqdisc GAMEUP GAMEDOWN nongameqdisc nongameqdiscoptions MAXDEL PFIFOMIN PACKETSIZE netemdelayms netemjitterms netemdist pktlossp
-    add_options cake PRIORITY_QUEUE_INGRESS PRIORITY_QUEUE_EGRESS HOST_ISOLATION NAT_INGRESS NAT_EGRESS ACK_FILTER_EGRESS RTT AUTORATE_INGRESS EXTRA_PARAMETERS_INGRESS EXTRA_PARAMETERS_EGRESS
+        # Add options for each section
 
-    print_msg "Configuration expanded successfully. You can now edit all available options in $QOSMATE_CFG_FILE"
+        UCI_CONFIG_DIR="${QOSMATE_DEFAULTS_FILE%/*}" config_load "${QOSMATE_DEFAULTS_FILE##*/}" &&
+            [ -n "$def_options" ] || { error_out "Failed to get default config options."; exit 1; }
+
+        for option_path in $def_options; do
+            uci get "qosmate.${option_path}" 2>/dev/null 1>&2 && continue
+            section="${option_path%.*}"
+            option_name="${option_path##*.}"
+            config_get val "$section" "$option_name"
+            [ -n "$val" ] || continue
+            options_added=1
+            print_msg "Adding option '$option_name' to section '$section' with default value '$val'."
+            uci set "qosmate.${option_path}=${val}" ||
+                { error_out "Failed to add config option."; return 1; }
+        done
+
+        if [ -n "$options_added" ]; then
+            uci commit qosmate || return 1
+            print_msg "Configuration expanded successfully. You can now edit all available options in $QOSMATE_CFG_FILE"
+        else
+            print_msg "All required options are already set."
+        fi
+        :
+    ) || return 1
+    :
 }
 
 health_check() {
