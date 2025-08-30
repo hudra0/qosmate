@@ -68,7 +68,7 @@ get_defaults() {
 
     local defaults_set=
     UCI_CONFIG_DIR="${QOSMATE_DEFAULTS_FILE%/*}" config_load "${QOSMATE_DEFAULTS_FILE##*/}" &&
-        [ -n "$defaults_set" ] || exit 1
+        [ -n "$defaults_set" ] || return 1
 
     reset_cb # reset callback function to no-op
     :
