@@ -2179,7 +2179,7 @@ try_expand_config() {
             print_msg "Adding config section '$section'."
             uci set "qosmate.${section}=${section}" &&
             uci reorder "qosmate.${section}=${index}" ||
-                { error_out "Failed to add section."; return 1; }
+                { error_out "Failed to add section."; exit 1; }
             options_added=1
         done
 
@@ -2197,11 +2197,11 @@ try_expand_config() {
             options_added=1
             print_msg "Adding option '$option_name' to section '$section' with default value '$val'."
             uci set "qosmate.${option_path}=${val}" ||
-                { error_out "Failed to add config option."; return 1; }
+                { error_out "Failed to add config option."; exit 1; }
         done
 
         if [ -n "$options_added" ]; then
-            uci commit qosmate || return 1
+            uci commit qosmate || exit 1
             print_msg "Configuration expanded successfully. You can now edit all available options in $QOSMATE_CFG_FILE"
         else
             print_msg "All required options are already set."
