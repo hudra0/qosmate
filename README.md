@@ -123,7 +123,7 @@ Before starting with QoSmate configuration:
 1. Set your determined bandwidth values
 2. Enable WASH in both directions (WASHDSCPUP and WASHDSCPDOWN)
 3. Choose your Root Queueing Discipline:
-   - For older/less powerful routers, use HFSC as it requires fewer system resources
+   - For older/less powerful routers, use HFSC or HTB as it requires fewer system resources
    - Hybrid mode uses HFSC + gameqdisc for realtime and HFSC + fq_codel for bulk classes while CAKE manages all other traffic
 4. Consider overhead settings:
    - Default settings are conservative to cover most use cases
