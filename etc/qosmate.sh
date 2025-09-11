@@ -3,12 +3,14 @@
 
 VERSION="1.2.0" # will become obsolete in future releases as version string is now in the init script
 
-QOSMATE_DEFAULTS_FILE=/etc/qosmate/qosmate-defaults
+QOSMATE_DEFAULTS_FILE=/etc/qosmate.d/qosmate-defaults
 
 _NL_='
 '
 DEFAULT_IFS=" 	${_NL_}"
 IFS="$DEFAULT_IFS"
+
+: "${VERSION}" "${global_enabled:=}" "${nongameqdisc:=}" "${nongameqdiscoptions:=}" "${OVERHEAD:=}"
 
 . /lib/functions.sh
 
@@ -56,99 +58,146 @@ log_msg() {
     :
 }
 
-get_defaults() {
-    # option_cb() is called when processing each option in config_load()
-    # shellcheck disable=SC2329
-    option_cb() {
-        # $CONFIG_SECTION is set by the callback handler
-        [ -n "$CONFIG_SECTION" ] && [ -n "$1" ] && [ -n "$2" ] || return 0 # make sure section, option and val are set
-        eval "DEFAULT_${1}=\"${2}\""
-        defaults_set=1
-    }
-
-    local defaults_set=
-    UCI_CONFIG_DIR="${QOSMATE_DEFAULTS_FILE%/*}" config_load "${QOSMATE_DEFAULTS_FILE##*/}" &&
-        [ -n "$defaults_set" ] || return 1
-
-    reset_cb # reset callback function to no-op
-    :
-}
-
+# Get config keys from default config,
+#   use them to declare vars with respective values from main config or with default values
 load_config() {
-    # Global settings
-    config_get ROOT_QDISC settings ROOT_QDISC hfsc
-    config_get WAN settings WAN "$DEFAULT_WAN"
-    config_get DOWNRATE settings DOWNRATE "$DEFAULT_DOWNRATE"
-    config_get UPRATE settings UPRATE "$DEFAULT_UPRATE"
+    local IFS="$DEFAULT_IFS" section opt def_val ser_def_opts ser_opt var_name
 
-    # Advanced settings
-    config_get PRESERVE_CONFIG_FILES advanced PRESERVE_CONFIG_FILES 0
-    config_get WASHDSCPUP advanced WASHDSCPUP 1
-    config_get WASHDSCPDOWN advanced WASHDSCPDOWN 1
-    config_get BWMAXRATIO advanced BWMAXRATIO 20
-    config_get ACKRATE advanced ACKRATE $((UPRATE * 5 / 100))
-    config_get UDP_RATE_LIMIT_ENABLED advanced UDP_RATE_LIMIT_ENABLED 0
-    config_get TCP_UPGRADE_ENABLED advanced TCP_UPGRADE_ENABLED 1
-    config_get UDPBULKPORT advanced UDPBULKPORT
-    config_get TCPBULKPORT advanced TCPBULKPORT
-    config_get VIDCONFPORTS advanced VIDCONFPORTS
-    config_get REALTIME4 advanced REALTIME4
-    config_get REALTIME6 advanced REALTIME6
-    config_get LOWPRIOLAN4 advanced LOWPRIOLAN4
-    config_get LOWPRIOLAN6 advanced LOWPRIOLAN6
-    config_get MSS advanced MSS 536
-    config_get NFT_HOOK advanced NFT_HOOK forward
-    config_get NFT_PRIORITY advanced NFT_PRIORITY 0
-    config_get TCP_DOWNPRIO_INITIAL_ENABLED advanced TCP_DOWNPRIO_INITIAL_ENABLED 1
-    config_get TCP_DOWNPRIO_SUSTAINED_ENABLED advanced TCP_DOWNPRIO_SUSTAINED_ENABLED 1
-    
-    # Link Layer Settings (moved from CAKE, now used by all QDiscs)
-    config_get COMMON_LINK_PRESETS advanced COMMON_LINK_PRESETS ethernet
-    config_get OVERHEAD advanced OVERHEAD  # No default - helper functions handle defaults per preset
-    config_get MPU advanced MPU
-    config_get LINK_COMPENSATION advanced LINK_COMPENSATION
-    config_get ETHER_VLAN_KEYWORD advanced ETHER_VLAN_KEYWORD
+    # Serialize default config into format: <section>:<option>=<def_val>
+    ser_def_opts="$(
+        awk -v many_quotes="'.*'.*'" -v p1="'[^']*$" -v p2=".*'" ' \
+            function get_val(s){
+                if (sub(p1,"",s) && sub(p2,"",s)) return s; else return "ERROR"
+            }
 
-    # HFSC specific settings
-    config_get gameqdisc hfsc gameqdisc pfifo
-    config_get GAMEUP hfsc GAMEUP $((UPRATE*15/100+400))
-    config_get GAMEDOWN hfsc GAMEDOWN $((DOWNRATE*15/100+400))
-    config_get nongameqdisc hfsc nongameqdisc fq_codel
-    config_get nongameqdiscoptions hfsc nongameqdiscoptions besteffort ack-filter
-    config_get MAXDEL hfsc MAXDEL 24
-    config_get PFIFOMIN hfsc PFIFOMIN 5
-    config_get PACKETSIZE hfsc PACKETSIZE 450
-    config_get netemdelayms hfsc netemdelayms 30
-    config_get netemjitterms hfsc netemjitterms 7
-    config_get netemdist hfsc netemdist normal
-    config_get NETEM_DIRECTION hfsc netem_direction both
-    config_get pktlossp hfsc pktlossp none
+            BEGIN{
+                rv=0
+                # Primary settings must be printed first
+                prim["settings:UPRATE"]
+                prim["settings:DOWNRATE"]
+            }
 
-    # CAKE specific settings
-    config_get PRIORITY_QUEUE_INGRESS cake PRIORITY_QUEUE_INGRESS diffserv4
-    config_get PRIORITY_QUEUE_EGRESS cake PRIORITY_QUEUE_EGRESS diffserv4
-    config_get HOST_ISOLATION cake HOST_ISOLATION 1
-    config_get NAT_INGRESS cake NAT_INGRESS 1
-    config_get NAT_EGRESS cake NAT_EGRESS 0
-    config_get ACK_FILTER_EGRESS cake ACK_FILTER_EGRESS auto
-    config_get RTT cake RTT
-    config_get AUTORATE_INGRESS cake AUTORATE_INGRESS 0
-    config_get EXTRA_PARAMETERS_INGRESS cake EXTRA_PARAMETERS_INGRESS
-    config_get EXTRA_PARAMETERS_EGRESS cake EXTRA_PARAMETERS_EGRESS
+            $0 ~ many_quotes {rv=1;exit}
+
+            /^[ 	]*config[ 	]/{
+                section = get_val($0)
+                if (section == "ERROR" || section !~ /^[a-zA-Z0-9_]+$/) {rv=1; exit}
+                next
+            }
+
+            /^[ 	]*option[ 	]/{
+                if ( ! section || $2 !~ /^[a-zA-Z0-9_]+$/ ) {rv=1; exit}
+                val = get_val($0)
+                if (val == "ERROR") {rv=1; exit}
+                ser_opt = section ":" $2
+                if (ser_opt in prim) {prim[ser_opt] = val; next}
+                secondary[ser_opt] = val
+            }
+
+            END{
+                if (rv == 1) exit 1
+                for (ser_opt in prim) {if (! prim[ser_opt]) exit 1; else print ser_opt "=" prim[ser_opt]}
+                for (ser_opt in secondary) print ser_opt "=" secondary[ser_opt]
+            }' "$QOSMATE_DEFAULTS_FILE"
+    )" || { error_out "Failed to parse default config."; exit 1; }
+
+    IFS="$_NL_"
+    for ser_opt in $ser_def_opts; do
+        IFS="$DEFAULT_IFS"
+        section="${ser_opt%%:*}"
+        def_val="${ser_opt##*=}"
+        opt="${ser_opt#*:}"
+        opt="${opt%%="$def_val"}"
+        var_name="$opt"
+
+        # Var name and def val overrides
+        case "${section}:${opt}" in
+            global:enabled) var_name=global_enabled ;;
+            advanced:ACKRATE) def_val=$((UPRATE * 5 / 100)) ;;
+            hfsc:GAMEUP) def_val=$((UPRATE*15/100+400)) ;;
+            hfsc:GAMEDOWN) def_val=$((DOWNRATE*15/100+400)) ;;
+            hfsc:netem_direction) var_name=NETEM_DIRECTION ;;
+        esac
+
+        config_get "$var_name" "$section" "$opt" "$def_val"
+    done
+    IFS="$DEFAULT_IFS"
 
     # Calculated values
     FIRST500MS=$((DOWNRATE * 500 / 8))
     FIRST10S=$((DOWNRATE * 10000 / 8))
 }
 
-# Set $DEFAULT_* variables
-get_defaults || { error_out "Failed to get defaults."; exit 1; }
+report_qdiscs() {
+    # Check if the service is enabled in UCI config
+    local config_enabled=true not_managing=
+    if [ "$global_enabled" != 1 ]; then
+        config_enabled=false
+        not_managing=", but qosmate is not managing it"
+    fi
+    print_msg "qosmate global:enabled is $config_enabled."
+
+    # Gather qdiscs info
+    local dir dev qdisc qdiscs active_qdisc \
+        IFB="ifb-$WAN"
+
+    # Check and report if traffic shaping is active
+    for dir in egress ingress; do
+        case "$dir" in
+            egress) dev="$WAN" ;;
+            ingress) dev="$IFB" ;;
+        esac
+        qdiscs="$(tc qdisc show dev "$dev" 2>/dev/null | sed -n 's/^qdisc\s\s*\([^ \t]*\).* root .*/\1/p')"
+        qdiscs="${qdiscs//$'\n'/ }"
+        active_qdisc=''
+        for qdisc in cake hfsc htb; do
+            case "${qdiscs}" in "${qdisc}"|"${qdisc} "*|*" ${qdisc}"|*" ${qdisc} "*)
+                active_qdisc="$qdisc"
+            esac
+        done
+
+        case "$active_qdisc" in
+            cake) qdisc_print=CAKE ;;
+            hfsc) qdisc_print=HFSC ;;
+            htb) qdisc_print=HTB ;;
+        esac
+
+        if [ -n "$active_qdisc" ]; then
+            print_msg "Traffic shaping ($qdisc_print) is active on the $dir interface ($dev)$not_managing."
+        else
+            print_msg "No traffic shaping is active on the $dir interface ($dev)."
+        fi
+    done
+
+    # Show summary of current settings
+    print_msg "" "==== Current Settings ====" \
+        "Upload rate: $UPRATE kbps" \
+        "Download rate: $DOWNRATE kbps" \
+        "Game traffic upload: $GAMEUP kbps" \
+        "Game traffic download: $GAMEDOWN kbps"
+    if [ "$ROOT_QDISC" = "cake" ]; then
+        print_msg "Queue discipline: CAKE (Root qdisc)"
+    elif [ "$ROOT_QDISC" = "htb" ]; then
+        print_msg "Queue discipline: HTB (Root qdisc)"
+    else
+        print_msg "Queue discipline: $gameqdisc (for game traffic in HFSC)"
+    fi
+    :
+}
 
 config_load 'qosmate' || { error_out "Failed to get UCI config."; exit 1; }
 
-: "${VERSION}" "${DEFAULT_WAN}" "${DEFAULT_DOWNRATE}" "${DEFAULT_UPRATE}" "${DEFAULT_OH}" "${nongameqdisc:=}" "${nongameqdiscoptions:=}"
-
 load_config
+
+# Process arguments
+case "$1" in
+	report_qdiscs)
+		report_qdiscs
+		exit 0
+esac
+
+# Save the current WAN interface to a temporary file
+printf '%s\n' "$WAN" > /tmp/qosmate_wan
 
 # Get tc stab parameters for HFSC/HTB/Hybrid
 get_tc_overhead_params() {
@@ -203,6 +252,8 @@ get_cake_link_params() {
 }
 
 validate_and_adjust_rates() {
+# *** Default values are already assigned by load_config().
+#     Should this function set them again, under what conditions and to which values? ***
     if [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; then
         if [ -z "$DOWNRATE" ] || [ "$DOWNRATE" -eq 0 ]; then
             print_msg -warn "DOWNRATE is zero or not set for $ROOT_QDISC. Setting to minimum value of 1000 kbps."
@@ -225,55 +276,6 @@ if [ "$UPRATE" -gt 0 ] && [ $((DOWNRATE > UPRATE*BWMAXRATIO)) -eq 1 ]; then
     print_msg "We limit the downrate to at most $BWMAXRATIO times the upstream rate to ensure no upstream ACK floods occur which can cause game packet drops"
     DOWNRATE=$((BWMAXRATIO*UPRATE))
 fi
-
-##############################
-# Function to preserve configuration files
-##############################
-preserve_config_files() {
-    local path save_req='' \
-        paths="/etc/qosmate.sh /etc/init.d/qosmate /etc/hotplug.d/iface/13-qosmateHotplug" \
-        tmp_file="/tmp/qosmate_sysupgr" \
-        sysupgr_file="/etc/sysupgrade.conf"
-
-    rm -f "$tmp_file"
-
-    if [ "$PRESERVE_CONFIG_FILES" = 1 ]; then
-        for path in $paths; do
-            grep -qxF "$path" "$sysupgr_file" && continue
-            echo "$path" >> "$tmp_file" || return 1
-            save_req=1
-        done
-        if [ -n "$save_req" ]; then
-            cat "$tmp_file" >> "$sysupgr_file" &&
-            print_msg "Config files have been added to $sysupgr_file for preservation."
-        else
-            print_msg "$sysupgr_file already lists qosmate config files."
-        fi
-    else
-        print_msg "Preservation of config files is disabled."
-
-        # Remove the config files from sysupgrade.conf if they exist
-        [ -f "$sysupgr_file" ] || return 0
-        cp "$sysupgr_file" "$tmp_file" || return 1
-        for path in $paths; do
-            grep -qxF "$path" "$tmp_file" || continue
-            sed -i "\|^$path$|d" "$tmp_file" || return 1
-            save_req=1
-        done
-
-        if [ -n "$save_req" ]; then
-            mv "$tmp_file" "$sysupgr_file" &&
-            print_msg "Config files have been removed from $sysupgr_file."
-        else
-            print_msg "$sysupgr_file does not list qosmate config files."
-        fi
-    fi
-
-    rm -f "$tmp_file"
-    :
-}
-
-preserve_config_files
 
 ##############################
 # Variable checks and dynamic rule generation
@@ -770,9 +772,6 @@ create_nft_rule() {
 
 generate_dynamic_nft_rules() {
     # Check global enable setting
-    local global_enabled
-    config_get_bool global_enabled global enabled 1  # Default to enabled if not set
-    
     if [ "$global_enabled" = "1" ]; then
         config_foreach create_nft_rule rule
     else
