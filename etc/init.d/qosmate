@@ -1224,6 +1224,7 @@ validate_config() {
 
     # process default config and check against it for missing sections or options
     FNR == 1 { section = ""; section_ind = 0 }
+    $0 ~ /^[ 	]*($|#)/ {next} # ignore comments and empty lines
     $0 ~ many_quotes {rv=1;exit}
 
     /^[ 	]*config[ 	]/ {
