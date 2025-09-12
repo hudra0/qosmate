@@ -77,6 +77,7 @@ load_config() {
                 prim["settings:DOWNRATE"]
             }
 
+            $0 ~ /^[ 	]*($|#)/ {next} # ignore comments and empty lines
             $0 ~ many_quotes {rv=1;exit}
 
             /^[ 	]*config[ 	]/{
