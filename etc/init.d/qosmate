@@ -46,20 +46,21 @@ MAIN_BRANCH_FRONTEND=main
 
 ### Local paths
 
+QOSMATE_D=/etc/qosmate.d
 QOSMATE_CFG_FILE=/etc/config/qosmate
 TMP_CFG_DIR=/tmp/qosmate_tmp
 TMP_CFG_FILE=$TMP_CFG_DIR/qosmate
-QOSMATE_DEFAULTS_FILE=/etc/qosmate.d/qosmate-defaults
-QOSMATE_CUSTOM_RULES_FILE=/etc/qosmate.d/custom_rules.nft
-QOSMATE_INLINE_RULES_FILE=/etc/qosmate.d/inline_dscptag.nft
+QOSMATE_DEFAULTS_FILE=${QOSMATE_D}/qosmate-defaults
+QOSMATE_CUSTOM_RULES_FILE=${QOSMATE_D}/custom_rules.nft
+QOSMATE_INLINE_RULES_FILE=${QOSMATE_D}/inline_dscptag.nft
 
 # Local path of JS files
 QOSMATE_UPD_DIR=/var/run/qosmate-update
 
 ### Components
 QOSMATE_COMPONENTS="BACKEND FRONTEND"
-QOSMATE_FILES_REG_PATH_BACKEND=/etc/qosmate.d/backend_reg.md5
-QOSMATE_FILES_REG_PATH_FRONTEND=/etc/qosmate.d/frontend_reg.md5
+QOSMATE_FILES_REG_PATH_BACKEND=${QOSMATE_D}/backend_reg.md5
+QOSMATE_FILES_REG_PATH_FRONTEND=${QOSMATE_D}/frontend_reg.md5
 
 ### Backend files
 QOSMATE_SERVICE_PATH=/etc/init.d/qosmate
@@ -1124,7 +1125,7 @@ install_qosmate_files() {
 
 preserve_config_files() {
     local path save_req='' \
-        paths="$QOSMATE_MAIN_SCRIPT $QOSMATE_SERVICE_PATH $QOSMATE_HOTPLUG_SCRIPT" \
+        paths="$QOSMATE_MAIN_SCRIPT $QOSMATE_SERVICE_PATH $QOSMATE_HOTPLUG_SCRIPT $QOSMATE_D" \
         tmp_file="/tmp/qosmate_sysupgr" \
         sysupgr_file="/etc/sysupgrade.conf"
 
@@ -1726,7 +1727,7 @@ manage_custom_rules_file() {
     case "$action" in
         create)
             # Ensure the directory exists
-            try_mkdir -p "/etc/qosmate.d"
+            try_mkdir -p "${QOSMATE_D}"
             
             # Create the files if they don't exist
             [ ! -f "$QOSMATE_CUSTOM_RULES_FILE" ] && touch "$QOSMATE_CUSTOM_RULES_FILE"
