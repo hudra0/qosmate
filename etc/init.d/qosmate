@@ -1275,7 +1275,7 @@ try_check_and_fix_config() {
     local IFS="$DEFAULT_IFS" section section_name opt opt_name \
         val_res missing_sections='' missing_opts=''
 
-    # Serialize default config into format: <section>:<option>=<def_val>
+    # Validate config and generate $val_res for config repair
     val_res="$(validate_config)"
 
     case $? in
