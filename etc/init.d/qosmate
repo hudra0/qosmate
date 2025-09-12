@@ -1218,6 +1218,7 @@ validate_config() {
         if (section in sections_arr) {section_ind++;next}
         # user config is missing section
         missing_sections = missing_sections section "=" section_ind "\n"
+        section_ind++
         next
     }
 
