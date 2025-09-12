@@ -1178,9 +1178,13 @@ load_config() {
 # 1 - error
 # 155 - missing sections and/or options
 validate_config() {
-    [ -f "$QOSMATE_CFG_FILE" ] || { error_out "$QOSMATE_CFG_FILE not found."; return 1; }
-    [ -f "$QOSMATE_DEFAULTS_FILE" ] || { error_out "$QOSMATE_DEFAULTS_FILE not found."; return 1; }
-    awk -v many_quotes="'.*'.*'" -v p1="'[^']*$" -v p2=".*'" ' \
+    local file miss_sec_f="/tmp/qosmate-missing-sections" miss_opt_f="/tmp/qosmate-missing-options"
+    for file in "$QOSMATE_CFG_FILE" "$QOSMATE_DEFAULTS_FILE"; do
+        [ -f "$file" ] || { error_out "$file not found."; return 1; }
+    done
+
+    awk -v miss_sec_f="$miss_sec_f" -v miss_opt_f="$miss_opt_f" \
+        -v many_quotes="'.*'.*'" -v p1="'[^']*$" -v p2=".*'" ' \
     function get_val(s){
         if (sub(p1,"",s) && sub(p2,"",s)) return s; else return "ERROR"
     }
@@ -1218,6 +1222,7 @@ validate_config() {
         if (section in sections_arr) {section_ind++;next}
         # user config is missing section
         missing_sections = missing_sections section "=" section_ind "\n"
+        print section >> miss_sec_f
         section_ind++
         next
     }
@@ -1231,22 +1236,31 @@ validate_config() {
         if (ser_opt in opts_arr) next
         # user config is missing option
         missing_opts = missing_opts ser_opt "=" val "\n"
+        print ser_opt >> miss_opt_f
     }
 
     END{
         if (rv == 1) exit 1
         if (missing_sections) {
-print "Missing sections:\n" missing_sections > /dev/stderr
             rv = 155
             print "missing_sections=\"" missing_sections "\""
         }
         if (missing_opts) {
-print "Missing options:\n" missing_opts > /dev/stderr
             rv = 155
             print "missing_opts=\"" missing_opts "\""
         }
         exit rv
     }' - "$QOSMATE_DEFAULTS_FILE" < "$QOSMATE_CFG_FILE"
+    rv=$?
+
+    [ $rv != 155 ] && { rm -f "$miss_sec_f" "$miss_opt_f"; return $rv; }
+
+    for file in "$miss_sec_f" "$miss_opt_f"; do
+        [ -f "$file" ] || continue
+        log_msg -warn "Missing config ${file##*-}:" "$(cat "$file")"
+        rm -f "$file"
+    done
+    return 155
 }
 
 check_and_fix_config() {
@@ -1281,11 +1295,11 @@ try_check_and_fix_config() {
     case $? in
         0) print_msg "Config validation successful."; return 0 ;;
         1) error_out "Failed to parse config."; return 1 ;;
-        155) log_msg -warn "Config is missing sections or options." ;;
+        155) ;;
         *) error_out "Unexpected return code $? when validating config."; return 1 ;;
     esac
 
-    log_msg "Adding missing sections and options from the default config."
+    log_msg "" "Adding missing sections and options from the default config."
 
     eval "$val_res" || { error_out "Failed to parse config."; return 1; }
     IFS="$_NL_"
