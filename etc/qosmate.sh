@@ -70,7 +70,7 @@ FIRST10S=$((DOWNRATE * 10000 / 8))
 
 # Get tc stab parameters for HFSC/HTB/Hybrid
 get_tc_overhead_params() {
-    local preset="${COMMON_LINK_PRESETS:-ethernet}"
+    local preset="$COMMON_LINK_PRESETS"
     local overhead="$OVERHEAD"
     
     # Detect ATM-based presets
@@ -96,7 +96,7 @@ get_tc_overhead_params() {
 # Get CAKE parameters from common link settings
 # $1 = "hybrid" to force manual overhead for consistency with HFSC
 get_cake_link_params() {
-    local preset="${COMMON_LINK_PRESETS:-ethernet}"
+    local preset="$COMMON_LINK_PRESETS"
     local oh="${OVERHEAD}"
     local base=""
 
