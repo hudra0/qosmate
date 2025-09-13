@@ -130,7 +130,7 @@ QOSMATE_EXEC_FILES_FRONTEND="
     "$QOSMATE_VERSION_FILE_BACKEND" "$QOSMATE_FILE_TYPES_BACKEND" "$QOSMATE_GEN_FILES_BACKEND" \
     "$QOSMATE_EXEC_FILES_BACKEND" "$QOSMATE_EXTRA_FILES_BACKEND" "$QOSMATE_FILE_TYPES_FRONTEND" \
     "$QOSMATE_GEN_FILES_FRONTEND" "$QOSMATE_EXTRA_FILES_FRONTEND" "$QOSMATE_EXEC_FILES_FRONTEND" \
-    "${global_enabled:=}"
+    "${global_enabled:=}" "${ROOT_QDISC:=}" "${gameqdisc:=}"
 
 
 ### Utility functions
@@ -1137,6 +1137,8 @@ preserve_config_files() {
 
     rm -f "$tmp_file"
 
+    printf '\n'
+
     if [ "$PRESERVE_CONFIG_FILES" = 1 ]; then
         for path in $paths; do
             grep -qxF "$path" "$sysupgr_file" && continue
@@ -1173,18 +1175,12 @@ preserve_config_files() {
     :
 }
 
-load_config() {
-    config_load qosmate || return 1
-    config_get global_enabled global enabled
-    config_get WAN settings WAN eth1
-    config_get PRESERVE_CONFIG_FILES advanced PRESERVE_CONFIG_FILES
-}
-
 # return codes:
 # 0 - OK
 # 1 - error
-# 155 - missing sections and/or options
-validate_config() {
+# 154 - error in default config
+# 155 - missing sections and/or options in user config
+parse_config() {
     local file miss_sec_f="/tmp/qosmate-missing-sections" miss_opt_f="/tmp/qosmate-missing-options"
     for file in "$QOSMATE_CFG_FILE" "$QOSMATE_DEFAULTS_FILE"; do
         [ -f "$file" ] || {
@@ -1194,21 +1190,26 @@ validate_config() {
     done
 
     awk -v miss_sec_f="$miss_sec_f" -v miss_opt_f="$miss_opt_f" \
-        -v many_quotes="'.*'.*'" -v p1="'[^']*$" -v p2=".*'" ' \
+        -v bad_quotes="(\"|'.*'.*')" -v p1="'[^']*$" -v p2=".*'" ' \
     function get_val(s){
         if (sub(p1,"",s) && sub(p2,"",s)) return s; else return "ERROR"
     }
 
-    BEGIN{rv=0}
+    BEGIN{
+        rv=0
+        # Primary settings must be printed first
+        def_prim_arr["settings:UPRATE"]
+        def_prim_arr["settings:DOWNRATE"]
+    }
 
-    # serialize user config into sections_arr, opts_arr
+    # serialize user config into user_sections_arr, user_opts_arr
     NR == FNR {
-        if ($0 ~ many_quotes) next # ignore lines with more than 2 single-quotes
+        if ($0 ~ bad_quotes) next # ignore lines with double-quotes or more than 2 single-quotes
 
         if ( $0 ~ /^[ 	]*config[ 	]/ ) {
             section = get_val($0)
             if (section == "ERROR" || section !~ /^[a-zA-Z0-9_]+$/) next # ignore invalid section declarations
-            sections_arr[section]
+            user_sections_arr[section]
             next
         }
 
@@ -1216,21 +1217,21 @@ validate_config() {
             if ( ! section || $2 !~ /^[a-zA-Z0-9_]+$/ ) next # ignore options w/ invalid keys or outside section
             val = get_val($0)
             if ( val == "ERROR" || ! val ) next # ignore options w/ invalid or empty values
-            ser_opt = section ":" $2
-            opts_arr[ser_opt] = val
+            user_opts_arr[section ":" $2] = val
         }
         next
     }
 
-    # process default config and check against it for missing sections or options
+    # serialize default config into def_prim_arr, def_secondary_arr
+    # and check against it for missing sections or options in user config
     FNR == 1 { section = ""; section_ind = 0 }
     $0 ~ /^[ 	]*($|#)/ {next} # ignore comments and empty lines
-    $0 ~ many_quotes {rv=1;exit}
 
     /^[ 	]*config[ 	]/ {
+        if ($0 ~ bad_quotes) {rv=154;exit}
         section = get_val($0)
-        if (section == "ERROR" || section !~ /^[a-zA-Z0-9_]+$/) {rv=1; exit}
-        if (section in sections_arr) {section_ind++;next}
+        if (section == "ERROR" || section !~ /^[a-zA-Z0-9_]+$/) {rv=154; exit}
+        if (section in user_sections_arr) {section_ind++;next}
         # user config is missing section
         missing_sections = missing_sections section "=" section_ind "\n"
         print section >> miss_sec_f
@@ -1239,19 +1240,22 @@ validate_config() {
     }
 
     /^[ 	]*option[ 	]/ {
-        if ( ! section || $2 !~ /^[a-zA-Z0-9_]+$/ ) {rv=1; exit}
+        if ($0 ~ bad_quotes) {rv=154;exit}
+        if ( ! section || $2 !~ /^[a-zA-Z0-9_]+$/ ) {rv=154; exit}
         val = get_val($0)
-        if (val == "ERROR") {rv=1; exit}
-        if (! val) next     # ignore options without value
+        if (val == "ERROR") {rv=154; exit}
         ser_opt = section ":" $2
-        if (ser_opt in opts_arr) next
+        if (ser_opt in def_prim_arr) def_prim_arr[ser_opt] = val
+            else def_secondary_arr[ser_opt] = val
+        if (! val) next     # do not check user opts vs def opts without value
+        if (ser_opt in user_opts_arr) next
         # user config is missing option
-        missing_opts = missing_opts ser_opt "=" val "\n"
+        missing_opts =  missing_opts ser_opt "=" val "\n"
         print ser_opt >> miss_opt_f
     }
 
     END{
-        if (rv == 1) exit 1
+        if (rv == 1 || rv == 154) exit rv
         if (missing_sections) {
             rv = 155
             print "missing_sections=\"" missing_sections "\""
@@ -1260,32 +1264,57 @@ validate_config() {
             rv = 155
             print "missing_opts=\"" missing_opts "\""
         }
+
+        for (ser_opt in def_prim_arr) {if (! def_prim_arr[ser_opt]) exit 154} # check that primary opts are set in def config
+        printf "%s", "ser_def_opts=\""
+        for (ser_opt in def_prim_arr) {print ser_opt "=" def_prim_arr[ser_opt]}
+        for (ser_opt in def_secondary_arr) print ser_opt "=" def_secondary_arr[ser_opt]
+        print "\""
         exit rv
-    }' - "$QOSMATE_DEFAULTS_FILE" < "$QOSMATE_CFG_FILE"
+    }' "$QOSMATE_CFG_FILE" "$QOSMATE_DEFAULTS_FILE"
     rv=$?
 
     [ $rv != 155 ] && { rm -f "$miss_sec_f" "$miss_opt_f"; return $rv; }
 
     for file in "$miss_sec_f" "$miss_opt_f"; do
         [ -f "$file" ] || continue
-        log_msg -warn "Missing config ${file##*-}:" "$(cat "$file")"
+        log_msg -warn "" "Missing config ${file##*-}:" "$(cat "$file")"
         rm -f "$file"
     done
     return 155
 }
 
-check_and_fix_config() {
-    try_check_and_fix_config && return 0
-    error_out "Failed to process qosmate config."
-    uci revert qosmate 2>/dev/null
+load_and_fix_config() {
+    export QOSMATE_CONFIG_LOADED=
+    try_load_and_fix_config "$@" && { QOSMATE_CONFIG_LOADED=1; return 0; }
+    # 155 = config loaded but some options/sections missing
+    [ $? != 155 ] && {
+        error_out "Failed to load config."
+        uci revert qosmate 2>/dev/null
+    }
     return 1
 }
 
 # return codes:
 # 0 - check or fix OK
 # 1 - error
-try_check_and_fix_config() {
+try_load_and_fix_config() {
+    parse_ser_opt() {
+        case "$4" in
+            '') return 0 ;;
+            *:*=*) ;;
+            *) error_out "parse_ser_opt: unexpected input '$4'."; return 1
+        esac
+        local gso_section="${4%%:*}" gso_val="${4#*=}" gso_opt_name="${4#*:}"
+        gso_opt_name="${gso_opt_name%"=$gso_val"}"
+        eval "$1=\"$gso_section\" $2=\"$gso_opt_name\" $3=\"$gso_val\""
+    }
+
+    local nofix=
+    [ "$1" = '-nofix' ] && nofix=1
+
     if [ ! -f "$QOSMATE_CFG_FILE" ]; then
+        [ -n "$nofix" ] && return 1
         log_msg -warn "Config file not found, restoring from qosmate-defaults."
         # qosmate-defaults is checked for and restored if required by start() using the update() routine
         [ -f "$QOSMATE_DEFAULTS_FILE" ] || { error_out "$QOSMATE_DEFAULTS_FILE not found."; return 1; }
@@ -1294,46 +1323,70 @@ try_check_and_fix_config() {
             return 1
         }
         log_msg "Config file restored."
-        return 0
     fi
 
-    local IFS="$DEFAULT_IFS" section section_name opt opt_name \
-        val_res missing_sections='' missing_opts=''
+    local IFS="$DEFAULT_IFS" section section_name ser_opt opt_name val def_val \
+        parse_rv parse_res missing_sections='' missing_opts='' ser_def_opts=''
 
-    # Validate config and generate $val_res for config repair
-    val_res="$(validate_config)"
+    # Validate config and generate $parse_res for config repair
+    parse_res="$(parse_config)"
+    parse_rv=$?
 
-    case $? in
-        0) print_msg "Config validation successful."; return 0 ;;
+    case $parse_rv in
+        0|155) ;;
         1) error_out "Failed to parse config."; return 1 ;;
-        155) ;;
-        *) error_out "Unexpected return code $? when validating config."; return 1 ;;
+        154) error_out "Failed to process $QOSMATE_DEFAULTS_FILE."; return 1 ;;
+        *) error_out "Unexpected return code $? when parsing config."; return 1 ;;
     esac
 
-    log_msg "" "Adding missing sections and options from the default config."
+    eval "$parse_res" || { error_out "Failed to parse config."; return 1; }
 
-    eval "$val_res" || { error_out "Failed to parse config."; return 1; }
+    if [ "$parse_rv" = 155 ] && [ -z "$nofix" ]; then
+        log_msg "" "Adding missing sections and options from the default config."
+
+        IFS="$_NL_"
+        for section in $missing_sections; do
+            [ -n "$section" ] || continue
+            section_name="${section%%=*}"
+            index="${section#*=}"
+            log_msg "Adding config section '$section_name'."
+            uci set "qosmate.${section_name}=${section_name}" &&
+            uci reorder "qosmate.${section_name}=${index}" || return 1
+        done
+        for ser_opt in $missing_opts; do
+            [ -n "$ser_opt" ] || continue
+            parse_ser_opt section opt_name def_val "$ser_opt" || return 1
+            [ -n "$section" ] && [ -n "$opt_name" ] && [ -n "$def_val" ] || continue
+            log_msg "Adding option '$opt_name' to section '$section' with default value '$def_val'."
+            uci set "qosmate.${section}.${opt_name}=${def_val}" ||
+                { error_out "Failed to add config option."; return 1; }
+        done
+        IFS="$DEFAULT_IFS"
+        uci commit qosmate || return 1
+        parse_rv=0
+    fi
+
+    config_load qosmate || return 1
+
     IFS="$_NL_"
-    for section in $missing_sections; do
-        section_name="${section%%=*}" index="${section#*=}"
-        log_msg "Adding config section '$section_name'."
-        uci set "qosmate.${section_name}=${section_name}" &&
-        uci reorder "qosmate.${section_name}=${index}" || return 1
-    done
-    for opt in $missing_opts; do
-        [ -n "$opt" ] || continue
-        section="${opt%%:*}"
-        val="${opt#*=}"
-        opt_name="${opt#*:}"
-        opt_name="${opt_name%"=$val"}"
-        [ -n "$section" ] && [ -n "$opt_name" ] && [ -n "$val" ] || continue
-        log_msg "Adding option '$opt_name' to section '$section' with default value '$val'."
-        uci set "qosmate.${section}.${opt_name}=${val}" ||
-            { error_out "Failed to add config option."; return 1; }
+    for ser_opt in $ser_def_opts; do
+        IFS="$DEFAULT_IFS"
+        parse_ser_opt section opt_name def_val "$ser_opt" || return 1
+        var_name="$opt_name"
+
+        # Var name and def val overrides
+        case "${section}:${opt_name}" in
+            global:enabled) var_name=global_enabled ;;
+            advanced:ACKRATE) def_val=$((UPRATE * 5 / 100)) ;;
+            hfsc:GAMEUP) def_val=$((UPRATE*15/100+400)) ;;
+            hfsc:GAMEDOWN) def_val=$((DOWNRATE*15/100+400)) ;;
+            hfsc:netem_direction) var_name=NETEM_DIRECTION ;;
+        esac
+
+        NO_EXPORT='' config_get "$var_name" "$section" "$opt_name" "$def_val"
     done
     IFS="$DEFAULT_IFS"
-    uci commit qosmate || return 1
-    :
+    return $parse_rv
 }
 
 migrate_config() {
@@ -1708,7 +1761,7 @@ check_package_status() {
 
 create_hotplug_script() {
     [ -s "$QOSMATE_HOTPLUG_SCRIPT" ] && { log_msg "Hotplug script already exists."; return 0; }
-    log_msg "Creating the hotplug script."
+    log_msg "" "Creating the hotplug script."
     cat > "$QOSMATE_HOTPLUG_SCRIPT" << 'EOF'
 #!/bin/sh
 
@@ -1794,13 +1847,12 @@ start_service() {
 
     install_packages
 
-    check_and_fix_config || return 1
+    load_and_fix_config || return 1
 
     # Enable the global option
     uci set qosmate.global.enabled='1'
     uci commit qosmate
-
-    load_config
+    export global_enabled=1
 
     # Create custom rules file if it doesn't exist
     manage_custom_rules_file create
@@ -1809,12 +1861,15 @@ start_service() {
 
     preserve_config_files # Add config files to sysupgrade.conf
 
-    /bin/sh "$QOSMATE_MAIN_SCRIPT"
+    # Save the current WAN interface to a temporary file
+    printf '%s\n' "$WAN" > /tmp/qosmate_wan
+
+    /bin/sh "$QOSMATE_MAIN_SCRIPT" || { error_out "Failed to start qosmate."; return 1; }
 
     create_hotplug_script  # Create the hotplug script instead of downloading it
 
     /etc/init.d/firewall reload &&
-    enable || exit 1
+    enable || return 1
     log_msg "Service started"
 }
 
@@ -1823,7 +1878,7 @@ stop_service() {
     OLD_WAN=$(cat /tmp/qosmate_wan 2>/dev/null)
     if [ -z "$OLD_WAN" ]; then
         # If the temporary file doesn't exist, fall back to WAN from config
-        load_config
+        load_and_fix_config
         OLD_WAN="$WAN"
     fi
 
@@ -1870,6 +1925,8 @@ shutdown() {
 }
 
 status_service() {
+    load_and_fix_config -nofix
+
     print_msg "==== qosmate Status ===="
     
     # Check if autostart is enabled
@@ -1879,8 +1936,59 @@ status_service() {
         print_msg "qosmate autostart is not enabled."
     fi
 
-    # Report qdiscs info
-    /bin/sh "$QOSMATE_MAIN_SCRIPT" report_qdiscs
+    # Check if the service is enabled in UCI config
+    local config_enabled=true not_managing=
+    if [ "$global_enabled" != 1 ]; then
+        config_enabled=false
+        not_managing=", but qosmate is not managing it"
+    fi
+    print_msg "qosmate global:enabled is $config_enabled."
+
+    # Gather qdiscs info
+    local dir dev qdisc qdiscs active_qdisc \
+        IFB="ifb-$WAN"
+
+    # Check and report if traffic shaping is active
+    for dir in egress ingress; do
+        case "$dir" in
+            egress) dev="$WAN" ;;
+            ingress) dev="$IFB" ;;
+        esac
+        qdiscs="$(tc qdisc show dev "$dev" 2>/dev/null | sed -n 's/^qdisc\s\s*\([^ \t]*\).* root .*/\1/p')"
+        qdiscs="${qdiscs//$'\n'/ }"
+        active_qdisc=''
+        for qdisc in cake hfsc htb; do
+            case "${qdiscs}" in "${qdisc}"|"${qdisc} "*|*" ${qdisc}"|*" ${qdisc} "*)
+                active_qdisc="$qdisc"
+            esac
+        done
+
+        case "$active_qdisc" in
+            cake) qdisc_print=CAKE ;;
+            hfsc) qdisc_print=HFSC ;;
+            htb) qdisc_print=HTB ;;
+        esac
+
+        if [ -n "$active_qdisc" ]; then
+            print_msg "Traffic shaping ($qdisc_print) is active on the $dir interface ($dev)$not_managing."
+        else
+            print_msg "No traffic shaping is active on the $dir interface ($dev)."
+        fi
+    done
+
+    # Show summary of current settings
+    print_msg "" "==== Current Settings ====" \
+        "Upload rate: $UPRATE kbps" \
+        "Download rate: $DOWNRATE kbps" \
+        "Game traffic upload: $GAMEUP kbps" \
+        "Game traffic download: $GAMEDOWN kbps"
+    if [ "$ROOT_QDISC" = "cake" ]; then
+        print_msg "Queue discipline: CAKE (Root qdisc)"
+    elif [ "$ROOT_QDISC" = "htb" ]; then
+        print_msg "Queue discipline: HTB (Root qdisc)"
+    else
+        print_msg "Queue discipline: $gameqdisc (for game traffic in HFSC)"
+    fi
 
     # Display QoSmate version information
     print_msg "" "==== Version Information ===="
@@ -2264,7 +2372,7 @@ health_check() {
     local errors=0
 
     # Check the config
-    if load_config && validate_config 1>/dev/null; then
+    if load_and_fix_config -nofix; then
         status="${status}config:ok;"
     else
         status="${status}config:failed;" # *** NOTE THE CHANGE FROM 'missing' TO 'failed' ***

@@ -3,8 +3,6 @@
 
 VERSION="1.2.0" # will become obsolete in future releases as version string is now in the init script
 
-QOSMATE_DEFAULTS_FILE=/etc/qosmate.d/qosmate-defaults
-
 _NL_='
 '
 DEFAULT_IFS=" 	${_NL_}"
@@ -13,6 +11,12 @@ IFS="$DEFAULT_IFS"
 : "${VERSION}" "${global_enabled:=}" "${nongameqdisc:=}" "${nongameqdiscoptions:=}" "${OVERHEAD:=}"
 
 . /lib/functions.sh
+
+# Config is loaded by the caller (qosmate init), this is a fallback just in case
+[ -n "$QOSMATE_CONFIG_LOADED" ] || {
+    . /etc/init.d/qosmate
+    load_and_fix_config || exit 1
+}
 
 error_out() { log_msg -err "${@}"; }
 
@@ -58,147 +62,11 @@ log_msg() {
     :
 }
 
-# Get config keys from default config,
-#   use them to declare vars with respective values from main config or with default values
-load_config() {
-    local IFS="$DEFAULT_IFS" section opt def_val ser_def_opts ser_opt var_name
-
-    # Serialize default config into format: <section>:<option>=<def_val>
-    ser_def_opts="$(
-        awk -v many_quotes="'.*'.*'" -v p1="'[^']*$" -v p2=".*'" ' \
-            function get_val(s){
-                if (sub(p1,"",s) && sub(p2,"",s)) return s; else return "ERROR"
-            }
-
-            BEGIN{
-                rv=0
-                # Primary settings must be printed first
-                prim["settings:UPRATE"]
-                prim["settings:DOWNRATE"]
-            }
-
-            $0 ~ /^[ 	]*($|#)/ {next} # ignore comments and empty lines
-            $0 ~ many_quotes {rv=1;exit}
-
-            /^[ 	]*config[ 	]/{
-                section = get_val($0)
-                if (section == "ERROR" || section !~ /^[a-zA-Z0-9_]+$/) {rv=1; exit}
-                next
-            }
-
-            /^[ 	]*option[ 	]/{
-                if ( ! section || $2 !~ /^[a-zA-Z0-9_]+$/ ) {rv=1; exit}
-                val = get_val($0)
-                if (val == "ERROR") {rv=1; exit}
-                ser_opt = section ":" $2
-                if (ser_opt in prim) {prim[ser_opt] = val; next}
-                secondary[ser_opt] = val
-            }
-
-            END{
-                if (rv == 1) exit 1
-                for (ser_opt in prim) {if (! prim[ser_opt]) exit 1; else print ser_opt "=" prim[ser_opt]}
-                for (ser_opt in secondary) print ser_opt "=" secondary[ser_opt]
-            }' "$QOSMATE_DEFAULTS_FILE"
-    )" || { error_out "Failed to parse default config."; exit 1; }
-
-    IFS="$_NL_"
-    for ser_opt in $ser_def_opts; do
-        IFS="$DEFAULT_IFS"
-        section="${ser_opt%%:*}"
-        def_val="${ser_opt##*=}"
-        opt="${ser_opt#*:}"
-        opt="${opt%%="$def_val"}"
-        var_name="$opt"
-
-        # Var name and def val overrides
-        case "${section}:${opt}" in
-            global:enabled) var_name=global_enabled ;;
-            advanced:ACKRATE) def_val=$((UPRATE * 5 / 100)) ;;
-            hfsc:GAMEUP) def_val=$((UPRATE*15/100+400)) ;;
-            hfsc:GAMEDOWN) def_val=$((DOWNRATE*15/100+400)) ;;
-            hfsc:netem_direction) var_name=NETEM_DIRECTION ;;
-        esac
-
-        config_get "$var_name" "$section" "$opt" "$def_val"
-    done
-    IFS="$DEFAULT_IFS"
-
-    # Calculated values
-    FIRST500MS=$((DOWNRATE * 500 / 8))
-    FIRST10S=$((DOWNRATE * 10000 / 8))
-}
-
-report_qdiscs() {
-    # Check if the service is enabled in UCI config
-    local config_enabled=true not_managing=
-    if [ "$global_enabled" != 1 ]; then
-        config_enabled=false
-        not_managing=", but qosmate is not managing it"
-    fi
-    print_msg "qosmate global:enabled is $config_enabled."
-
-    # Gather qdiscs info
-    local dir dev qdisc qdiscs active_qdisc \
-        IFB="ifb-$WAN"
-
-    # Check and report if traffic shaping is active
-    for dir in egress ingress; do
-        case "$dir" in
-            egress) dev="$WAN" ;;
-            ingress) dev="$IFB" ;;
-        esac
-        qdiscs="$(tc qdisc show dev "$dev" 2>/dev/null | sed -n 's/^qdisc\s\s*\([^ \t]*\).* root .*/\1/p')"
-        qdiscs="${qdiscs//$'\n'/ }"
-        active_qdisc=''
-        for qdisc in cake hfsc htb; do
-            case "${qdiscs}" in "${qdisc}"|"${qdisc} "*|*" ${qdisc}"|*" ${qdisc} "*)
-                active_qdisc="$qdisc"
-            esac
-        done
-
-        case "$active_qdisc" in
-            cake) qdisc_print=CAKE ;;
-            hfsc) qdisc_print=HFSC ;;
-            htb) qdisc_print=HTB ;;
-        esac
-
-        if [ -n "$active_qdisc" ]; then
-            print_msg "Traffic shaping ($qdisc_print) is active on the $dir interface ($dev)$not_managing."
-        else
-            print_msg "No traffic shaping is active on the $dir interface ($dev)."
-        fi
-    done
-
-    # Show summary of current settings
-    print_msg "" "==== Current Settings ====" \
-        "Upload rate: $UPRATE kbps" \
-        "Download rate: $DOWNRATE kbps" \
-        "Game traffic upload: $GAMEUP kbps" \
-        "Game traffic download: $GAMEDOWN kbps"
-    if [ "$ROOT_QDISC" = "cake" ]; then
-        print_msg "Queue discipline: CAKE (Root qdisc)"
-    elif [ "$ROOT_QDISC" = "htb" ]; then
-        print_msg "Queue discipline: HTB (Root qdisc)"
-    else
-        print_msg "Queue discipline: $gameqdisc (for game traffic in HFSC)"
-    fi
-    :
-}
-
 config_load 'qosmate' || { error_out "Failed to get UCI config."; exit 1; }
 
-load_config
-
-# Process arguments
-case "$1" in
-	report_qdiscs)
-		report_qdiscs
-		exit 0
-esac
-
-# Save the current WAN interface to a temporary file
-printf '%s\n' "$WAN" > /tmp/qosmate_wan
+# Calculated values
+FIRST500MS=$((DOWNRATE * 500 / 8))
+FIRST10S=$((DOWNRATE * 10000 / 8))
 
 # Get tc stab parameters for HFSC/HTB/Hybrid
 get_tc_overhead_params() {
@@ -231,7 +99,7 @@ get_cake_link_params() {
     local preset="${COMMON_LINK_PRESETS:-ethernet}"
     local oh="${OVERHEAD}"
     local base=""
-    
+
     # Determine base keyword and default overhead
     case "$preset" in
         *atm*|*adsl*|*pppoa*|*pppoe*|*bridged*|*ipoa*|conservative)
@@ -243,7 +111,7 @@ get_cake_link_params() {
         raw)          base="raw";      : "${oh:=0}" ;;
         ethernet|*)   base="ethernet"; : "${oh:=40}" ;;
     esac
-    
+
     # Build parameters
     printf "%s%s%s%s" \
         "$base" \
@@ -304,7 +172,7 @@ debug_log() {
 # Function to create NFT sets from config
 create_nft_sets() {
     local sets_created=""
-    
+
     # shellcheck disable=SC2329
     create_set() {
         local section="$1" name ip_list mode timeout set_flags
@@ -360,12 +228,12 @@ create_nft_sets() {
         fi
         sets_created="$sets_created $name"
     }
-    
+
     # Clear the temporary file
     rm -f /tmp/qosmate_set_families
-    
+
     config_foreach create_set ipset
-    
+
     export QOSMATE_SETS="$sets_created"
     [ -n "$sets_created" ] && debug_log "Created sets: $sets_created"
 }
@@ -1093,6 +961,8 @@ ${DYNAMIC_RULES}
 DSCPEOF
 
 ## Set up ctinfo downstream shaping
+
+print_msg "" "Setting up ctinfo downstream shaping..."
 
 # Set up ingress handle for WAN interface
 tc qdisc add dev "$WAN" handle ffff: ingress
