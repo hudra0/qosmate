@@ -16,7 +16,7 @@ The project builds upon the amazing work of [@dlakelan](https://github.com/dlake
 > **Compatibility Note**: Officially, only OpenWrt is supported. Forks may introduce fundamental changes or adjustments that could impact compatibility or functionality.
 
 Key aspects of QoSmate include
-- Support for HFSC, CAKE, and Hybrid queueing disciplines
+- Support for HFSC, CAKE, Hybrid and HTB queueing disciplines
 - A LuCI-based interface for easy configuration
 - DSCP marking and traffic prioritization options via CLI and UI
 - Automatic package installation and setup
