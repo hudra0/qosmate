@@ -2368,8 +2368,7 @@ auto_setup_noninteractive() {
 
 health_check() {
     # Check if QoSmate is properly configured and running
-    local status=""
-    local errors=0
+    local status="" errors=0 service_enabled=0
 
     # Check the config
     if load_and_fix_config -nofix; then
@@ -2379,21 +2378,14 @@ health_check() {
         errors=$((errors + 1))
     fi
 
-    # Check if the service is enabled
-    if enabled; then
-        status="${status}service:enabled;"
-    else
-        status="${status}service:disabled;"
-        errors=$((errors + 1))
-    fi
+    # Check global:enabled and if the service is enabled
+    enabled && service_enabled=1
 
-    # Check if global:enabled is true
-    if [ "$global_enabled" = 1 ]; then
-        status="${status}global_enabled:true;"
-    else
-        status="${status}global_enabled:false;"
-        errors=$((errors + 1))
-    fi
+    case "${service_enabled}${global_enabled}" in
+        11) status="${status}service:enabled;" ;;
+        00) status="${status}service:disabled;"; errors=$((errors + 1)) ;;
+        *) status="${status}service:invalid_state;"; errors=$((errors + 1)) ;;
+    esac
 
     # Check nftables configuration
     if nft list table inet dscptag >/dev/null 2>&1; then
