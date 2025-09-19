@@ -1336,7 +1336,7 @@ try_load_and_fix_config() {
         0|155) ;;
         1) error_out "Failed to parse config."; return 1 ;;
         154) error_out "Failed to process $QOSMATE_DEFAULTS_FILE."; return 1 ;;
-        *) error_out "Unexpected return code $? when parsing config."; return 1 ;;
+        *) error_out "Unexpected return code $parse_rv when parsing config."; return 1 ;;
     esac
 
     eval "$parse_res" || { error_out "Failed to parse config."; return 1; }
