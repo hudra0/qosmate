@@ -1944,7 +1944,6 @@ status_service() {
     fi
     print_msg "qosmate global:enabled is $config_enabled."
 
-    # Gather qdiscs info
     local dir dev qdisc qdiscs active_qdisc \
         IFB="ifb-$WAN"
 
