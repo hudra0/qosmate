@@ -2386,13 +2386,13 @@ auto_setup_noninteractive() {
 
 health_check() {
     # Check if QoSmate is properly configured and running
-    local status="" errors=0 service_enabled=0
+    local status="" errors=0 service_enabled=0 config_status=''
 
     # Check the config
     if load_and_fix_config -nofix 1>/dev/null; then
-        status="${status}config:ok;"
+        config_status=ok
     else
-        status="${status}config:failed;" # *** NOTE THE CHANGE FROM 'missing' TO 'failed' ***
+        config_status=failed # *** NOTE THE CHANGE FROM 'missing' TO 'failed' ***
         errors=$((errors + 1))
     fi
 
@@ -2420,6 +2420,8 @@ health_check() {
         status="${status}tc:failed;"
         errors=$((errors + 1))
     fi
+
+    status="${status}config:${config_status};"
 
     # Check required packages
     local missing_packages=""
