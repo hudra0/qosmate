@@ -1325,7 +1325,7 @@ try_load_and_fix_config() {
         log_msg "Config file restored."
     fi
 
-    local IFS="$DEFAULT_IFS" section section_name ser_opt opt_name val def_val \
+    local IFS="$DEFAULT_IFS" section section_name ser_opt opt_name def_val \
         parse_rv parse_res missing_sections='' missing_opts='' ser_def_opts=''
 
     # Validate config and generate $parse_res for config repair
@@ -1386,6 +1386,25 @@ try_load_and_fix_config() {
         NO_EXPORT='' config_get "$var_name" "$section" "$opt_name" "$def_val"
     done
     IFS="$DEFAULT_IFS"
+
+    # Ensure valid values for DOWNRATE, UPRATE
+    case "$ROOT_QDISC" in hfsc|hybrid)
+        local opt val
+        for opt in DOWNRATE UPRATE; do
+            eval "val=\"\${${opt}}\""
+            if ! [ "$val" -ge 1000 ]; then
+                log_msg -warn "$opt is '$val' for $ROOT_QDISC. Using minimum value of 1000 kbps."
+                eval "$opt=1000"
+            fi
+        done
+    esac
+
+    # Limit DOWNRATE based on BWMAXRATIO
+    if [ "$UPRATE" -gt 0 ] && [ $((DOWNRATE > UPRATE*BWMAXRATIO)) -eq 1 ]; then
+        print_msg "We limit the downrate to at most $BWMAXRATIO times the upstream rate to ensure no upstream ACK floods occur which can cause game packet drops"
+        DOWNRATE=$((BWMAXRATIO*UPRATE))
+    fi
+
     return $parse_rv
 }
 
@@ -2370,7 +2389,7 @@ health_check() {
     local status="" errors=0 service_enabled=0
 
     # Check the config
-    if load_and_fix_config -nofix; then
+    if load_and_fix_config -nofix 1>/dev/null; then
         status="${status}config:ok;"
     else
         status="${status}config:failed;" # *** NOTE THE CHANGE FROM 'missing' TO 'failed' ***

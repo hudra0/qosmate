@@ -120,32 +120,6 @@ get_cake_link_params() {
         "${ETHER_VLAN_KEYWORD:+ $ETHER_VLAN_KEYWORD}"
 }
 
-validate_and_adjust_rates() {
-# *** Default values are already assigned by load_config().
-#     Should this function set them again, under what conditions and to which values? ***
-    if [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; then
-        if [ -z "$DOWNRATE" ] || [ "$DOWNRATE" -eq 0 ]; then
-            print_msg -warn "DOWNRATE is zero or not set for $ROOT_QDISC. Setting to minimum value of 1000 kbps."
-            DOWNRATE=1000
-            uci set qosmate.settings.DOWNRATE=1000
-        fi
-        if [ -z "$UPRATE" ] || [ "$UPRATE" -eq 0 ]; then
-            print_msg -warn "UPRATE is zero or not set for $ROOT_QDISC. Setting to minimum value of 1000 kbps."
-            UPRATE=1000
-            uci set qosmate.settings.UPRATE=1000
-        fi
-        uci commit qosmate
-    fi
-}
-
-validate_and_adjust_rates
-
-# Adjust DOWNRATE based on BWMAXRATIO
-if [ "$UPRATE" -gt 0 ] && [ $((DOWNRATE > UPRATE*BWMAXRATIO)) -eq 1 ]; then
-    print_msg "We limit the downrate to at most $BWMAXRATIO times the upstream rate to ensure no upstream ACK floods occur which can cause game packet drops"
-    DOWNRATE=$((BWMAXRATIO*UPRATE))
-fi
-
 ##############################
 # Variable checks and dynamic rule generation
 ##############################
