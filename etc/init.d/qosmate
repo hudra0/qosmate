@@ -1389,14 +1389,17 @@ try_load_and_fix_config() {
 
     # Ensure valid values for DOWNRATE, UPRATE
     case "$ROOT_QDISC" in hfsc|hybrid)
-        local opt val
+        local opt val commit_req='' min_val=1000
         for opt in DOWNRATE UPRATE; do
             eval "val=\"\${${opt}}\""
-            if ! [ "$val" -ge 1000 ]; then
-                log_msg -warn "$opt is '$val' for $ROOT_QDISC. Using minimum value of 1000 kbps."
-                eval "$opt=1000"
+            if ! [ "$val" -gt 0 ]; then
+                log_msg -warn "$opt is '$val' for $ROOT_QDISC. Setting to minimum value of $min_val kbps."
+                eval "$opt=$min_val"
+                uci set "qosmate.settings.${opt}=${min_val}"
+                commit_req=1
             fi
         done
+        [ -z "$commit_req" ] || uci commit qosmate || return 1
     esac
 
     # Limit DOWNRATE based on BWMAXRATIO
