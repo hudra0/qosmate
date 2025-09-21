@@ -1564,6 +1564,17 @@ try_migrate_config() {
 
 ### Servce functions
 
+# Check if qosmate is active
+# Return codes:
+# 0 - active
+# 1 - inactive
+# 250 - error
+is_qosmate_active() {
+    [ -n "$1" ] || { error_out "is_qosmate_active: specify WAN device"; return 250; }
+    tc qdisc show dev "$1" 2>/dev/null | grep -qE "hfsc|cake|htb" && \
+        nft -t list table inet dscptag >/dev/null 2>&1
+}
+
 # Validate a single nftables file
 # Args: $1=file_path, $2=file_type, $3=tmp_file
 # Returns: 0 on success, 1 on failure
@@ -2150,14 +2161,6 @@ try_auto_setup() {
     fi
     [ -z "$noninteractive" ] && print_msg "Starting qosmate auto-setup..."
 
-    # Stop qosmate if it's running
-    # *** DOES '/etc/init.d/qosmate status' EXIT CODE ACTUALLY REFLECT RUNNING STATUS? ***
-    if /etc/init.d/qosmate status > /dev/null; then
-        print_msg "Stopping qosmate for accurate speed test results..."
-        /etc/init.d/qosmate stop
-        sleep 5  # Give some time for the network to stabilize
-    fi
-
     # Detect WAN interface
     WAN_INTERFACE=$(ifstatus wan | grep -e '"device"' | cut -d'"' -f4)
     L3_DEVICE=$(ifstatus wan | grep -e '"l3_device"' | cut -d'"' -f4)
@@ -2169,6 +2172,13 @@ try_auto_setup() {
 
     FINAL_INTERFACE=${L3_DEVICE:-$WAN_INTERFACE}
     print_msg "Detected WAN interface: $FINAL_INTERFACE"
+
+    # Stop qosmate if it's running
+    if is_qosmate_active "$FINAL_INTERFACE"; then
+        print_msg "Stopping qosmate for accurate speed test results..."
+        stop_service
+        sleep 5  # Give some time for the network to stabilize
+    fi
 
     if [ -n "$noninteractive" ]; then
         speedtest_req=1
