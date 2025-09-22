@@ -8,89 +8,69 @@ _NL_='
 DEFAULT_IFS=" 	${_NL_}"
 IFS="$DEFAULT_IFS"
 
+: "${VERSION}" "${global_enabled:=}" "${nongameqdisc:=}" "${nongameqdiscoptions:=}" "${OVERHEAD:=}"
+
 . /lib/functions.sh
-config_load 'qosmate'
 
-# Default values
-DEFAULT_WAN="eth1"
-DEFAULT_DOWNRATE="90000"
-DEFAULT_UPRATE="45000"
-DEFAULT_OH="44"
-
-: "${VERSION}" "${DEFAULT_WAN}" "${DEFAULT_DOWNRATE}" "${DEFAULT_UPRATE}" "${DEFAULT_OH}" "${nongameqdisc:=}" "${nongameqdiscoptions:=}"
-
-load_config() {
-    # Global settings
-    config_get ROOT_QDISC settings ROOT_QDISC hfsc
-    config_get WAN settings WAN $DEFAULT_WAN
-    config_get DOWNRATE settings DOWNRATE $DEFAULT_DOWNRATE
-    config_get UPRATE settings UPRATE $DEFAULT_UPRATE
-
-    # Advanced settings
-    config_get PRESERVE_CONFIG_FILES advanced PRESERVE_CONFIG_FILES 0
-    config_get WASHDSCPUP advanced WASHDSCPUP 1
-    config_get WASHDSCPDOWN advanced WASHDSCPDOWN 1
-    config_get BWMAXRATIO advanced BWMAXRATIO 20
-    config_get ACKRATE advanced ACKRATE $((UPRATE * 5 / 100))
-    config_get UDP_RATE_LIMIT_ENABLED advanced UDP_RATE_LIMIT_ENABLED 0
-    config_get TCP_UPGRADE_ENABLED advanced TCP_UPGRADE_ENABLED 1
-    config_get UDPBULKPORT advanced UDPBULKPORT
-    config_get TCPBULKPORT advanced TCPBULKPORT
-    config_get VIDCONFPORTS advanced VIDCONFPORTS
-    config_get REALTIME4 advanced REALTIME4
-    config_get REALTIME6 advanced REALTIME6
-    config_get LOWPRIOLAN4 advanced LOWPRIOLAN4
-    config_get LOWPRIOLAN6 advanced LOWPRIOLAN6
-    config_get MSS advanced MSS 536
-    config_get NFT_HOOK advanced NFT_HOOK forward
-    config_get NFT_PRIORITY advanced NFT_PRIORITY 0
-    config_get TCP_DOWNPRIO_INITIAL_ENABLED advanced TCP_DOWNPRIO_INITIAL_ENABLED 1
-    config_get TCP_DOWNPRIO_SUSTAINED_ENABLED advanced TCP_DOWNPRIO_SUSTAINED_ENABLED 1
-    
-    # Link Layer Settings (moved from CAKE, now used by all QDiscs)
-    config_get COMMON_LINK_PRESETS advanced COMMON_LINK_PRESETS ethernet
-    config_get OVERHEAD advanced OVERHEAD  # No default - helper functions handle defaults per preset
-    config_get MPU advanced MPU
-    config_get LINK_COMPENSATION advanced LINK_COMPENSATION
-    config_get ETHER_VLAN_KEYWORD advanced ETHER_VLAN_KEYWORD
-
-    # HFSC specific settings
-    config_get gameqdisc hfsc gameqdisc pfifo
-    config_get GAMEUP hfsc GAMEUP $((UPRATE*15/100+400))
-    config_get GAMEDOWN hfsc GAMEDOWN $((DOWNRATE*15/100+400))
-    config_get nongameqdisc hfsc nongameqdisc fq_codel
-    config_get nongameqdiscoptions hfsc nongameqdiscoptions besteffort ack-filter
-    config_get MAXDEL hfsc MAXDEL 24
-    config_get PFIFOMIN hfsc PFIFOMIN 5
-    config_get PACKETSIZE hfsc PACKETSIZE 450
-    config_get netemdelayms hfsc netemdelayms 30
-    config_get netemjitterms hfsc netemjitterms 7
-    config_get netemdist hfsc netemdist normal
-    config_get NETEM_DIRECTION hfsc netem_direction both
-    config_get pktlossp hfsc pktlossp none
-
-    # CAKE specific settings
-    config_get PRIORITY_QUEUE_INGRESS cake PRIORITY_QUEUE_INGRESS diffserv4
-    config_get PRIORITY_QUEUE_EGRESS cake PRIORITY_QUEUE_EGRESS diffserv4
-    config_get HOST_ISOLATION cake HOST_ISOLATION 1
-    config_get NAT_INGRESS cake NAT_INGRESS 1
-    config_get NAT_EGRESS cake NAT_EGRESS 0
-    config_get ACK_FILTER_EGRESS cake ACK_FILTER_EGRESS auto
-    config_get RTT cake RTT
-    config_get AUTORATE_INGRESS cake AUTORATE_INGRESS 0
-    config_get EXTRA_PARAMETERS_INGRESS cake EXTRA_PARAMETERS_INGRESS
-    config_get EXTRA_PARAMETERS_EGRESS cake EXTRA_PARAMETERS_EGRESS
-
-    # Calculated values
-    FIRST500MS=$((DOWNRATE * 500 / 8))
-    FIRST10S=$((DOWNRATE * 10000 / 8))
+# Config is loaded by the caller (qosmate init), this is a fallback just in case
+[ -n "$QOSMATE_CONFIG_LOADED" ] || {
+    . /etc/init.d/qosmate
+    load_and_fix_config || exit 1
 }
 
-load_config
+error_out() { log_msg -err "${@}"; }
+
+# prints each argument to a separate line
+print_msg() {
+    local _arg msgs_dest="/dev/stdout" msgs_prefix=''
+    for _arg in "$@"
+    do
+        case "${_arg}" in
+            -err) msgs_dest="/dev/stderr" msgs_prefix="Error: " ;;
+            -warn) msgs_dest="/dev/stderr" msgs_prefix="Warning: " ;;
+            '') printf '\n' ;; # print out empty lines
+            *)
+                printf '%s\n' "${msgs_prefix}${_arg}" > "$msgs_dest"
+                msgs_prefix=''
+        esac
+    done
+    :
+}
+
+# logs each argument separately and prints to a separate line
+# optional arguments: '-err', '-warn' to set logged error level
+log_msg() {
+    local msgs_prefix='' _arg err_l=info msgs_dest
+
+    local IFS="$DEFAULT_IFS"
+    for _arg in "$@"
+    do
+        case "${_arg}" in
+            "-err") err_l=err msgs_prefix="Error: " ;;
+            "-warn") err_l=warn msgs_prefix="Warning: " ;;
+            '') printf '\n' ;; # print out empty lines
+            *)
+                case "$err_l" in
+                    err|warn) msgs_dest="/dev/stderr" ;;
+                    *) msgs_dest="/dev/stdout"
+                esac
+                printf '%s\n' "${msgs_prefix}${_arg}" > "$msgs_dest"
+                logger -t qosmate -p user."$err_l" "${msgs_prefix}${_arg}"
+                msgs_prefix=''
+        esac
+    done
+    :
+}
+
+config_load 'qosmate' || { error_out "Failed to get UCI config."; exit 1; }
+
+# Calculated values
+FIRST500MS=$((DOWNRATE * 500 / 8))
+FIRST10S=$((DOWNRATE * 10000 / 8))
 
 # Get tc stab parameters for HFSC/HTB/Hybrid
 get_tc_overhead_params() {
-    local preset="${COMMON_LINK_PRESETS:-ethernet}"
+    local preset="$COMMON_LINK_PRESETS"
     local overhead="$OVERHEAD"
     
     # Detect ATM-based presets
@@ -116,10 +96,10 @@ get_tc_overhead_params() {
 # Get CAKE parameters from common link settings
 # $1 = "hybrid" to force manual overhead for consistency with HFSC
 get_cake_link_params() {
-    local preset="${COMMON_LINK_PRESETS:-ethernet}"
+    local preset="$COMMON_LINK_PRESETS"
     local oh="${OVERHEAD}"
     local base=""
-    
+
     # Determine base keyword and default overhead
     case "$preset" in
         *atm*|*adsl*|*pppoa*|*pppoe*|*bridged*|*ipoa*|conservative)
@@ -131,7 +111,7 @@ get_cake_link_params() {
         raw)          base="raw";      : "${oh:=0}" ;;
         ethernet|*)   base="ethernet"; : "${oh:=40}" ;;
     esac
-    
+
     # Build parameters
     printf "%s%s%s%s" \
         "$base" \
@@ -139,55 +119,6 @@ get_cake_link_params() {
         "${MPU:+ mpu $MPU}" \
         "${ETHER_VLAN_KEYWORD:+ $ETHER_VLAN_KEYWORD}"
 }
-
-validate_and_adjust_rates() {
-    if [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; then
-        if [ -z "$DOWNRATE" ] || [ "$DOWNRATE" -eq 0 ]; then
-            echo "Warning: DOWNRATE is zero or not set for $ROOT_QDISC. Setting to minimum value of 1000 kbps."
-            DOWNRATE=1000
-            uci set qosmate.settings.DOWNRATE=1000
-        fi
-        if [ -z "$UPRATE" ] || [ "$UPRATE" -eq 0 ]; then
-            echo "Warning: UPRATE is zero or not set for $ROOT_QDISC. Setting to minimum value of 1000 kbps."
-            UPRATE=1000
-            uci set qosmate.settings.UPRATE=1000
-        fi
-        uci commit qosmate
-    fi
-}
-
-validate_and_adjust_rates
-
-# Adjust DOWNRATE based on BWMAXRATIO
-if [ "$UPRATE" -gt 0 ] && [ $((DOWNRATE > UPRATE*BWMAXRATIO)) -eq 1 ]; then
-    echo "We limit the downrate to at most $BWMAXRATIO times the upstream rate to ensure no upstream ACK floods occur which can cause game packet drops"
-    DOWNRATE=$((BWMAXRATIO*UPRATE))
-fi
-
-##############################
-# Function to preserve configuration files
-##############################
-preserve_config_files() {
-    if [ "$PRESERVE_CONFIG_FILES" -eq 1 ]; then
-        {
-            echo "/etc/qosmate.sh"
-            echo "/etc/init.d/qosmate"
-            echo "/etc/hotplug.d/iface/13-qosmateHotplug" 
-        } | while read -r LINE; do
-            grep -qxF "$LINE" /etc/sysupgrade.conf || echo "$LINE" >> /etc/sysupgrade.conf
-        done
-        echo "Config files have been added to sysupgrade.conf for preservation."
-    else
-        echo "Preservation of config files is disabled."
-             
-        # Remove the config files from sysupgrade.conf if they exist
-        sed -i '\|/etc/qosmate.sh|d' /etc/sysupgrade.conf
-        sed -i '\|/etc/init.d/qosmate|d' /etc/sysupgrade.conf
-        sed -i '\|/etc/hotplug.d/iface/13-qosmateHotplug|d' /etc/sysupgrade.conf
-    fi
-}
-
-preserve_config_files
 
 ##############################
 # Variable checks and dynamic rule generation
@@ -215,8 +146,8 @@ debug_log() {
 # Function to create NFT sets from config
 create_nft_sets() {
     local sets_created=""
-    
-	# shellcheck disable=SC2329
+
+    # shellcheck disable=SC2329
     create_set() {
         local section="$1" name ip_list mode timeout set_flags
 
@@ -271,12 +202,12 @@ create_nft_sets() {
         fi
         sets_created="$sets_created $name"
     }
-    
+
     # Clear the temporary file
     rm -f /tmp/qosmate_set_families
-    
+
     config_foreach create_set ipset
-    
+
     export QOSMATE_SETS="$sets_created"
     [ -n "$sets_created" ] && debug_log "Created sets: $sets_created"
 }
@@ -287,41 +218,41 @@ SETS=$(create_nft_sets)
 # Create rules
 # shellcheck disable=SC2329
 create_nft_rule() {
-	# Trim leading and trailing whitespaces and tabs in variable $1
-	trim_spaces() {
-		local tr_in tr_out
-		eval "tr_in=\"\${$1}\""
-		tr_out="${tr_in%"${tr_in##*[! 	]}"}"
-		tr_out="${tr_out#"${tr_out%%[! 	]*}"}"
-		eval "$1=\"\${tr_out}\""
-	}
+    # Trim leading and trailing whitespaces and tabs in variable $1
+    trim_spaces() {
+        local tr_in tr_out
+        eval "tr_in=\"\${$1}\""
+        tr_out="${tr_in%"${tr_in##*[! 	]}"}"
+        tr_out="${tr_out#"${tr_out%%[! 	]*}"}"
+        eval "$1=\"\${tr_out}\""
+    }
 
-	is_set_ref() {
-		case "$1" in "@"*) return 0; esac
-		return 1
-	}
+    is_set_ref() {
+        case "$1" in "@"*) return 0; esac
+        return 1
+    }
 
-	# checks whether string is an ipv6 mask
-	is_ipv6_mask() {
-		case "$1" in
-			::*/::*) ;;
-			*) return 1
-		esac
-		local inp="${1#"::"}"
-		case "${inp%"/::"*}" in *"/"*) return 1; esac
-		return 0
-	}
+    # checks whether string is an ipv6 mask
+    is_ipv6_mask() {
+        case "$1" in
+            ::*/::*) ;;
+            *) return 1
+        esac
+        local inp="${1#"::"}"
+        case "${inp%"/::"*}" in *"/"*) return 1; esac
+        return 0
+    }
 
-	# Function to check if a single IP address is IPv6
-	# Note: This assumes the input is a single IP, not a space-separated list
-	# Handles CIDR notation (e.g. ::/0 or 192.168.1.0/24)
-	is_ipv6() {
-		local ip="${1%/*}"  # Remove CIDR suffix if present
-		case "$ip" in
-			*:*) return 0 ;;
-			*) return 1 ;;
-		esac
-	}
+    # Function to check if a single IP address is IPv6
+    # Note: This assumes the input is a single IP, not a space-separated list
+    # Handles CIDR notation (e.g. ::/0 or 192.168.1.0/24)
+    is_ipv6() {
+        local ip="${1%/*}"  # Remove CIDR suffix if present
+        case "$ip" in
+            *:*) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
 
     local config="$1"
     local proto class counter name enabled trace
@@ -341,7 +272,7 @@ create_nft_rule() {
 
     # Ensure class is not empty
     if [ -z "$class" ]; then
-        echo "Error: Class for rule '$config' is empty."
+        print_msg -err "Class for rule '$config' is empty."
         return 1
     fi
     
@@ -419,7 +350,7 @@ create_nft_rule() {
 
     # Log if mixed IPv4/IPv6 addresses are found
     if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then 
-        logger -t qosmate "Info: Mixed IPv4/IPv6 addresses in rule '$name' ($config). Splitting into separate rules."
+        log_msg "Info: Mixed IPv4/IPv6 addresses in rule '$name' ($config). Splitting into separate rules."
     fi
 
     # If no IP address was specified, we assume the rule applies to both IPv4 and IPv6
@@ -433,7 +364,7 @@ create_nft_rule() {
     gen_rule() {
         add_res_rule() {
             if [ -z "$res_set_neg" ] && [ -z "$res_set_pos" ]; then
-                logger -t qosmate "Error: no valid $1 found in '$values'. Rule skipped."
+                error_out "no valid $1 found in '$values'. Rule skipped."
                 return 1
             fi
 
@@ -454,7 +385,7 @@ create_nft_rule() {
         
         for value in $values; do
             if [ -n "$set_ref_seen" ] || [ -n "$ipv6_mask_seen" ]; then
-                logger -t qosmate "Error: invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
+                error_out "invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
                 return 1
             fi
 
@@ -470,7 +401,7 @@ create_nft_rule() {
             # Handle set references (@setname)
             if is_set_ref "$value"; then
                 if [ -n "$reg_val_seen" ]; then
-                    logger -t qosmate "Error: invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
+                    error_out "invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
                     return 1
                 fi
                 set_ref_seen=1
@@ -488,7 +419,7 @@ create_nft_rule() {
             # Check for IPv6 suffix format (::suffix/::mask)
             if is_ipv6_mask "$value"; then
                 if [ -n "$reg_val_seen" ]; then
-                    logger -t qosmate "Error: invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
+                    error_out "invalid entry '$values'. When using nftables set reference or ipv6 mask, other values are not allowed."
                     return 1
                 fi
                 ipv6_mask_seen=1
@@ -506,7 +437,7 @@ create_nft_rule() {
                 "ip saddr"|"ip daddr"|"ip6 saddr"|"ip6 daddr"|"th sport"|"th dport"|"meta l4proto")
                     ;;
                 *)
-                    logger -t qosmate "Error: unexpected prefix '$prefix'."
+                    error_out "unexpected prefix '$prefix'."
                     return 1
                     ;;
             esac
@@ -536,7 +467,7 @@ create_nft_rule() {
 
         # If mixed, log and signal error
         if [ -n "$has_ipv4" ] && [ -n "$has_ipv6" ]; then
-            logger -t qosmate "Error: Mixed IPv4/IPv6 addresses within a set: { $values }. Rule skipped."
+            error_out "Mixed IPv4/IPv6 addresses within a set: { $values }. Rule skipped."
             return 1
         fi
 
@@ -684,9 +615,6 @@ create_nft_rule() {
 
 generate_dynamic_nft_rules() {
     # Check global enable setting
-    local global_enabled
-    config_get_bool global_enabled global enabled 1  # Default to enabled if not set
-    
     if [ "$global_enabled" = "1" ]; then
         config_foreach create_nft_rule rule
     else
@@ -907,16 +835,16 @@ ${SETS}
     }
 
     chain drop995 {
-	numgen random mod 1000 ge 995 return
-	drop
+    numgen random mod 1000 ge 995 return
+    drop
     }
     chain drop95 {
-	numgen random mod 1000 ge 950 return
-	drop
+    numgen random mod 1000 ge 950 return
+    drop
     }
     chain drop50 {
-	numgen random mod 1000 ge 500 return
-	drop
+    numgen random mod 1000 ge 500 return
+    drop
     }
 
     chain mark_500ms {
@@ -1007,6 +935,8 @@ ${DYNAMIC_RULES}
 DSCPEOF
 
 ## Set up ctinfo downstream shaping
+
+print_msg "" "Setting up ctinfo downstream shaping..."
 
 # Set up ingress handle for WAN interface
 tc qdisc add dev "$WAN" handle ffff: ingress
@@ -1200,7 +1130,7 @@ setup_game_qdisc() {
             fi
         ;;
         *)
-            echo "Error: Unsupported game qdisc type '$QDISC_TYPE'. Using pfifo fallback." >&2
+            print_msg -err "Unsupported game qdisc type '$QDISC_TYPE'. Using pfifo fallback."
             # pfifo fallback limit calculation
             tc qdisc add dev "$DEV" parent 1:11 handle 10: pfifo limit $((PFIFOMIN+MAXDEL*RATE/8/PACKETSIZE))
         ;;
@@ -1257,7 +1187,7 @@ setup_hfsc() {
         elif [ "$nongameqdisc" = "fq_codel" ]; then
             tc qdisc add dev "$DEV" parent "1:$i" fq_codel memory_limit $((RATE*200/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
         else
-            echo "Unsupported qdisc for non-game traffic: $nongameqdisc"
+            print_msg -err "Unsupported qdisc for non-game traffic: $nongameqdisc"
             exit 1
         fi
     done
@@ -1649,7 +1579,7 @@ if [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; then
     case "$gameqdisc" in
         drr|qfq|pfifo|bfifo|red|fq_codel|netem) ;; # Supported qdiscs
         *)
-            echo "Warning: Unsupported gameqdisc '$gameqdisc' selected in config. Reverting to 'pfifo'." >&2
+            print_msg -warn "Unsupported gameqdisc '$gameqdisc' selected in config. Reverting to 'pfifo'."
             gameqdisc="pfifo" # Revert to a simple default as fallback
             ;;
     esac
@@ -1658,29 +1588,29 @@ fi
 # Main logic for selecting and applying the QoS system
 case "$ROOT_QDISC" in
     hfsc)
-        echo "Applying HFSC queueing discipline."
+        print_msg "Applying HFSC queueing discipline."
         # Call the renamed function (formerly setqdisc)
         setup_hfsc "$WAN" "$UPRATE" "$GAMEUP" "$gameqdisc" wan
         setup_hfsc "$LAN" "$DOWNRATE" "$GAMEDOWN" "$gameqdisc" lan
         ;;
     hybrid)
-        echo "Applying Hybrid (HFSC+CAKE) queueing discipline."
+        print_msg "Applying Hybrid (HFSC+CAKE) queueing discipline."
         # Setup WAN (egress/upload) and LAN (ingress/download) directly
         setup_hybrid "$WAN" "$UPRATE" "$GAMEUP" "wan"
         setup_hybrid "$LAN" "$DOWNRATE" "$GAMEDOWN" "lan"
         ;;
     cake)
-        echo "Applying CAKE queueing discipline."
+        print_msg "Applying CAKE queueing discipline."
         setup_cake
         ;;
     htb)
-        echo "Applying HTB queueing discipline."
+        print_msg "Applying HTB queueing discipline."
         setup_htb "$WAN" "$UPRATE" "wan"
         setup_htb "$LAN" "$DOWNRATE" "lan"
         ;;
     *) # Fallback for unsupported ROOT_QDISC
-        echo "Error: Unsupported ROOT_QDISC: '$ROOT_QDISC'. Check /etc/config/qosmate." >&2
-        echo "Warning: Falling back to default HFSC mode with pfifo game qdisc." >&2
+        print_msg -err "Unsupported ROOT_QDISC: '$ROOT_QDISC'. Check /etc/config/qosmate."
+        print_msg -warn "Falling back to default HFSC mode with pfifo game qdisc."
         ROOT_QDISC="hfsc"
         gameqdisc="pfifo" # Safe default for fallback
         # Apply the fallback configuration using the renamed function
@@ -1689,23 +1619,23 @@ case "$ROOT_QDISC" in
         ;;
 esac
 
-echo "DONE!"
+print_msg "DONE!"
 
 # Conditional output of tc status
 if [ "$ROOT_QDISC" = "hfsc" ] && [ "$gameqdisc" = "red" ]; then
-   echo "Can not output tc -s qdisc because it crashes on OpenWrt when using RED qdisc, but things are working!"
+   print_msg "Can not output tc -s qdisc because it crashes on OpenWrt when using RED qdisc, but things are working!"
 # Add check for hybrid mode with red gameqdisc
 elif [ "$ROOT_QDISC" = "hybrid" ] && [ "$gameqdisc" = "red" ]; then
-   echo "Can not output tc -s qdisc because it crashes on OpenWrt when using RED qdisc in hybrid mode, but things are working!"
+   print_msg "Can not output tc -s qdisc because it crashes on OpenWrt when using RED qdisc in hybrid mode, but things are working!"
 else
    # Check if tc command exists before trying to run it
    if command -v tc >/dev/null; then
-       echo "--- Egress ($WAN) ---"
+       print_msg "--- Egress ($WAN) ---"
        tc -s qdisc show dev "$WAN"
-       echo "--- Ingress ($LAN) ---"
+       print_msg "--- Ingress ($LAN) ---"
        tc -s qdisc show dev "$LAN"
    else
-        echo "Warning: 'tc' command not found. Cannot display QoS status."
+        print_msg "Warning: 'tc' command not found. Cannot display QoS status."
    fi
 fi
 
