@@ -350,7 +350,7 @@ create_nft_rule() {
 
     # Log if mixed IPv4/IPv6 addresses are found
     if [ "$has_ipv4" -eq 1 ] && [ "$has_ipv6" -eq 1 ]; then 
-        log_msg "Info: Mixed IPv4/IPv6 addresses in rule '$name' ($config). Splitting into separate rules."
+        log_msg "" "Info: Mixed IPv4/IPv6 addresses in rule '$name' ($config). Splitting into separate rules." >&2
     fi
 
     # If no IP address was specified, we assume the rule applies to both IPv4 and IPv6
