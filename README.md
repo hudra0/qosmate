@@ -336,6 +336,26 @@ This is more or less equivalent to the `realtime4` and `realtime6` variables fro
 
 This rule is also applied when the auto-setup is used via CLI or UI and a Gaming Device IP (optional) is entered.
 
+#### IPv6 Suffix Matching in Dynamic Prefix Environments
+
+In IPv6 networks, your IP address often has a changing "prefix" (the first part of the address assigned by your ISP) while the "suffix" (the ending part) stays the same for your devices. QoSmate lets you create rules that match just the suffix, so your QoS settings keep working even when the prefix changes.
+
+This is done using the `::suffix/::mask` format, which focuses on the ending bits of the address.
+
+**Example rule:**
+
+```shell
+config rule
+    option name 'my_device_ipv6'
+    option src_ip '::1234:5678:90ab:cdef/::ffff:ffff:ffff:ffff'
+    option class 'cs5'
+    option enabled '1'
+```
+
+This rule matches any IPv6 address ending with `1234:5678:90ab:cdef`, no matter what the prefix is. The mask `::ffff:ffff:ffff:ffff` tells it to check only the last 64 bits (the suffix) of the address.
+
+For more details and discussion, see GitHub Issue [#63](https://github.com/hudra0/qosmate/issues/63).
+
 ### IP Sets in QoSmate
 QoSmate features an integrated IP Sets UI which allows you to manage both static and dynamic IP sets directly from the LuCI interface under **Network → QoSmate → IP Sets**. This replaces the "old" method of configuring sets via custom rules manually and simplifies the process of grouping IP addresses for DSCP marking.
 
