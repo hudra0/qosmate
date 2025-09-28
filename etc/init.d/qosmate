@@ -2098,6 +2098,15 @@ status_service() {
     else
         print_msg "Custom rules table (qosmate_custom) is not active or doesn't exist."
     fi
+
+    print_msg "" "==== Inline Rules Status ===="
+    if [ -s "$QOSMATE_INLINE_RULES_FILE" ]; then
+        print_msg "Inline rules are configured:"
+        cat "$QOSMATE_INLINE_RULES_FILE"
+        printf '\n'
+    else
+        print_msg "No inline rules configured."
+    fi
 }
 
 restart() {
