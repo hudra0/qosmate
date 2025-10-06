@@ -1653,6 +1653,10 @@ validate_custom_rules() {
     # Clear previous validation results
     true > "$tmp_file"
     
+    # Delete existing table before validation to avoid conflicts with existing sets/meters
+    echo "Deleting existing qosmate_custom table before validation..." >> "$tmp_file"
+    nft delete table inet qosmate_custom 2>/dev/null || true
+    
     # Validate both rule types
     if ! validate_nft_file "$QOSMATE_CUSTOM_RULES_FILE" "full table rules" "$tmp_file"; then
         fail=$((fail + 1))
