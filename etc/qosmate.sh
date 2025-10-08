@@ -3,6 +3,9 @@
 
 VERSION="1.2.0" # will become obsolete in future releases as version string is now in the init script
 
+# uncomment to enable debug messages
+# QOSMATE_DEBUG=1
+
 _NL_='
 '
 DEFAULT_IFS=" 	${_NL_}"
@@ -139,8 +142,8 @@ calculate_ack_rates
 
 # Debug function
 debug_log() {
-    local message="$1"
-    logger -t qosmate "$message"
+    [ -n "$QOSMATE_DEBUG" ] || return 0
+    logger -s -t qosmate "$1" >&2
 }
 
 # Function to create NFT sets from config
@@ -1205,8 +1208,36 @@ setup_hfsc() {
             done
         done
     fi
+    :
 }
 
+
+qdisc_setup_failed() {
+    [ -n "$1" ] && error_out "$1"
+    error_out "Failed to set up $ROOT_QDISC."
+    # *** Any additional error handling needed? ***
+    exit 1
+}
+
+# Appends option to ${CAKE_OPTS}
+# 1: parameter: nat|wash|ack_filter|*
+# 2: selector (1|0)
+#    for wash, nat, ack-filter: selector value '1' translates to prefix '', any other value translates to prefix 'no[-]'
+#    for other options: selector value '1' translates to 'don't skip option', any other value translates to 'skip option'
+append_cake_opt() {
+    [ ${#} = 2 ] || { error_out "append_cake_opt: invalid args '$*'."; return 1; }
+    local prefix='' \
+        param="$1" selector="$2"
+    [ -n "$param" ] || return 0
+    [ "$selector" != 1 ] &&
+        case "$param" in
+            wash|nat) prefix='no' ;;
+            ack-filter) prefix='no-' ;;
+            *) return 0 ;;
+        esac
+    CAKE_OPTS="${CAKE_OPTS} ${prefix}${param}"
+    :
+}
 
 # Function to setup CAKE qdisc
 setup_cake() {
@@ -1214,52 +1245,44 @@ setup_cake() {
     tc qdisc del dev "$LAN" root > /dev/null 2>&1
     
     # Get CAKE link parameters
-    local cake_link_params="$(get_cake_link_params)"
-    
+    local ack_filter_egress_val cake_link_params="$(get_cake_link_params)"
+
     # Egress (Upload) CAKE setup
-    EGRESS_CAKE_OPTS="bandwidth ${UPRATE}kbit"
-    [ -n "$PRIORITY_QUEUE_EGRESS" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $PRIORITY_QUEUE_EGRESS"
-    [ "$HOST_ISOLATION" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS dual-srchost"
-    [ "$NAT_EGRESS" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nat" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nonat"
-    [ "$WASHDSCPUP" -eq 1 ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS wash" || EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS nowash"
-    
-    if [ "$ACK_FILTER_EGRESS" = "auto" ]; then
-        if [ $((DOWNRATE / UPRATE)) -ge 15 ]; then
-            EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS ack-filter"
-        else
-            EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS no-ack-filter"
-        fi
-    elif [ "$ACK_FILTER_EGRESS" -eq 1 ]; then
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS ack-filter"
-    else
-        EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS no-ack-filter"
-    fi
-    
-    [ -n "$RTT" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS rtt ${RTT}ms"
-    [ -n "$cake_link_params" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $cake_link_params"
-    # Only add LINK_COMPENSATION if explicitly set (don't add noatm as ADSL presets already set atm)
-    [ -n "$LINK_COMPENSATION" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $LINK_COMPENSATION"
-    [ -n "$EXTRA_PARAMETERS_EGRESS" ] && EGRESS_CAKE_OPTS="$EGRESS_CAKE_OPTS $EXTRA_PARAMETERS_EGRESS"
-    
+    case "$ACK_FILTER_EGRESS" in
+        auto) ack_filter_egress_val=$(( (DOWNRATE / UPRATE) >= 15 )) ;;
+        *[!0-9]*|'') qdisc_setup_failed "Invalid value '$ACK_FILTER_EGRESS' for ACK_FILTER_EGRESS." ;;
+        *) ack_filter_egress_val=$ACK_FILTER_EGRESS ;;
+    esac
+
+    local CAKE_OPTS="bandwidth ${UPRATE}kbit"
     # shellcheck disable=SC2086
-    tc qdisc add dev "$WAN" root cake $EGRESS_CAKE_OPTS
+    append_cake_opt "$PRIORITY_QUEUE_EGRESS" "1" &&
+    append_cake_opt "dual-srchost" "$HOST_ISOLATION" &&
+    append_cake_opt "rtt ${RTT}ms" "${RTT:+1}" &&
+    append_cake_opt "$cake_link_params" "1" &&
+    append_cake_opt "$LINK_COMPENSATION" "1" &&
+    append_cake_opt "$EXTRA_PARAMETERS_EGRESS" "1" &&
+    append_cake_opt "nat" "$NAT_EGRESS" &&
+    append_cake_opt "wash" "$WASHDSCPUP" &&
+    append_cake_opt "ack-filter" "$ack_filter_egress_val" &&
+    tc qdisc add dev "$WAN" root cake $CAKE_OPTS || qdisc_setup_failed
+debug_log "EGRESS cake opts: '$CAKE_OPTS'"
     
+
     # Ingress (Download) CAKE setup
-    INGRESS_CAKE_OPTS="bandwidth ${DOWNRATE}kbit ingress"
-    [ "$AUTORATE_INGRESS" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS autorate-ingress"
-    [ -n "$PRIORITY_QUEUE_INGRESS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $PRIORITY_QUEUE_INGRESS"
-    [ "$HOST_ISOLATION" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS dual-dsthost"
-    [ "$NAT_INGRESS" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nat" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nonat"
-    [ "$WASHDSCPDOWN" -eq 1 ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS wash" || INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS nowash"
-    
-    [ -n "$RTT" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS rtt ${RTT}ms"
-    [ -n "$cake_link_params" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $cake_link_params"
-    # Only add LINK_COMPENSATION if explicitly set (don't add noatm as ADSL presets already set atm)
-    [ -n "$LINK_COMPENSATION" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $LINK_COMPENSATION"
-    [ -n "$EXTRA_PARAMETERS_INGRESS" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS $EXTRA_PARAMETERS_INGRESS"
-    
+    CAKE_OPTS="bandwidth ${DOWNRATE}kbit ingress"
     # shellcheck disable=SC2086
-    tc qdisc add dev "$LAN" root cake $INGRESS_CAKE_OPTS
+    append_cake_opt "autorate-ingress" "$AUTORATE_INGRESS" &&
+    append_cake_opt "$PRIORITY_QUEUE_INGRESS" "1" &&
+    append_cake_opt "dual-dsthost" "$HOST_ISOLATION" &&
+    append_cake_opt "rtt ${RTT}ms" "${RTT:+1}" &&
+    append_cake_opt "$cake_link_params" "1" &&
+    append_cake_opt "$LINK_COMPENSATION" "1" &&
+    append_cake_opt "$EXTRA_PARAMETERS_INGRESS" "1" &&
+    append_cake_opt "nat" "$NAT_INGRESS" &&
+    append_cake_opt "wash" "$WASHDSCPDOWN" &&
+    tc qdisc add dev "$LAN" root cake $CAKE_OPTS || qdisc_setup_failed
+debug_log "INGRESS cake opts: '$CAKE_OPTS'"
 }
 
 # Helper function to set up hybrid qdisc on an interface
@@ -1298,34 +1321,31 @@ setup_hybrid() {
     # Class 1:13 - CAKE class (most traffic - default)
     local cake_rate=$((RATE - GAMERATE)); [ $cake_rate -le 0 ] && cake_rate=1
     tc class add dev "$DEV" parent 1:1 classid 1:13 hfsc ls m1 "${cake_rate}kbit" d "${DUR}ms" m2 "${cake_rate}kbit"
+
     # Attach CAKE qdisc - use "hybrid" mode to match HFSC overhead
     local cake_link_params="$(get_cake_link_params "hybrid")"
     local CAKE_OPTS=""
+    tc qdisc del dev "$DEV" parent 1:13 handle 13: > /dev/null 2>&1
     
+    # shellcheck disable=SC2086
     if [ "$DIR" = "wan" ]; then
         CAKE_OPTS="besteffort" # Default for non-realtime in hybrid
-        [ "$HOST_ISOLATION" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS dual-srchost"
-        [ "$NAT_EGRESS" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS nat" || CAKE_OPTS="$CAKE_OPTS nonat"
-        [ "$WASHDSCPUP" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS wash" || CAKE_OPTS="$CAKE_OPTS nowash"
-        [ -n "$RTT" ] && CAKE_OPTS="$CAKE_OPTS rtt ${RTT}ms"
-        [ -n "$cake_link_params" ] && CAKE_OPTS="$CAKE_OPTS $cake_link_params"
-        # Only add LINK_COMPENSATION if explicitly set (don't add noatm as ADSL presets already set atm)
-        [ -n "$LINK_COMPENSATION" ] && CAKE_OPTS="$CAKE_OPTS $LINK_COMPENSATION"
-        [ -n "$EXTRA_PARAMETERS_EGRESS" ] && CAKE_OPTS="$CAKE_OPTS $EXTRA_PARAMETERS_EGRESS"
+        append_cake_opt "dual-srchost" "$HOST_ISOLATION" &&
+        append_cake_opt "$EXTRA_PARAMETERS_EGRESS" "1" &&
+        append_cake_opt "nat" "$NAT_EGRESS" &&
+        append_cake_opt "wash" "$WASHDSCPUP"
     else # lan (ingress)
         CAKE_OPTS="besteffort ingress" # Default for non-realtime in hybrid
-        [ "$HOST_ISOLATION" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS dual-dsthost"
-        [ "$NAT_INGRESS" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS nat" || CAKE_OPTS="$CAKE_OPTS nonat"
-        [ "$WASHDSCPDOWN" -eq 1 ] && CAKE_OPTS="$CAKE_OPTS wash" || CAKE_OPTS="$CAKE_OPTS nowash"
-        [ -n "$RTT" ] && CAKE_OPTS="$CAKE_OPTS rtt ${RTT}ms"
-        [ -n "$cake_link_params" ] && CAKE_OPTS="$CAKE_OPTS $cake_link_params"
-        # Only add LINK_COMPENSATION if explicitly set (don't add noatm as ADSL presets already set atm)
-        [ -n "$LINK_COMPENSATION" ] && CAKE_OPTS="$CAKE_OPTS $LINK_COMPENSATION"
-        [ -n "$EXTRA_PARAMETERS_INGRESS" ] && CAKE_OPTS="$CAKE_OPTS $EXTRA_PARAMETERS_INGRESS"
-    fi
-    tc qdisc del dev "$DEV" parent 1:13 handle 13: > /dev/null 2>&1
-    # shellcheck disable=SC2086
-    tc qdisc replace dev "$DEV" parent 1:13 handle 13: cake $CAKE_OPTS
+        append_cake_opt "dual-dsthost" "$HOST_ISOLATION" &&
+        append_cake_opt "$EXTRA_PARAMETERS_INGRESS" "1" &&
+        append_cake_opt "nat" "$NAT_INGRESS" &&
+        append_cake_opt "wash" "$WASHDSCPDOWN"
+    fi &&
+    append_cake_opt "rtt ${RTT}ms" "${RTT:+1}" &&
+    append_cake_opt "$cake_link_params" "1" &&
+    append_cake_opt "$LINK_COMPENSATION" "1" &&
+    tc qdisc replace dev "$DEV" parent 1:13 handle 13: cake $CAKE_OPTS || qdisc_setup_failed
+debug_log "$DIR HYBRID cake opts: '$CAKE_OPTS'"
 
     # Class 1:15 - Bulk traffic (HFSC LS + fq_codel)
     # Use HFSC limits: m1 3%, m2 10%
