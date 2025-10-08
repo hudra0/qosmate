@@ -1251,7 +1251,7 @@ setup_cake() {
     # Egress (Upload) CAKE setup
     case "$ACK_FILTER_EGRESS" in
         auto) ack_filter_egress_val=$(( (DOWNRATE / UPRATE) >= 15 )) ;;
-        *![0-9]*|'') qdisc_setup_failed "Invalid value '$ACK_FILTER_EGRESS' for ACK_FILTER_EGRESS." ;;
+        *[!0-9]*|'') qdisc_setup_failed "Invalid value '$ACK_FILTER_EGRESS' for ACK_FILTER_EGRESS." ;;
         *) ack_filter_egress_val=$ACK_FILTER_EGRESS ;;
     esac
 
