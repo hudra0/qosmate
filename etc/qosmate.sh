@@ -3,6 +3,9 @@
 
 VERSION="1.2.0" # will become obsolete in future releases as version string is now in the init script
 
+# uncomment to enable debug messages
+# QOSMATE_DEBUG=1
+
 _NL_='
 '
 DEFAULT_IFS=" 	${_NL_}"
@@ -139,6 +142,7 @@ calculate_ack_rates
 
 # Debug function
 debug_log() {
+    [ -n "$QOSMATE_DEBUG" ] || return 0
     logger -s -t qosmate "$1" >&2
 }
 
@@ -1341,7 +1345,7 @@ setup_hybrid() {
     append_cake_opt "$cake_link_params" "1" &&
     append_cake_opt "$LINK_COMPENSATION" "1" &&
     tc qdisc replace dev "$DEV" parent 1:13 handle 13: cake $CAKE_OPTS || qdisc_setup_failed
-debug_log "HYBRID cake opts: '$CAKE_OPTS'"
+debug_log "$DIR HYBRID cake opts: '$CAKE_OPTS'"
 
     # Class 1:15 - Bulk traffic (HFSC LS + fq_codel)
     # Use HFSC limits: m1 3%, m2 10%
