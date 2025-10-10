@@ -67,6 +67,10 @@ log_msg() {
 
 config_load 'qosmate' || { error_out "Failed to get UCI config."; exit 1; }
 
+# Check if Software Flow Offloading is enabled
+SFO_ENABLED=0
+[ "$(uci -q get firewall.@defaults[0].flow_offloading)" = "1" ] && SFO_ENABLED=1
+
 # Calculated values
 FIRST500MS=$((DOWNRATE * 500 / 8))
 FIRST10S=$((DOWNRATE * 10000 / 8))
@@ -1195,8 +1199,11 @@ setup_hfsc() {
         fi
     done
 
-    # Apply DSCP Filters (only on LAN/IFB)
-    if [ "$DIR" = "lan" ]; then
+    # Apply DSCP Filters (on ingress always, on egress only when SFO active)
+    # Ingress always needs filters, egress needs them only with SFO
+    # Without SFO: nftables priomap handles egress classification
+    # With SFO: nftables bypassed, tc filters needed for classification
+    if [ "$DIR" = "lan" ] || [ "$SFO_ENABLED" = "1" ]; then
         # Delete existing filters first
         tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
         tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1 # Also delete prio 2
@@ -1265,7 +1272,7 @@ setup_cake() {
     append_cake_opt "nat" "$NAT_EGRESS" &&
     append_cake_opt "wash" "$WASHDSCPUP" &&
     append_cake_opt "ack-filter" "$ack_filter_egress_val" &&
-    tc qdisc add dev "$WAN" root cake $CAKE_OPTS || qdisc_setup_failed
+    tc qdisc add dev "$WAN" root handle 1: cake $CAKE_OPTS || qdisc_setup_failed
 debug_log "EGRESS cake opts: '$CAKE_OPTS'"
     
 
@@ -1358,8 +1365,8 @@ debug_log "$DIR HYBRID cake opts: '$CAKE_OPTS'"
     tc qdisc del dev "$DEV" parent 1:15 handle 15: > /dev/null 2>&1
     tc qdisc replace dev "$DEV" parent 1:15 handle 15: fq_codel memory_limit $((RATE*100/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
 
-    # Apply DSCP Filters (only on LAN/IFB)
-    if [ "$DIR" = "lan" ]; then
+    # Apply DSCP Filters (on ingress always, on egress only when SFO active)
+    if [ "$DIR" = "lan" ] || [ "$SFO_ENABLED" = "1" ]; then
         # Delete existing filters
         tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
         tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1
@@ -1569,8 +1576,8 @@ setup_htb() {
         interval "$((INTVL*2))ms" target "$((TARG*2))ms" \
         quantum 300
 
-    # Apply DSCP filters only on ingress (LAN/IFB)
-    if [ "$DIR" = "lan" ]; then
+    # Apply DSCP filters (on ingress always, on egress only when SFO active)
+    if [ "$DIR" = "lan" ] || [ "$SFO_ENABLED" = "1" ]; then
         # Delete existing filters
         tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
         tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1
@@ -1638,6 +1645,16 @@ case "$ROOT_QDISC" in
         setup_hfsc "$LAN" "$DOWNRATE" "$GAMEDOWN" "$gameqdisc" lan
         ;;
 esac
+
+## Set up ctinfo for upstream (egress) - SFO compatibility
+# Restore DSCP values from conntrack for egress packets
+# Only needed when Software Flow Offloading is active
+if [ "$SFO_ENABLED" = "1" ]; then
+    print_msg "" "Software Flow Offloading detected - enabling SFO compatibility mode..."
+    tc filter add dev "$WAN" parent 1: protocol all matchall action ctinfo dscp 63 128 continue
+else
+    print_msg "" "Software Flow Offloading disabled - dynamic rules fully functional..."
+fi
 
 print_msg "DONE!"
 
