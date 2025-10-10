@@ -1095,7 +1095,7 @@ setup_game_qdisc() {
             ## send game packets to 10:, they're all treated the same
         ;;
         "fq_codel")
-        tc qdisc add dev "$DEV" parent "1:11" fq_codel memory_limit $((RATE*200/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
+        tc qdisc add dev "$DEV" parent "1:11" handle 10: fq_codel memory_limit $((RATE*200/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
         ;;
         "netem")
             # Only apply NETEM if this direction is enabled
