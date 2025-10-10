@@ -1936,11 +1936,16 @@ stop_service() {
     rm -f /usr/share/nftables.d/ruleset-post/dscptag.nft
 
     ## Delete the old qdiscs and IFB associated with the old WAN interface
+    # Delete WAN root qdisc (HTB container for redirect)
     tc qdisc del dev "$OLD_WAN" root > /dev/null 2>&1
-    tc qdisc del dev ifb-"$OLD_WAN" root > /dev/null 2>&1
     tc qdisc del dev "$OLD_WAN" ingress > /dev/null 2>&1
 
-    # Remove IFB interface
+    # Delete Egress IFB qdisc and interface
+    tc qdisc del dev ifb-"$OLD_WAN"-egress root > /dev/null 2>&1
+    ip link del ifb-"$OLD_WAN"-egress 2>/dev/null
+
+    # Delete Ingress IFB qdisc and interface
+    tc qdisc del dev ifb-"$OLD_WAN" root > /dev/null 2>&1
     ip link del ifb-"$OLD_WAN" 2>/dev/null
 
     nft delete table inet dscptag
@@ -1987,7 +1992,7 @@ status_service() {
     # Check and report if traffic shaping is active
     for dir in egress ingress; do
         case "$dir" in
-            egress) dev="$WAN" ;;
+            egress) dev="ifb-${WAN}-egress" ;;
             ingress) dev="$IFB" ;;
         esac
         qdiscs="$(tc qdisc show dev "$dev" 2>/dev/null | sed -n 's/^qdisc\s\s*\([^ \t]*\).* root .*/\1/p')"
@@ -2439,8 +2444,9 @@ health_check() {
         errors=$((errors + 1))
     fi
 
-    # Check tc configuration on WAN interface
-    if [ -n "$WAN" ] && tc qdisc show dev "$WAN" 2>/dev/null | grep -E -q "hfsc|cake|htb"; then
+    # Check tc configuration on WAN egress interface
+    local wan_egress="ifb-${WAN}-egress"
+    if [ -n "$WAN" ] && tc qdisc show dev "$wan_egress" 2>/dev/null | grep -E -q "hfsc|cake|htb"; then
         status="${status}tc:ok;"
     else
         status="${status}tc:failed;"
