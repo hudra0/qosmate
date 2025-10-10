@@ -1655,7 +1655,7 @@ validate_custom_rules() {
     
     # Delete existing table before validation to avoid conflicts with existing sets/meters
     echo "Deleting existing qosmate_custom table before validation..." >> "$tmp_file"
-    nft delete table inet qosmate_custom 2>/dev/null || true
+    nft destroy table inet qosmate_custom
     
     # Validate both rule types
     if ! validate_nft_file "$QOSMATE_CUSTOM_RULES_FILE" "full table rules" "$tmp_file"; then
@@ -1893,7 +1893,7 @@ start_service() {
 
     # Create custom rules file if it doesn't exist
     manage_custom_rules_file create
-    nft delete table inet qosmate_custom 2>/dev/null
+    nft destroy table inet qosmate_custom
     nft -f "$QOSMATE_CUSTOM_RULES_FILE"
 
     preserve_config_files # Add config files to sysupgrade.conf
@@ -1929,7 +1929,7 @@ stop_service() {
     fi
 
     # Remove custom rules table
-    nft delete table inet qosmate_custom 2>/dev/null
+    nft destroy table inet qosmate_custom
 
     ## Delete files
     rm -f "$QOSMATE_HOTPLUG_SCRIPT"
@@ -1943,7 +1943,7 @@ stop_service() {
     # Remove IFB interface
     ip link del ifb-"$OLD_WAN" 2>/dev/null
 
-    nft delete table inet dscptag
+    nft destroy table inet dscptag
 
     # Remove the temporary file
     rm -f /tmp/qosmate_wan
