@@ -952,6 +952,23 @@ ip link set "ifb-$WAN" up
 tc filter add dev "$WAN" parent ffff: protocol all matchall action ctinfo dscp 63 128 mirred egress redirect dev "ifb-$WAN"
 LAN=ifb-$WAN
 
+## Set up Egress IFB for SFO compatibility
+
+print_msg "" "Setting up Egress IFB for SFO compatibility..."
+
+# Create Egress IFB interface
+ip link add name "ifb-${WAN}-egress" type ifb
+ip link set "ifb-${WAN}-egress" up
+
+# Setup root qdisc on WAN with redirect to egress IFB + ctinfo restore
+tc qdisc add dev "$WAN" root handle 1: htb default 1
+tc filter add dev "$WAN" parent 1: protocol all prio 1 matchall \
+    action ctinfo dscp 63 128 \
+    action mirred egress redirect dev "ifb-${WAN}-egress"
+
+# Variable for Egress interface
+WAN_EGRESS="ifb-${WAN}-egress"
+
 cat <<EOF
 
 This script prioritizes the UDP packets from / to a set of gaming
@@ -1195,19 +1212,17 @@ setup_hfsc() {
         fi
     done
 
-    # Apply DSCP Filters (only on LAN/IFB)
-    if [ "$DIR" = "lan" ]; then
-        # Delete existing filters first
-        tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
-        tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1 # Also delete prio 2
+    # Apply DSCP Filters (on both egress and ingress IFB)
+    # Delete existing filters first
+    tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
+    tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1 # Also delete prio 2
 
-        local family class_enum
-        for family in ipv4 ipv6; do
-            for class_enum in ef cs5 cs6 cs7 cs4 af41 af42 cs2 af11 cs1 cs0; do
-                add_tc_filter "$DEV" "$class_enum" "$family"
-            done
+    local family class_enum
+    for family in ipv4 ipv6; do
+        for class_enum in ef cs5 cs6 cs7 cs4 af41 af42 cs2 af11 cs1 cs0; do
+            add_tc_filter "$DEV" "$class_enum" "$family"
         done
-    fi
+    done
     :
 }
 
@@ -1241,7 +1256,7 @@ append_cake_opt() {
 
 # Function to setup CAKE qdisc
 setup_cake() {
-    tc qdisc del dev "$WAN" root > /dev/null 2>&1
+    tc qdisc del dev "$WAN_EGRESS" root > /dev/null 2>&1
     tc qdisc del dev "$LAN" root > /dev/null 2>&1
     
     # Get CAKE link parameters
@@ -1265,7 +1280,7 @@ setup_cake() {
     append_cake_opt "nat" "$NAT_EGRESS" &&
     append_cake_opt "wash" "$WASHDSCPUP" &&
     append_cake_opt "ack-filter" "$ack_filter_egress_val" &&
-    tc qdisc add dev "$WAN" root cake $CAKE_OPTS || qdisc_setup_failed
+    tc qdisc add dev "$WAN_EGRESS" root cake $CAKE_OPTS || qdisc_setup_failed
 debug_log "EGRESS cake opts: '$CAKE_OPTS'"
     
 
@@ -1358,27 +1373,25 @@ debug_log "$DIR HYBRID cake opts: '$CAKE_OPTS'"
     tc qdisc del dev "$DEV" parent 1:15 handle 15: > /dev/null 2>&1
     tc qdisc replace dev "$DEV" parent 1:15 handle 15: fq_codel memory_limit $((RATE*100/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
 
-    # Apply DSCP Filters (only on LAN/IFB)
-    if [ "$DIR" = "lan" ]; then
-        # Delete existing filters
-        tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
-        tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1
+    # Apply DSCP Filters (on both egress and ingress IFB)
+    # Delete existing filters
+    tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
+    tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1
 
-        local class_enum
+    local class_enum
 
-        # IPv4 Filters (prio 1)
-        # EF, CS5, CS6, CS7 -> Realtime
-        # CS1 -> Bulk
-        for class_enum in ef cs5 cs6 cs7 cs1; do
-            add_tc_filter "$DEV" "$class_enum" "ipv4"
-        done
-        # Default rule sends to 1:13 (CAKE)
+    # IPv4 Filters (prio 1)
+    # EF, CS5, CS6, CS7 -> Realtime
+    # CS1 -> Bulk
+    for class_enum in ef cs5 cs6 cs7 cs1; do
+        add_tc_filter "$DEV" "$class_enum" "ipv4"
+    done
+    # Default rule sends to 1:13 (CAKE)
 
-        # IPv6 Filters (prio 2)
-        for class_enum in ef cs5 cs6 cs7 cs1 cs0; do
-            add_tc_filter "$DEV" "$class_enum" "ipv6"
-        done
-    fi
+    # IPv6 Filters (prio 2)
+    for class_enum in ef cs5 cs6 cs7 cs1 cs0; do
+        add_tc_filter "$DEV" "$class_enum" "ipv6"
+    done
 }
 
 # Helper functions for HTB dynamic parameter calculation
@@ -1569,24 +1582,22 @@ setup_htb() {
         interval "$((INTVL*2))ms" target "$((TARG*2))ms" \
         quantum 300
 
-    # Apply DSCP filters only on ingress (LAN/IFB)
-    if [ "$DIR" = "lan" ]; then
-        # Delete existing filters
-        tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
-        tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1
+    # Apply DSCP filters (on both egress and ingress IFB)
+    # Delete existing filters
+    tc filter del dev "$DEV" parent 1: prio 1 > /dev/null 2>&1
+    tc filter del dev "$DEV" parent 1: prio 2 > /dev/null 2>&1
 
-        # IPv4 filters (prio 1)
-        # Priority class: EF, CS5, CS6, CS7 -> 1:11
-        # Background class: CS1 -> 1:15
-        for class_enum in ef cs5 cs6 cs7 cs1; do
-            add_tc_filter "$DEV" "$class_enum" "ipv4"
-        done
+    # IPv4 filters (prio 1)
+    # Priority class: EF, CS5, CS6, CS7 -> 1:11
+    # Background class: CS1 -> 1:15
+    for class_enum in ef cs5 cs6 cs7 cs1; do
+        add_tc_filter "$DEV" "$class_enum" "ipv4"
+    done
 
-        # IPv6 filters (prio 2)
-        for class_enum in ef cs5 cs6 cs7 cs1 cs0; do
-            add_tc_filter "$DEV" "$class_enum" "ipv6"
-        done
-    fi
+    # IPv6 filters (prio 2)
+    for class_enum in ef cs5 cs6 cs7 cs1 cs0; do
+        add_tc_filter "$DEV" "$class_enum" "ipv6"
+    done
 }
 
 
@@ -1610,13 +1621,13 @@ case "$ROOT_QDISC" in
     hfsc)
         print_msg "Applying HFSC queueing discipline."
         # Call the renamed function (formerly setqdisc)
-        setup_hfsc "$WAN" "$UPRATE" "$GAMEUP" "$gameqdisc" wan
+        setup_hfsc "$WAN_EGRESS" "$UPRATE" "$GAMEUP" "$gameqdisc" wan
         setup_hfsc "$LAN" "$DOWNRATE" "$GAMEDOWN" "$gameqdisc" lan
         ;;
     hybrid)
         print_msg "Applying Hybrid (HFSC+CAKE) queueing discipline."
         # Setup WAN (egress/upload) and LAN (ingress/download) directly
-        setup_hybrid "$WAN" "$UPRATE" "$GAMEUP" "wan"
+        setup_hybrid "$WAN_EGRESS" "$UPRATE" "$GAMEUP" "wan"
         setup_hybrid "$LAN" "$DOWNRATE" "$GAMEDOWN" "lan"
         ;;
     cake)
@@ -1625,7 +1636,7 @@ case "$ROOT_QDISC" in
         ;;
     htb)
         print_msg "Applying HTB queueing discipline."
-        setup_htb "$WAN" "$UPRATE" "wan"
+        setup_htb "$WAN_EGRESS" "$UPRATE" "wan"
         setup_htb "$LAN" "$DOWNRATE" "lan"
         ;;
     *) # Fallback for unsupported ROOT_QDISC
@@ -1634,7 +1645,7 @@ case "$ROOT_QDISC" in
         ROOT_QDISC="hfsc"
         gameqdisc="pfifo" # Safe default for fallback
         # Apply the fallback configuration using the renamed function
-        setup_hfsc "$WAN" "$UPRATE" "$GAMEUP" "$gameqdisc" wan
+        setup_hfsc "$WAN_EGRESS" "$UPRATE" "$GAMEUP" "$gameqdisc" wan
         setup_hfsc "$LAN" "$DOWNRATE" "$GAMEDOWN" "$gameqdisc" lan
         ;;
 esac
@@ -1650,9 +1661,10 @@ elif [ "$ROOT_QDISC" = "hybrid" ] && [ "$gameqdisc" = "red" ]; then
 else
    # Check if tc command exists before trying to run it
    if command -v tc >/dev/null; then
-       print_msg "--- Egress ($WAN) ---"
+       print_msg "--- Egress ($WAN_EGRESS → $WAN) ---"
+       tc -s qdisc show dev "$WAN_EGRESS"
        tc -s qdisc show dev "$WAN"
-       print_msg "--- Ingress ($LAN) ---"
+       print_msg "--- Ingress ($LAN → WAN) ---"
        tc -s qdisc show dev "$LAN"
    else
         print_msg "Warning: 'tc' command not found. Cannot display QoS status."
