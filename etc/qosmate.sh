@@ -629,6 +629,192 @@ generate_dynamic_nft_rules() {
     fi
 }
 
+##############################
+# Rate Limit Functions
+##############################
+
+# Build nftables device match conditions from target values with direction support
+# Auto-detects IP/IPv6/MAC and generates appropriate match statements
+# Args: $1=target_values, $2=direction (saddr/daddr), $3=result_var_name
+# shellcheck disable=SC2329
+build_device_conditions_for_direction() {
+    local target_values="$1" direction="$2" result_var="$3"
+    local result="" ipv4_pos="" ipv4_neg="" ipv6_pos="" ipv6_neg="" mac_pos="" mac_neg=""
+    local value negation v
+    
+    for value in $target_values; do
+        negation=""
+        v="$value"
+        
+        # Check for negation prefix
+        case "$v" in
+            '!='*)
+                negation="!="
+                v="${v#!=}"
+                ;;
+        esac
+        
+        # Check for set reference (@setname)
+        case "$v" in
+            '@'*)
+                # Set reference - add directly to result
+                if [ -n "$negation" ]; then
+                    result="${result}${result:+ }ip ${direction} != @${v#@}"
+                else
+                    result="${result}${result:+ }ip ${direction} @${v#@}"
+                fi
+                ;;
+            *)
+                # Detect address type and collect for set notation
+                if printf '%s' "$v" | grep -q ':'; then
+                    # IPv6 address (contains colon)
+                    if [ -n "$negation" ]; then
+                        ipv6_neg="${ipv6_neg}${ipv6_neg:+,}${v}"
+                    else
+                        ipv6_pos="${ipv6_pos}${ipv6_pos:+,}${v}"
+                    fi
+                elif printf '%s' "$v" | grep -q '[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]'; then
+                    # MAC address (contains hex:hex pattern) - only valid for saddr
+                    if [ "$direction" = "saddr" ]; then
+                        if [ -n "$negation" ]; then
+                            mac_neg="${mac_neg}${mac_neg:+,}${v}"
+                        else
+                            mac_pos="${mac_pos}${mac_pos:+,}${v}"
+                        fi
+                    fi
+                else
+                    # IPv4 address or CIDR
+                    if [ -n "$negation" ]; then
+                        ipv4_neg="${ipv4_neg}${ipv4_neg:+,}${v}"
+                    else
+                        ipv4_pos="${ipv4_pos}${ipv4_pos:+,}${v}"
+                    fi
+                fi
+                ;;
+        esac
+    done
+    
+    # Build set-based conditions
+    if [ -n "$ipv4_neg" ]; then
+        result="${result}${result:+ }ip ${direction} != { ${ipv4_neg} }"
+    fi
+    if [ -n "$ipv4_pos" ]; then
+        result="${result}${result:+ }ip ${direction} { ${ipv4_pos} }"
+    fi
+    if [ -n "$ipv6_neg" ]; then
+        result="${result}${result:+ }ip6 ${direction} != { ${ipv6_neg} }"
+    fi
+    if [ -n "$ipv6_pos" ]; then
+        result="${result}${result:+ }ip6 ${direction} { ${ipv6_pos} }"
+    fi
+    # MAC addresses only make sense for source direction
+    if [ "$direction" = "saddr" ]; then
+        if [ -n "$mac_neg" ]; then
+            result="${result}${result:+ }ether saddr != { ${mac_neg} }"
+        fi
+        if [ -n "$mac_pos" ]; then
+            result="${result}${result:+ }ether saddr { ${mac_pos} }"
+        fi
+    fi
+    
+    eval "${result_var}=\"\${result}\""
+}
+
+# Generate rate limit rules from UCI config
+generate_ratelimit_rules() {
+    local rules=""
+    
+    # Process each ratelimit section
+    # shellcheck disable=SC2329
+    process_ratelimit_section() {
+        local section="$1"
+        local name enabled download_limit upload_limit burst_factor
+        local target_values meter_suffix download_kbytes upload_kbytes
+        local download_burst upload_burst
+        
+        config_get_bool enabled "$section" enabled 1
+        [ "$enabled" -eq 0 ] && return 0
+        
+        config_get name "$section" name
+        [ -z "$name" ] && return 0
+        
+        config_get download_limit "$section" download_limit "0"
+        config_get upload_limit "$section" upload_limit "0"
+        config_get burst_factor "$section" burst_factor "1.0"
+        
+        config_get target_values "$section" target
+        
+        # Validate: need at least one target and one limit
+        [ -z "$target_values" ] && {
+            log_msg -warn "Rate limit rule '$name' has no target devices - skipping"
+            return 0
+        }
+        [ "$download_limit" -eq 0 ] && [ "$upload_limit" -eq 0 ] && {
+            log_msg -warn "Rate limit rule '$name' has no bandwidth limits - skipping"
+            return 0
+        }
+        
+        # Sanitize name for meter usage (only alphanumeric and underscore)
+        meter_suffix="$(printf '%s' "$name" | tr ' ' '_' | tr -cd '[:alnum:]_')"
+        [ -z "$meter_suffix" ] && meter_suffix="unnamed_${section}"
+        
+        # Convert Mbit/s to kbytes/second (1 Mbit/s = 125 kbytes/s)
+        download_kbytes=$((download_limit * 125))
+        upload_kbytes=$((upload_limit * 125))
+        
+        # Calculate burst using integer math (factor * 10 for one decimal precision)
+        # If burst_factor is 0, we don't add burst parameter at all (strict rate limit)
+        local burst_int="${burst_factor%.*}"
+        local burst_dec="${burst_factor#*.}"
+        [ "$burst_int" = "$burst_factor" ] && burst_dec="0"
+        
+        local download_burst_param="" upload_burst_param=""
+        
+        # Only add burst parameter if burst_factor > 0
+        if [ "$burst_int" -gt 0 ] || [ "$burst_dec" -gt 0 ]; then
+            local download_burst=$((download_kbytes * burst_int + download_kbytes * burst_dec / 10))
+            local upload_burst=$((upload_kbytes * burst_int + upload_kbytes * burst_dec / 10))
+            download_burst_param=" burst ${download_burst} kbytes"
+            upload_burst_param=" burst ${upload_burst} kbytes"
+        fi
+        
+        # Generate download rule if limit is set (match destination traffic TO the device)
+        if [ "$download_limit" -gt 0 ]; then
+            # For download: match traffic going TO the device (ip daddr)
+            local download_conditions=""
+            build_device_conditions_for_direction "$target_values" "daddr" download_conditions
+            
+            [ -n "$download_conditions" ] && rules="${rules}
+        # ${name} - Download limit
+        ${download_conditions} meter ${meter_suffix}_dl { ip daddr limit rate over ${download_kbytes} kbytes/second${download_burst_param} } counter drop comment \"${name} download\""
+        fi
+        
+        # Generate upload rule if limit is set (match source traffic FROM the device)
+        if [ "$upload_limit" -gt 0 ]; then
+            # For upload: match traffic coming FROM the device (ip saddr)
+            local upload_conditions=""
+            build_device_conditions_for_direction "$target_values" "saddr" upload_conditions
+            
+            [ -n "$upload_conditions" ] && rules="${rules}
+        # ${name} - Upload limit
+        ${upload_conditions} meter ${meter_suffix}_ul { ip saddr limit rate over ${upload_kbytes} kbytes/second${upload_burst_param} } counter drop comment \"${name} upload\""
+        fi
+    }
+    
+    # Process all ratelimit sections from UCI
+    config_foreach process_ratelimit_section ratelimit
+    
+    # Output rate limit chain if rules exist
+    if [ -n "$rules" ]; then
+        printf '\n%s\n%s\n%s%s\n%s\n' \
+            "    # Rate Limit Chain" \
+            "    chain ratelimit {" \
+            "        type filter hook forward priority 0; policy accept;" \
+            "${rules}" \
+            "    }"
+    fi
+}
+
 # Generate dynamic rules
 DYNAMIC_RULES=$(generate_dynamic_nft_rules)
 
@@ -938,6 +1124,8 @@ ${DYNAMIC_RULES}
           fi
         )
     }
+
+$(generate_ratelimit_rules)
 }
 DSCPEOF
 
