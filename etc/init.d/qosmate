@@ -109,6 +109,7 @@ QOSMATE_JS_FILENAMES="
     cake.js
     advanced.js
     rules.js
+    ratelimits.js
     connections.js
     custom_rules.js
     ipsets.js
