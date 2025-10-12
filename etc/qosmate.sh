@@ -634,12 +634,12 @@ generate_dynamic_nft_rules() {
 ##############################
 
 # Build nftables device match conditions from target values with direction support
-# Auto-detects IP/IPv6/MAC and generates appropriate match statements
+# Auto-detects IP/IPv6 addresses and generates appropriate match statements
 # Args: $1=target_values, $2=direction (saddr/daddr), $3=result_var_name
 # shellcheck disable=SC2329
 build_device_conditions_for_direction() {
     local target_values="$1" direction="$2" result_var="$3"
-    local result="" ipv4_pos="" ipv4_neg="" ipv6_pos="" ipv6_neg="" mac_pos="" mac_neg=""
+    local result="" ipv4_pos="" ipv4_neg="" ipv6_pos="" ipv6_neg=""
     local value negation v
     
     for value in $target_values; do
@@ -666,21 +666,15 @@ build_device_conditions_for_direction() {
                 ;;
             *)
                 # Detect address type and collect for set notation
-                if printf '%s' "$v" | grep -q ':'; then
+                # Skip MAC addresses (not supported)
+                if printf '%s' "$v" | grep -q '[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]'; then
+                    log_msg -warn "MAC address '$v' in rate limit rule '$name' ignored (not supported)"
+                elif printf '%s' "$v" | grep -q ':'; then
                     # IPv6 address (contains colon)
                     if [ -n "$negation" ]; then
                         ipv6_neg="${ipv6_neg}${ipv6_neg:+,}${v}"
                     else
                         ipv6_pos="${ipv6_pos}${ipv6_pos:+,}${v}"
-                    fi
-                elif printf '%s' "$v" | grep -q '[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]'; then
-                    # MAC address (contains hex:hex pattern) - only valid for saddr
-                    if [ "$direction" = "saddr" ]; then
-                        if [ -n "$negation" ]; then
-                            mac_neg="${mac_neg}${mac_neg:+,}${v}"
-                        else
-                            mac_pos="${mac_pos}${mac_pos:+,}${v}"
-                        fi
                     fi
                 else
                     # IPv4 address or CIDR
@@ -706,15 +700,6 @@ build_device_conditions_for_direction() {
     fi
     if [ -n "$ipv6_pos" ]; then
         result="${result}${result:+ }ip6 ${direction} { ${ipv6_pos} }"
-    fi
-    # MAC addresses only make sense for source direction
-    if [ "$direction" = "saddr" ]; then
-        if [ -n "$mac_neg" ]; then
-            result="${result}${result:+ }ether saddr != { ${mac_neg} }"
-        fi
-        if [ -n "$mac_pos" ]; then
-            result="${result}${result:+ }ether saddr { ${mac_pos} }"
-        fi
     fi
     
     eval "${result_var}=\"\${result}\""
