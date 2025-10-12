@@ -657,17 +657,24 @@ build_device_conditions_for_direction() {
         # Check for set reference (@setname)
         case "$v" in
             '@'*)
-                # Set reference - add directly to result
+                # Set reference - determine family and use correct prefix
+                local setname="${v#@}"
+                local set_family
+                set_family="$(awk -v set="$setname" '$1 == set {print $2}' /tmp/qosmate_set_families 2>/dev/null)"
+                
+                local ip_prefix='ip'
+                [ "$set_family" = "ipv6" ] && ip_prefix='ip6'
+                
                 if [ -n "$negation" ]; then
-                    result="${result}${result:+ }ip ${direction} != @${v#@}"
+                    result="${result}${result:+ }${ip_prefix} ${direction} != @${setname}"
                 else
-                    result="${result}${result:+ }ip ${direction} @${v#@}"
+                    result="${result}${result:+ }${ip_prefix} ${direction} @${setname}"
                 fi
                 ;;
             *)
                 # Detect address type and collect for set notation
                 # Skip MAC addresses (not supported)
-                if printf '%s' "$v" | grep -q '[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]'; then
+                if printf '%s' "$v" | grep -qE '^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$'; then
                     log_msg -warn "MAC address '$v' in rate limit rule '$name' ignored (not supported)"
                 elif printf '%s' "$v" | grep -q ':'; then
                     # IPv6 address (contains colon)
@@ -747,21 +754,46 @@ generate_ratelimit_rules() {
         download_kbytes=$((download_limit * 125))
         upload_kbytes=$((upload_limit * 125))
         
-        # Calculate burst using integer math (factor * 10 for one decimal precision)
+        # Calculate burst using robust decimal parsing
         # If burst_factor is 0, we don't add burst parameter at all (strict rate limit)
-        local burst_int="${burst_factor%.*}"
-        local burst_dec="${burst_factor#*.}"
-        [ "$burst_int" = "$burst_factor" ] && burst_dec="0"
+        local download_burst_param='' upload_burst_param=''
         
-        local download_burst_param="" upload_burst_param=""
-        
-        # Only add burst parameter if burst_factor > 0
-        if [ "$burst_int" -gt 0 ] || [ "$burst_dec" -gt 0 ]; then
-            local download_burst=$((download_kbytes * burst_int + download_kbytes * burst_dec / 10))
-            local upload_burst=$((upload_kbytes * burst_int + upload_kbytes * burst_dec / 10))
-            download_burst_param=" burst ${download_burst} kbytes"
-            upload_burst_param=" burst ${upload_burst} kbytes"
-        fi
+        # Parse burst_factor robustly (handle cases like "1.", ".5", "0.25", etc.)
+        case "$burst_factor" in
+            0|0.0|0.00) 
+                # No burst - strict limiting
+                ;;
+            *.*) 
+                # Has decimal point
+                local burst_int="${burst_factor%.*}"
+                local burst_dec="${burst_factor#*.}"
+                
+                # Handle missing parts
+                [ -z "$burst_int" ] && burst_int='0'
+                [ -z "$burst_dec" ] && burst_dec='0'
+                
+                # Pad or truncate decimal to 2 digits for centiprecision
+                case "${#burst_dec}" in
+                    1) burst_dec="${burst_dec}0" ;;  # 0.5 -> 50
+                    2) ;;  # 0.25 -> 25
+                    *) burst_dec="${burst_dec:0:2}" ;;  # 0.125 -> 12
+                esac
+                
+                # Calculate: burst = rate * (int + dec/100)
+                local download_burst=$((download_kbytes * burst_int + download_kbytes * burst_dec / 100))
+                local upload_burst=$((upload_kbytes * burst_int + upload_kbytes * burst_dec / 100))
+                
+                [ "$download_burst" -gt 0 ] && download_burst_param=" burst ${download_burst} kbytes"
+                [ "$upload_burst" -gt 0 ] && upload_burst_param=" burst ${upload_burst} kbytes"
+                ;;
+            *)
+                # Integer only (e.g. "1", "2")
+                local download_burst=$((download_kbytes * burst_factor))
+                local upload_burst=$((upload_kbytes * burst_factor))
+                download_burst_param=" burst ${download_burst} kbytes"
+                upload_burst_param=" burst ${upload_burst} kbytes"
+                ;;
+        esac
         
         # Generate download rule if limit is set (match destination traffic TO the device)
         if [ "$download_limit" -gt 0 ]; then
