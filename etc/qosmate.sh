@@ -728,7 +728,10 @@ generate_ratelimit_rules() {
         [ "$enabled" -eq 0 ] && return 0
         
         config_get name "$section" name
-        [ -z "$name" ] && return 0
+        [ -z "$name" ] && {
+            log_msg -warn "Rate limit section '$section' has no name - skipping"
+            return 0
+        }
         
         config_get download_limit "$section" download_limit "0"
         config_get upload_limit "$section" upload_limit "0"
@@ -747,7 +750,7 @@ generate_ratelimit_rules() {
         }
         
         # Sanitize name for meter usage (only alphanumeric and underscore)
-        meter_suffix="$(printf '%s' "$name" | tr ' ' '_' | tr -cd '[:alnum:]_')"
+        meter_suffix="$(printf '%s' "$name" | tr ' ' '_' | tr -cd 'a-zA-Z0-9_')"
         [ -z "$meter_suffix" ] && meter_suffix="unnamed_${section}"
         
         # Convert Mbit/s to kbytes/second (1 Mbit/s = 125 kbytes/s)
