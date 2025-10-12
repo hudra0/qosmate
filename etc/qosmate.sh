@@ -629,6 +629,263 @@ generate_dynamic_nft_rules() {
     fi
 }
 
+##############################
+# Rate Limit Functions
+##############################
+
+# Build nftables device match conditions from target values with direction support
+# Detects IP/IPv6 addresses and generates appropriate match statements
+# Args: $1=target_values, $2=direction (saddr/daddr), $3=result_var_name
+# shellcheck disable=SC2329
+build_device_conditions_for_direction() {
+    local target_values="$1" direction="$2" result_var="$3"
+    local result="" ipv4_pos="" ipv4_neg="" ipv6_pos="" ipv6_neg=""
+    local value negation v
+    
+    for value in $target_values; do
+        negation=""
+        v="$value"
+        
+        # Check for negation prefix
+        case "$v" in
+            '!='*)
+                negation="!="
+                v="${v#!=}"
+                ;;
+        esac
+        
+        # Check for set reference (@setname)
+        case "$v" in
+            '@'*)
+                # Set reference - determine family and use correct prefix
+                local setname="${v#@}"
+                local set_family
+                set_family="$(awk -v set="$setname" '$1 == set {print $2}' /tmp/qosmate_set_families 2>/dev/null)"
+                
+                local ip_prefix='ip'
+                [ "$set_family" = "ipv6" ] && ip_prefix='ip6'
+                
+                if [ -n "$negation" ]; then
+                    result="${result}${result:+ }${ip_prefix} ${direction} != @${setname}"
+                else
+                    result="${result}${result:+ }${ip_prefix} ${direction} @${setname}"
+                fi
+                ;;
+            *)
+                # Detect address type and collect for set notation
+                # Skip MAC addresses (not supported)
+                if printf '%s' "$v" | grep -qE '^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$'; then
+                    log_msg -warn "MAC address '$v' in rate limit rule ignored (not supported)"
+                elif printf '%s' "$v" | grep -q ':' && ! printf '%s' "$v" | grep -qE '^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$'; then
+                    # IPv6 address (contains colon, not a MAC address)
+                    if [ -n "$negation" ]; then
+                        ipv6_neg="${ipv6_neg}${ipv6_neg:+,}${v}"
+                    else
+                        ipv6_pos="${ipv6_pos}${ipv6_pos:+,}${v}"
+                    fi
+                else
+                    # IPv4 address or CIDR
+                    if [ -n "$negation" ]; then
+                        ipv4_neg="${ipv4_neg}${ipv4_neg:+,}${v}"
+                    else
+                        ipv4_pos="${ipv4_pos}${ipv4_pos:+,}${v}"
+                    fi
+                fi
+                ;;
+        esac
+    done
+    
+    # Build set-based conditions
+    if [ -n "$ipv4_neg" ]; then
+        result="${result}${result:+ }ip ${direction} != { ${ipv4_neg} }"
+    fi
+    if [ -n "$ipv4_pos" ]; then
+        result="${result}${result:+ }ip ${direction} { ${ipv4_pos} }"
+    fi
+    if [ -n "$ipv6_neg" ]; then
+        result="${result}${result:+ }ip6 ${direction} != { ${ipv6_neg} }"
+    fi
+    if [ -n "$ipv6_pos" ]; then
+        result="${result}${result:+ }ip6 ${direction} { ${ipv6_pos} }"
+    fi
+    
+    eval "${result_var}=\"\${result}\""
+}
+
+# Generate rate limit rules from UCI config
+generate_ratelimit_rules() {
+    local rules=""
+    
+    # Process each ratelimit section
+    # shellcheck disable=SC2329
+    process_ratelimit_section() {
+        local section="$1"
+        local name enabled download_limit upload_limit burst_factor
+        local target_values meter_suffix download_kbytes upload_kbytes
+        local download_burst upload_burst
+        
+        config_get_bool enabled "$section" enabled 1
+        [ "$enabled" -eq 0 ] && return 0
+        
+        config_get name "$section" name
+        [ -z "$name" ] && {
+            log_msg -warn "Rate limit section '$section' has no name - skipping"
+            return 0
+        }
+        
+        config_get download_limit "$section" download_limit "0"
+        config_get upload_limit "$section" upload_limit "0"
+        config_get burst_factor "$section" burst_factor "1.0"
+        
+        config_get target_values "$section" target
+        
+        # Validate: need at least one target and one limit
+        [ -z "$target_values" ] && {
+            log_msg -warn "Rate limit rule '$name' has no target devices - skipping"
+            return 0
+        }
+        [ "$download_limit" -eq 0 ] && [ "$upload_limit" -eq 0 ] && {
+            log_msg -warn "Rate limit rule '$name' has no bandwidth limits - skipping"
+            return 0
+        }
+        
+        # Sanitize name for meter usage (only alphanumeric and underscore)
+        meter_suffix="$(printf '%s' "$name" | tr ' ' '_' | tr -cd 'a-zA-Z0-9_')"
+        [ -z "$meter_suffix" ] && meter_suffix="unnamed_${section}"
+        
+        # Convert Mbit/s to kbytes/second (1 Mbit/s = 125 kbytes/s)
+        download_kbytes=$((download_limit * 125))
+        upload_kbytes=$((upload_limit * 125))
+        
+        # Calculate burst using robust decimal parsing
+        # If burst_factor is 0, we don't add burst parameter at all (strict rate limit)
+        local download_burst_param='' upload_burst_param=''
+        
+        # Parse burst_factor robustly (handle cases like "1.", ".5", "0.25", etc.)
+        case "$burst_factor" in
+            0|0.0|0.00) 
+                # No burst - strict limiting
+                ;;
+            *.*) 
+                # Has decimal point
+                local burst_int="${burst_factor%.*}"
+                local burst_dec="${burst_factor#*.}"
+                
+                # Handle missing parts
+                [ -z "$burst_int" ] && burst_int='0'
+                [ -z "$burst_dec" ] && burst_dec='0'
+                
+                # Pad or truncate decimal to 2 digits for centiprecision
+                case "${#burst_dec}" in
+                    1) burst_dec="${burst_dec}0" ;;  # 0.5 -> 50
+                    2) ;;  # 0.25 -> 25
+                    *) burst_dec="${burst_dec:0:2}" ;;  # 0.125 -> 12
+                esac
+                
+                # Calculate: burst = rate * (int + dec/100)
+                local download_burst=$((download_kbytes * burst_int + download_kbytes * burst_dec / 100))
+                local upload_burst=$((upload_kbytes * burst_int + upload_kbytes * burst_dec / 100))
+                
+                [ "$download_burst" -gt 0 ] && download_burst_param=" burst ${download_burst} kbytes"
+                [ "$upload_burst" -gt 0 ] && upload_burst_param=" burst ${upload_burst} kbytes"
+                ;;
+            *)
+                # Integer only (e.g. "1", "2")
+                local download_burst=$((download_kbytes * burst_factor))
+                local upload_burst=$((upload_kbytes * burst_factor))
+                download_burst_param=" burst ${download_burst} kbytes"
+                upload_burst_param=" burst ${upload_burst} kbytes"
+                ;;
+        esac
+        
+        # Separate targets by IP family
+        local targets_v4='' targets_v6='' value prefix setname set_family
+        
+        for value in $target_values; do
+            # Preserve != prefix
+            prefix=''
+            case "$value" in
+                '!='*)
+                    prefix='!='
+                    value="${value#!=}"
+                    ;;
+            esac
+            
+            # Check if it's a set reference
+            case "$value" in
+                '@'*)
+                    setname="${value#@}"
+                    set_family="$(awk -v set="$setname" '$1 == set {print $2}' /tmp/qosmate_set_families 2>/dev/null)"
+                    if [ "$set_family" = "ipv6" ]; then
+                        targets_v6="${targets_v6}${targets_v6:+ }${prefix}${value}"
+                    else
+                        targets_v4="${targets_v4}${targets_v4:+ }${prefix}${value}"
+                    fi
+                    ;;
+                *)
+                    # Check if IPv6 (contains colon and not MAC)
+                    if printf '%s' "$value" | grep -q ':' && ! printf '%s' "$value" | grep -qE '^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$'; then
+                        targets_v6="${targets_v6}${targets_v6:+ }${prefix}${value}"
+                    else
+                        targets_v4="${targets_v4}${targets_v4:+ }${prefix}${value}"
+                    fi
+                    ;;
+            esac
+        done
+        
+        # Generate IPv4 rules
+        if [ -n "$targets_v4" ]; then
+            if [ "$download_limit" -gt 0 ]; then
+                local download_conditions_v4=''
+                build_device_conditions_for_direction "$targets_v4" "daddr" download_conditions_v4
+                [ -n "$download_conditions_v4" ] && rules="${rules}
+        # ${name} - Download limit (IPv4)
+        ${download_conditions_v4} meter ${meter_suffix}_dl4 { ip daddr limit rate over ${download_kbytes} kbytes/second${download_burst_param} } counter drop comment \"${name} download\""
+            fi
+            
+            if [ "$upload_limit" -gt 0 ]; then
+                local upload_conditions_v4=''
+                build_device_conditions_for_direction "$targets_v4" "saddr" upload_conditions_v4
+                [ -n "$upload_conditions_v4" ] && rules="${rules}
+        # ${name} - Upload limit (IPv4)
+        ${upload_conditions_v4} meter ${meter_suffix}_ul4 { ip saddr limit rate over ${upload_kbytes} kbytes/second${upload_burst_param} } counter drop comment \"${name} upload\""
+            fi
+        fi
+        
+        # Generate IPv6 rules
+        if [ -n "$targets_v6" ]; then
+            if [ "$download_limit" -gt 0 ]; then
+                local download_conditions_v6=''
+                build_device_conditions_for_direction "$targets_v6" "daddr" download_conditions_v6
+                [ -n "$download_conditions_v6" ] && rules="${rules}
+        # ${name} - Download limit (IPv6)
+        ${download_conditions_v6} meter ${meter_suffix}_dl6 { ip6 daddr limit rate over ${download_kbytes} kbytes/second${download_burst_param} } counter drop comment \"${name} download\""
+            fi
+            
+            if [ "$upload_limit" -gt 0 ]; then
+                local upload_conditions_v6=''
+                build_device_conditions_for_direction "$targets_v6" "saddr" upload_conditions_v6
+                [ -n "$upload_conditions_v6" ] && rules="${rules}
+        # ${name} - Upload limit (IPv6)
+        ${upload_conditions_v6} meter ${meter_suffix}_ul6 { ip6 saddr limit rate over ${upload_kbytes} kbytes/second${upload_burst_param} } counter drop comment \"${name} upload\""
+            fi
+        fi
+    }
+    
+    # Process all ratelimit sections from UCI
+    config_foreach process_ratelimit_section ratelimit
+    
+    # Output rate limit chain if rules exist
+    if [ -n "$rules" ]; then
+        printf '\n%s\n%s\n%s%s\n%s\n' \
+            "    # Rate Limit Chain" \
+            "    chain ratelimit {" \
+            "        type filter hook forward priority 0; policy accept;" \
+            "${rules}" \
+            "    }"
+    fi
+}
+
 # Generate dynamic rules
 DYNAMIC_RULES=$(generate_dynamic_nft_rules)
 
@@ -938,6 +1195,8 @@ ${DYNAMIC_RULES}
           fi
         )
     }
+
+$(generate_ratelimit_rules)
 }
 DSCPEOF
 

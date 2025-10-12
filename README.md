@@ -436,6 +436,158 @@ config rule
 
 > **Usage Note:** Dynamic IP sets are only tested with `dnsmasq-full`, other DNS resolvers (such as AdGuard or Unbound) are not tested.
 
+## Rate Limiting
+
+QoSmate includes an integrated rate limiting feature that allows you to set bandwidth limits for specific devices or subnets using nftables meters. This is useful for controlling bandwidth usage of individual clients, preventing bandwidth-hogging, or enforcing fair usage policies.
+
+> **Important:** Rate limiting is a **policer**, not a traffic shaper or AQM (Active Queue Management) system. It enforces hard bandwidth limits by dropping packets that exceed the configured rate, but does **not** manage queues or prevent bufferbloat. Rate limits complement QoSmate's QoS system but do not replace it. For optimal latency and bufferbloat control, continue using QoSmate's HFSC/CAKE/HTB traffic shaping with proper bandwidth settings. Use rate limits for **bandwidth enforcement**, not latency optimization.
+
+### Configuration
+
+Rate limits are configured via the LuCI interface under **Network → QoSmate → Rate Limits** or directly in `/etc/config/qosmate` using the `ratelimit` section type.
+
+#### Configuration Options
+
+| Option | Description | Type | Default |
+|--------|-------------|------|---------|
+| name | Descriptive name for the rate limit rule | string | |
+| enabled | Enables or disables this rate limit rule | boolean | 1 |
+| target | List of IP/IPv6 addresses or subnets to limit. Supports negation (!=) and set references (@setname) | list(string) | |
+| download_limit | Maximum download speed in Mbit/s (0 = unlimited) | integer | 10 |
+| upload_limit | Maximum upload speed in Mbit/s (0 = unlimited) | integer | 10 |
+| burst_factor | Burst allowance multiplier. 0 = strict limiting, 1.0 = rate as burst, higher = more burst | float | 1.0 |
+
+#### Target Format Examples
+
+The `target` option accepts various formats:
+
+- **Single IP**: `192.168.1.100`
+- **Subnet**: `192.168.1.0/24`
+- **IPv6 address**: `2001:db8::1`
+- **IPv6 subnet**: `2001:db8::/64`
+- **IP set reference**: `@guest_devices`
+- **Negation**: `!=192.168.1.77` (exclude from subnet limit)
+- **Multiple targets**: Use multiple `list target` entries or combine in UI
+
+### Usage Examples
+
+#### Example 1: Basic Device Bandwidth Limit
+
+Limit a single device to 10 Mbit/s download and upload:
+
+```bash
+config ratelimit
+    option name 'Guest Device'
+    option enabled '1'
+    list target '192.168.1.100'
+    option download_limit '10'
+    option upload_limit '10'
+    option burst_factor '1.0'
+```
+
+#### Example 2: Guest Network with Exceptions
+
+Limit all guest network devices to 5 Mbit/s, except for VIP guests:
+
+```bash
+config ratelimit
+    option name 'Guest Network Limit'
+    option enabled '1'
+    list target '192.168.100.0/24'
+    list target '!=192.168.100.77'
+    list target '!=192.168.100.88'
+    option download_limit '5'
+    option upload_limit '5'
+    option burst_factor '1.5'
+```
+
+The `burst_factor` of 1.5 allows temporary speeds up to 7.5 Mbit/s for better user experience.
+
+#### Example 3: Using IP Sets for Flexible Management
+
+First, create an IP set for devices to limit:
+
+```bash
+config ipset
+    option name 'limited_devices'
+    option mode 'static'
+    option family 'ipv4'
+    list ip4 '192.168.1.150'
+    list ip4 '192.168.1.151'
+    list ip4 '192.168.1.152'
+    option enabled '1'
+```
+
+Then reference it in a rate limit rule:
+
+```bash
+config ratelimit
+    option name 'Limited Devices Group'
+    option enabled '1'
+    list target '@limited_devices'
+    option download_limit '20'
+    option upload_limit '10'
+    option burst_factor '1.0'
+```
+
+#### Example 4: IPv6 Rate Limiting
+
+Limit IPv6 devices using direct addresses or sets:
+
+```bash
+config ipset
+    option name 'ipv6_guests'
+    option mode 'static'
+    option family 'ipv6'
+    list ip6 '2001:db8:1234::100'
+    list ip6 '2001:db8:1234::101'
+    option enabled '1'
+
+config ratelimit
+    option name 'IPv6 Guest Limit'
+    option enabled '1'
+    list target '@ipv6_guests'
+    option download_limit '15'
+    option upload_limit '15'
+    option burst_factor '1.2'
+```
+
+### Technical Implementation
+
+Rate limits are implemented using nftables meters integrated into the `dscptag` table. The system generates separate rules for IPv4 and IPv6 traffic to ensure correct meter expressions:
+
+- **Download limiting**: Uses `ip daddr` (IPv4) or `ip6 daddr` (IPv6) matching with corresponding meter keys
+- **Upload limiting**: Uses `ip saddr` (IPv4) or `ip6 saddr` (IPv6) matching with corresponding meter keys
+- **Burst control**: Burst allows temporary exceeding of the rate limit using a "token bucket" mechanism. The `burst_factor` multiplies the rate limit to determine the burst size. For example, with a 10 Mbit/s limit and `burst_factor` = 1.0, the device can burst up to 10 Mbit/s above the rate for short periods (total 20 Mbit/s briefly). A `burst_factor` of 1.5 allows bursting up to 15 Mbit/s above the 10 Mbit/s rate. Without burst (`burst_factor` = 0), traffic is strictly limited to the configured rate with no temporary exceeding. 
+
+Example generated nftables rules:
+
+```bash
+# IPv4 download limit (traffic TO device)
+ip daddr 192.168.1.100 meter guest_dl4 { ip daddr limit rate over 1250 kbytes/second burst 1875 kbytes } counter drop
+
+# IPv6 upload limit (traffic FROM device)
+ip6 saddr 2001:db8::1 meter guest_ul6 { ip6 saddr limit rate over 1250 kbytes/second } counter drop
+```
+
+### Important Notes
+
+- **MAC addresses are not supported** due to technical limitations with nftables meters in forward chains. Use IP addresses or DHCP reservations instead.
+- **Conversion**: Rate limits are entered in Mbit/s (UI) but converted to kbytes/second for nftables (1 Mbit/s = 125 kbytes/second).
+- **Decimal format**: Both European (comma) and American (period) decimal separators are supported in the UI (e.g., "1,5" or "1.5").
+- **Burst factor range**: Valid values are 0.0 to 10.0. Use lower values (0-2.0) for most scenarios.
+- **Integration**: Rate limits work independently of DSCP marking and do not interfere with QoS prioritization.
+
+### Monitoring
+
+Rate limit effectiveness can be monitored by checking the nftables counters:
+
+```bash
+nft list table inet dscptag | grep -A 5 'chain ratelimit'
+```
+
+The `counter packets` value shows how many packets were dropped due to rate limiting. Active limiting is indicated by increasing counter values.
+
 ## Connections Tab
 
 The Connections tab provides a real-time view of all active network connections, including their DSCP markings and traffic statistics. This feature helps you monitor and verify your QoS configuration.
