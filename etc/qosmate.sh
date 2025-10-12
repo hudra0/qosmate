@@ -675,9 +675,9 @@ build_device_conditions_for_direction() {
                 # Detect address type and collect for set notation
                 # Skip MAC addresses (not supported)
                 if printf '%s' "$v" | grep -qE '^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$'; then
-                    log_msg -warn "MAC address '$v' in rate limit rule '$name' ignored (not supported)"
-                elif printf '%s' "$v" | grep -q ':'; then
-                    # IPv6 address (contains colon)
+                    log_msg -warn "MAC address '$v' in rate limit rule ignored (not supported)"
+                elif printf '%s' "$v" | grep -q ':' && ! printf '%s' "$v" | grep -qE '^([0-9a-fA-F]{2}[:-]){5}[0-9a-fA-F]{2}$'; then
+                    # IPv6 address (contains colon, not a MAC address)
                     if [ -n "$negation" ]; then
                         ipv6_neg="${ipv6_neg}${ipv6_neg:+,}${v}"
                     else
