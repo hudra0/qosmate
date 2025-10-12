@@ -634,7 +634,7 @@ generate_dynamic_nft_rules() {
 ##############################
 
 # Build nftables device match conditions from target values with direction support
-# Auto-detects IP/IPv6 addresses and generates appropriate match statements
+# Detects IP/IPv6 addresses and generates appropriate match statements
 # Args: $1=target_values, $2=direction (saddr/daddr), $3=result_var_name
 # shellcheck disable=SC2329
 build_device_conditions_for_direction() {
@@ -795,26 +795,64 @@ generate_ratelimit_rules() {
                 ;;
         esac
         
-        # Generate download rule if limit is set (match destination traffic TO the device)
+        # Generate rules - build conditions once and check for IPv4/IPv6
+        local download_conditions='' upload_conditions=''
+        
         if [ "$download_limit" -gt 0 ]; then
-            # For download: match traffic going TO the device (ip daddr)
-            local download_conditions=""
             build_device_conditions_for_direction "$target_values" "daddr" download_conditions
-            
-            [ -n "$download_conditions" ] && rules="${rules}
-        # ${name} - Download limit
-        ${download_conditions} meter ${meter_suffix}_dl { ip daddr limit rate over ${download_kbytes} kbytes/second${download_burst_param} } counter drop comment \"${name} download\""
         fi
         
-        # Generate upload rule if limit is set (match source traffic FROM the device)
         if [ "$upload_limit" -gt 0 ]; then
-            # For upload: match traffic coming FROM the device (ip saddr)
-            local upload_conditions=""
             build_device_conditions_for_direction "$target_values" "saddr" upload_conditions
-            
-            [ -n "$upload_conditions" ] && rules="${rules}
-        # ${name} - Upload limit
-        ${upload_conditions} meter ${meter_suffix}_ul { ip saddr limit rate over ${upload_kbytes} kbytes/second${upload_burst_param} } counter drop comment \"${name} upload\""
+        fi
+        
+        # Determine if we have IPv4 or IPv6 based on generated conditions
+        local has_ipv4=0 has_ipv6=0
+        
+        case "$download_conditions$upload_conditions" in
+            *ip6*) has_ipv6=1 ;;
+        esac
+        
+        case "$download_conditions$upload_conditions" in
+            *'ip daddr'*|*'ip saddr'*|*'ip {'*) has_ipv4=1 ;;
+        esac
+        
+        # Generate IPv4 download rule
+        if [ "$download_limit" -gt 0 ] && [ "$has_ipv4" -eq 1 ] && [ -n "$download_conditions" ]; then
+            case "$download_conditions" in
+                *ip6*) ;;  # Skip if IPv6-only
+                *) rules="${rules}
+        # ${name} - Download limit (IPv4)
+        ${download_conditions} meter ${meter_suffix}_dl4 { ip daddr limit rate over ${download_kbytes} kbytes/second${download_burst_param} } counter drop comment \"${name} download\"" ;;
+            esac
+        fi
+        
+        # Generate IPv6 download rule
+        if [ "$download_limit" -gt 0 ] && [ "$has_ipv6" -eq 1 ] && [ -n "$download_conditions" ]; then
+            case "$download_conditions" in
+                *ip6*) rules="${rules}
+        # ${name} - Download limit (IPv6)
+        ${download_conditions} meter ${meter_suffix}_dl6 { ip6 daddr limit rate over ${download_kbytes} kbytes/second${download_burst_param} } counter drop comment \"${name} download\"" ;;
+            esac
+        fi
+        
+        # Generate IPv4 upload rule
+        if [ "$upload_limit" -gt 0 ] && [ "$has_ipv4" -eq 1 ] && [ -n "$upload_conditions" ]; then
+            case "$upload_conditions" in
+                *ip6*) ;;  # Skip if IPv6-only
+                *) rules="${rules}
+        # ${name} - Upload limit (IPv4)
+        ${upload_conditions} meter ${meter_suffix}_ul4 { ip saddr limit rate over ${upload_kbytes} kbytes/second${upload_burst_param} } counter drop comment \"${name} upload\"" ;;
+            esac
+        fi
+        
+        # Generate IPv6 upload rule
+        if [ "$upload_limit" -gt 0 ] && [ "$has_ipv6" -eq 1 ] && [ -n "$upload_conditions" ]; then
+            case "$upload_conditions" in
+                *ip6*) rules="${rules}
+        # ${name} - Upload limit (IPv6)
+        ${upload_conditions} meter ${meter_suffix}_ul6 { ip6 saddr limit rate over ${upload_kbytes} kbytes/second${upload_burst_param} } counter drop comment \"${name} upload\"" ;;
+            esac
         fi
     }
     
