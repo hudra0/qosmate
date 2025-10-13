@@ -753,9 +753,9 @@ generate_ratelimit_rules() {
         meter_suffix="$(printf '%s' "$name" | tr ' ' '_' | tr -cd 'a-zA-Z0-9_')"
         [ -z "$meter_suffix" ] && meter_suffix="unnamed_${section}"
         
-        # Convert Mbit/s to kbytes/second (1 Mbit/s = 125 kbytes/s)
-        download_kbytes=$((download_limit * 125))
-        upload_kbytes=$((upload_limit * 125))
+        # Convert Kbit/s to kbytes/second (1 Kbit/s = 0.125 kbytes/s)
+        download_kbytes=$((download_limit / 8))
+        upload_kbytes=$((upload_limit / 8))
         
         # Calculate burst using robust decimal parsing
         # If burst_factor is 0, we don't add burst parameter at all (strict rate limit)
