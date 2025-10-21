@@ -1885,6 +1885,8 @@ start_service() {
 
     install_packages
 
+    create_hotplug_script
+
     load_and_fix_config || return 1
 
     # Enable the global option
@@ -1903,8 +1905,6 @@ start_service() {
     printf '%s\n' "$WAN" > /tmp/qosmate_wan
 
     /bin/sh "$QOSMATE_MAIN_SCRIPT" || { error_out "Failed to start qosmate."; return 1; }
-
-    create_hotplug_script  # Create the hotplug script instead of downloading it
 
     /etc/init.d/firewall reload &&
     enable || return 1
