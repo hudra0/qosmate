@@ -356,6 +356,35 @@ This rule matches any IPv6 address ending with `1234:5678:90ab:cdef`, no matter 
 
 For more details and discussion, see GitHub Issue [#63](https://github.com/hudra0/qosmate/issues/63).
 
+### Understanding DNS Traffic and DSCP Marking
+
+QoSmate can only mark DNS traffic that passes through the FORWARD chain. Traffic to/from the router itself (INPUT/OUTPUT chains) is not marked by default.
+
+#### DNS Traffic Scenarios
+
+1. **DNS queries to/from the router (INPUT/OUTPUT chains)**
+   - Client → Router's dnsmasq (INPUT chain)
+   - Router → Upstream DNS servers (OUTPUT chain)
+   - **Result**: Not marked by QoSmate's standard rules
+
+2. **Direct external DNS queries (FORWARD chain)**
+   - Client → 8.8.8.8, 1.1.1.1, etc.
+   - **Result**: Can be marked by QoSmate rules
+
+> **Note**: If you have DNS Intercept or Force DNS enabled, all DNS queries are redirected to the router's local DNS, converting scenario 2 into scenario 1. This prevents DSCP marking of DNS traffic.
+
+#### Testing DNS Marking
+
+Test from a LAN client:
+```bash
+nslookup google.com 8.8.8.8
+```
+Then check **Network → QoSmate → Connections** for DNS traffic (UDP port 53) with DSCP markings.
+
+#### Marking Router DNS Traffic
+
+To mark router-originated DNS traffic (e.g., router → upstream DNS), you can use Custom Rules with an OUTPUT hook. However, these rules will only mark egress traffic. If you also want ingress DSCP restoration, you'll need to implement logic that writes DSCP values to conntrack without overwriting existing values set by QoSmate for FORWARD traffic.
+
 ### IP Sets in QoSmate
 QoSmate features an integrated IP Sets UI which allows you to manage both static and dynamic IP sets directly from the LuCI interface under **Network → QoSmate → IP Sets**. This replaces the "old" method of configuring sets via custom rules manually and simplifies the process of grouping IP addresses for DSCP marking.
 
