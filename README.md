@@ -223,19 +223,48 @@ All cake settings are described in the tc-cake man. **Note: Link layer settings 
 
 ### Wash Function Explanation
 
-The `wash` function in `qosmate` is a crucial feature for managing DSCP markings on network packets. It allows you to control how DSCP values are handled on both ingress (incoming) and egress (outgoing) traffic. Below is a detailed explanation of what the wash function does and why it might be necessary:
+The `wash` function in `qosmate` is a crucial feature for managing DSCP markings on network packets. It allows you to control whether DSCP values from external sources (ISP, LAN devices) are preserved or reset to CS0 (Default Forwarding).
 
-#### Ingress Washing (WASHDSCPDOWN)
-- **Functionality**: When enabled, ingress washing takes the existing DSCP value of incoming packets (whether from the internet or influenced by conntrack actions for tc) and allows the system to use it for initial classification (e.g., steering packets into matching CAKE priority tins). After this initial handling, `qosmate` re-marks the DSCP field to CS0/DF. (Note: The exact initial handling differs slightly between qdiscs like CAKE and HFSC - **see special Note** below).
-- **Impact**: Inside your LAN, all packets from the internet will be marked as CS0/DF and treated with default forwarding priority. If washing is not enabled, packets retain their original DSCP markings, which could influence, for example, the selection of access classes in WMM (Wi-Fi Multimedia) on Wi-Fi networks, where different access classes have varying stochastic priorities.
-- **Special Note**: In certain configurations, `qosmate` overwrites DSCP values on ingress from the ISP. For instance, if ingress washing is active and HFSC is set as the root qdisc, all packets are initially marked as CS0 when passing through the `dscptag` chain (where marking occurs). Packets matching a `qosmate` rule will be tagged with the appropriate DSCP value. Since the DSCP value is written to conntrack and restored on ingress, all packets end up with either CS0 or the DSCP assigned by a rule, effectively overwriting any DSCP set by the ISP before classification happens.
+**Important**: The wash function behaves differently between CAKE and HFSC/HTB/Hybrid modes.
 
-#### Egress Washing (WASHDSCPUP)
-- **Functionality**: When enabled, egress washing takes the existing DSCP value of outgoing packets (whether from local end hosts or set by firewall/nftables/tc rules) and steers these packets into the matching priority tin of the CAKE qdisc (if using a multi-tin setup). After classification, it re-marks the DSCP field to CS0/DF.
-- **Impact**: This prevents leaking DSCP markings into your ISP's network and the broader internet. Some ISPs treat packets with non-CS0 DSCP markings differently, often not by prioritizing them but by increasing latency, jitter, or even packet loss rates for marked packets.
+---
 
-#### Decision to Use Wash
-Whether to enable washing, and in which direction (ingress, egress, or both), is a decision each network administrator must make based on their specific network needs and policies. Washing can prevent external interference or unintended consequences from DSCP markings/honoring.
+#### CAKE Mode: Interface-Based Washing
+
+In CAKE mode, washing is applied per network interface and corresponds directly to traffic direction:
+
+**WASHDSCPUP (Egress Washing)** - Upload direction (applied on WAN interface):
+- **What happens**: CAKE first classifies packets into priority tins based on their DSCP values, then re-marks all packets to CS0 before they leave to your ISP.
+- **Why use it**: Prevents leaking DSCP markings to your ISP's network. Some ISPs treat marked packets adversely (increased latency, jitter, or packet loss) rather than honoring the prioritization.
+
+**WASHDSCPDOWN (Ingress Washing)** - Download direction (applied on IFB interface):
+- **What happens**: CAKE first classifies packets into priority tins based on their DSCP values, then re-marks all packets to CS0 before they enter your LAN.
+- **Why use it**: Prevents ISP-set DSCP values from influencing your LAN devices. For example, on Wi-Fi networks, DSCP markings can affect WMM (Wi-Fi Multimedia) access class selection, where different classes have varying priorities.
+
+---
+
+#### HFSC/HTB/Hybrid Mode: Chain-Position-Based Washing
+
+In HFSC, HTB, and Hybrid modes, washing is achieved through the nftables `dscptag` chain processing, as these qdiscs do not have wash functionality built-in like CAKE does.
+
+**WASHDSCPDOWN (Ingress Washing)** - Applied at chain entry:
+- **What happens**: All DSCP values are set to CS0 at the beginning of the nftables chain, affecting both upload and download traffic:
+  - *Download*: Packets from the ISP are washed to CS0, then the chain is immediately skipped (these packets were already classified by tc). Result: ISP DSCP markings do not reach your LAN devices.
+  - *Upload*: Packets from your LAN are washed to CS0 at chain entry, then continue through the chain where `qosmate` rules can assign new DSCP values based on your configuration.
+- **Why use it**: Ensures a clean baseline - all traffic starts at CS0, and only your explicit `qosmate` rules determine DSCP markings. Prevents ISP markings from affecting LAN devices. For upload traffic, it prevents LAN devices from setting their own DSCP values and ensures that only `qosmate` controls DSCP assignment.
+
+**WASHDSCPUP (Egress Washing)** - Applied at chain exit for WAN-bound packets:
+- **What happens**: Only affects upload traffic. After all `qosmate` rules have been processed and packets are ready to leave via WAN, DSCP values are reset to CS0.
+- **Why use it**: Prevents DSCP leak to your ISP. Works in combination with WASHDSCPDOWN: packets start at CS0, get marked by rules during chain processing, get classified by tc, then optionally washed again before leaving to ISP.
+- **Note**: Download packets never reach this point in the chain (they exit earlier), so WASHDSCPUP only affects upload.
+
+---
+
+#### Recommendation
+
+**For most users**: Enable both WASHDSCPUP and WASHDSCPDOWN. This ensures full control over DSCP markings - preventing ISP interference and ensuring only your `qosmate` rules determine traffic priority. 
+
+**Disable washing only if**: You specifically need to preserve DSCP markings from trusted sources (e.g., your ISP actively honors QoS, or you're running a multi-router setup where DSCP values must be preserved across boundaries).
 
 ### DSCP Marking Rules
 
