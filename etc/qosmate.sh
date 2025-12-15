@@ -1291,10 +1291,10 @@ add_tc_filter() {
 
     case "$family" in
         ipv4)
-            proto=ip prio=1 match_str="ip dsfield $dsfield 0xfc"
+            proto=ip prio=10 match_str="ip dsfield $dsfield 0xfc"
             ;;
         ipv6)
-            proto=ipv6 prio=2 match_str="u16 $hex_match 0x0FC0 at 0"
+            proto=ipv6 prio=11 match_str="u16 $hex_match 0x0FC0 at 0"
             ;;
     esac
 
@@ -1910,7 +1910,7 @@ esac
 # Only needed when Software Flow Offloading is active
 if [ "$SFO_ENABLED" = "1" ]; then
     print_msg "" "Software Flow Offloading detected - enabling SFO compatibility mode..."
-    tc filter add dev "$WAN" parent 1: protocol all matchall action ctinfo dscp 63 128 continue
+    tc filter add dev "$WAN" parent 1: prio 1 protocol all matchall action ctinfo dscp 63 128 continue
 else
     print_msg "" "Software Flow Offloading disabled - dynamic rules fully functional..."
 fi
