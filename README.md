@@ -743,7 +743,7 @@ meta l4proto tcp limit rate 100/second ip dscp set cs1 comment "Bulk TCP limit"
 udp sport 5060-5070 ip dscp set ef comment "SIP/RTP VoIP traffic"
 ```
 
-#### Example 2: Advanced Traffic Shaping (Inline)
+#### Example 2: Advanced Traffic marking (Inline)
 Apply different DSCP markings based on packet rates and protocols:
 
 ```bash
