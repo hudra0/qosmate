@@ -1622,7 +1622,7 @@ debug_log "$DIR HYBRID cake opts: '$CAKE_OPTS'"
     local INTVL=$((100+2*1500*8/RATE))
     local TARG=$((540*8/RATE+4))
     tc qdisc del dev "$DEV" parent 1:15 handle 15: > /dev/null 2>&1
-    tc qdisc replace dev "$DEV" parent 1:15 handle 15: fq_codel memory_limit $((RATE*100/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
+    tc qdisc replace dev "$DEV" parent 1:15 handle 15: fq_codel memory_limit $((RATE*200/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
 
     # Apply DSCP Filters (on ingress always, on egress only when SFO active)
     if [ "$DIR" = "lan" ] || [ "$SFO_ENABLED" = "1" ]; then
@@ -1659,7 +1659,7 @@ calculate_htb_quantum() {
     local quantum=$(((duration_us * rate) / 8000))
     
     # ATM-aware minimum
-    if [ "$LINKTYPE" = "atm" ]; then
+    if [ "$COMMON_LINK_PRESETS" = "atm" ]; then
         local min_quantum=$(((MTU + 48 + 47) / 48 * 53))
         [ $quantum -lt $min_quantum ] && quantum=$min_quantum
     else
