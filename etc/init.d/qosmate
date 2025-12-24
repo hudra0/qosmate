@@ -1907,7 +1907,7 @@ start_service() {
     /bin/sh "$QOSMATE_MAIN_SCRIPT" || { error_out "Failed to start qosmate."; return 1; }
 
     /etc/init.d/firewall reload &&
-    enable || return 1
+    enabled || /etc/init.d/qosmate enable || return 1
     log_msg "Service started"
 }
 
