@@ -875,7 +875,7 @@ update() {
                 if [ -n "$req_upd_channel" ]; then
                     :
                 elif [ ! -f "$QOSMATE_VERSION_FILE_FRONTEND" ]; then
-                    def_upd_channel=release
+                    def_upd_channel="${UPD_CHANNEL:-release}"
                 else
                     get_frontend_spec _ def_upd_channel "$QOSMATE_VERSION_FILE_FRONTEND" || {
                         error_out "Failed to get current FRONTEND update channel. Defaulting to 'release'."
