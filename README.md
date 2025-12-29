@@ -1166,15 +1166,17 @@ Note: Make sure to review and adjust the default configuration as needed for you
 ## Building qosmate and Luci-app-qosmate Packages for OpenWrt
 
 1. Navigate to Your OpenWrt Buildroot Directory:
-`cd /path/to/your/openwrt
-`
+```bash
+cd /path/to/your/openwrt
+```
 2. Clone the QoSmate Package:
-`mkdir -p package/qosmate
-git clone https://github.com/hudra0/qosmate.git package/qosmate
-`
+```bash
+mkdir -p package/qosmate && git clone https://github.com/hudra0/qosmate.git package/qosmate
+```
 3. Clone the LuCI QoSmate Package:
-`mkdir -p package/luci-app-qosmate
-git clone https://github.com/hudra0/luci-app-qosmate.git package/luci-app-qosmate`
+```bash
+mkdir -p package/luci-app-qosmate && git clone https://github.com/hudra0/luci-app-qosmate.git package/luci-app-qosmate
+```
 
 ## QoSmate Traffic Shaping: HFSC, HTB and CAKE
 
