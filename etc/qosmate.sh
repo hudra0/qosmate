@@ -994,16 +994,18 @@ fi
 
 if [ "$UPRATE" -lt 3000 ]; then
     # Clamp MSS between 536 and 1500
+    # Use iifname (ingress from WAN) to clamp SYN-ACK from server, limiting our upload packet size
     SAFE_MSS=$(( MSS > 1500 ? 1500 : (MSS < 536 ? 536 : MSS) ))
-    RULE_SET_TCPMSS_UP="meta oifname \"$WAN\" tcp flags syn tcp option maxseg size set $SAFE_MSS counter;"
+    RULE_SET_TCPMSS_UP="meta iifname \"$WAN\" tcp flags syn tcp option maxseg size set $SAFE_MSS counter;"
 else
     RULE_SET_TCPMSS_UP=''
 fi
 
 if [ "$DOWNRATE" -lt 3000 ]; then
     # Clamp MSS between 536 and 1500
+    # Use oifname (egress to WAN) to clamp SYN to server, limiting our download packet size
     SAFE_MSS=$(( MSS > 1500 ? 1500 : (MSS < 536 ? 536 : MSS) ))
-    RULE_SET_TCPMSS_DOWN="meta iifname \"$WAN\" tcp flags syn tcp option maxseg size set $SAFE_MSS counter;"
+    RULE_SET_TCPMSS_DOWN="meta oifname \"$WAN\" tcp flags syn tcp option maxseg size set $SAFE_MSS counter;"
 else
     RULE_SET_TCPMSS_DOWN=''
 fi
@@ -1142,12 +1144,13 @@ ${SETS}
             echo "        counter jump mark_cs0"
           fi
         )
-        
-        # Skip rule processing for ingress packets since they're already classified by tc-ctinfo
-        meta iifname "$WAN" accept
 
+        # TCP MSS clamping for slow connections (must be before ingress accept)
         $RULE_SET_TCPMSS_UP
         $RULE_SET_TCPMSS_DOWN
+
+        # Skip rule processing for ingress packets since they're already classified by tc-ctinfo
+        meta iifname "$WAN" accept
 
         $udpbulkport_rules
 
