@@ -266,6 +266,113 @@ In HFSC, HTB, and Hybrid modes, washing is achieved through the nftables `dscpta
 
 **Disable washing only if**: You specifically need to preserve DSCP markings from trusted sources (e.g., your ISP actively honors QoS, or you're running a multi-router setup where DSCP values must be preserved across boundaries).
 
+### Autorate (Dynamic Bandwidth Adjustment)
+
+Autorate is an optional feature that dynamically adjusts bandwidth based on real-time latency measurements. It helps maintain low latency even when your ISP connection quality fluctuates (e.g., cable degradation, mobile/LTE connections, or peak hours).
+
+#### How It Works
+
+1. **Baseline Learning**: The daemon measures latency by pinging configurable reflector servers. The first measurements establish a baseline (minimum expected latency). This baseline is continuously updated using an exponential moving average.
+
+2. **Latency Monitoring**: Every measurement interval, the daemon calculates the latency delta (current latency minus baseline). A high delta indicates potential bufferbloat or congestion.
+
+3. **Rate Adjustment Logic**:
+   - **Decrease**: When latency delta exceeds the decrease threshold, bandwidth is reduced aggressively (default: 15% reduction)
+   - **Increase**: When the link is under load (≥75% utilization) AND latency delta is below the increase threshold, bandwidth is increased cautiously (default: 2% increase)
+   - **Drift to Base**: When utilization is low (<50%), rates slowly drift back toward the configured base rate
+
+4. **Clamping**: Rates are always kept within the configured min/max bounds.
+
+#### When to Use Autorate
+
+Autorate is beneficial for:
+- Connections with variable bandwidth (mobile/LTE, cable with degradation)
+- Users who want to run closer to their maximum bandwidth without manual tuning
+- Situations where ISP quality fluctuates throughout the day
+
+For stable fiber/FTTH connections with consistent bandwidth, the standard static QoSmate configuration (80-90% of your bandwidth) typically works well without Autorate.
+
+#### Enabling Autorate
+
+Enable Autorate via LuCI under **Network → QoSmate → Settings** using the "Enable Dynamic Bandwidth" toggle. Detailed configuration options are available under **Network → QoSmate → Advanced → Autorate Settings**.
+
+#### Configuration Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `enabled` | Enable or disable the autorate daemon | `0` (disabled) |
+| `interval` | Measurement interval in milliseconds. Lower values react faster but use more CPU. | `500` |
+| `latency_increase_threshold` | Latency delta (in ms) below which bandwidth may be increased. See threshold explanation below. | `5` |
+| `latency_decrease_threshold` | Latency delta (in ms) above which bandwidth is decreased. See threshold explanation below. | `10` |
+| `reflectors` | Space-separated list of IP addresses for latency measurement (ping). | `1.1.1.1 8.8.8.8 9.9.9.9` |
+| `refractory_increase` | Minimum seconds to wait after a rate increase before allowing another adjustment. | `3` |
+| `refractory_decrease` | Minimum seconds to wait after a rate decrease before allowing another adjustment. | `1` |
+| `adjust_up_factor` | Percentage multiplier for rate increases (102 = 2% increase). | `102` |
+| `adjust_down_factor` | Percentage multiplier for rate decreases (85 = 15% decrease). | `85` |
+| `log_changes` | Log every rate change to system log. Useful for debugging but may spam logs. | `0` |
+
+##### Rate Override Options
+
+By default, Autorate calculates min/base/max rates from your configured UPRATE and DOWNRATE. You can override these if needed:
+
+| Option | Description | Default (auto-calculated) |
+|--------|-------------|---------------------------|
+| `min_ul_rate` | Minimum upload rate in kbps | 25% of UPRATE |
+| `base_ul_rate` | Base upload rate in kbps (target when idle) | 100% of UPRATE |
+| `max_ul_rate` | Maximum upload rate in kbps | 105% of UPRATE |
+| `min_dl_rate` | Minimum download rate in kbps | 25% of DOWNRATE |
+| `base_dl_rate` | Base download rate in kbps (target when idle) | 100% of DOWNRATE |
+| `max_dl_rate` | Maximum download rate in kbps | 105% of DOWNRATE |
+
+#### Understanding the Thresholds
+
+The latency thresholds define a "safe zone" and an "alarm zone" based on the **latency delta** (current latency minus baseline):
+
+```
+Baseline: 15ms (learned minimum latency)
+Current:  22ms
+Delta:     7ms (22 - 15)
+
+|<-- Safe Zone -->|<-- Neutral -->|<-- Alarm Zone -->|
+0ms              5ms             10ms               ...
+                  ^               ^
+     increase_threshold    decrease_threshold
+```
+
+- **`latency_increase_threshold` (default: 5ms)**: The "safe" ceiling. Bandwidth may only be increased when the latency delta is **below** this value (and link is under load). Think of it as: "latency is close enough to baseline that we can safely try more bandwidth."
+
+- **`latency_decrease_threshold` (default: 10ms)**: The "alarm" floor. Bandwidth is decreased when the latency delta is **above** this value. Think of it as: "latency has risen too far above baseline, indicating congestion."
+
+- **Neutral Zone (5-10ms)**: No automatic rate changes occur. The current rate is maintained.
+
+**Example**: Baseline = 15ms, Current = 22ms → Delta = 7ms
+- Delta (7ms) > increase threshold (5ms) → **No increase** (not in safe zone)
+- Delta (7ms) < decrease threshold (10ms) → **No decrease** (not in alarm zone)
+- Result: Rate stays stable
+
+#### Monitoring
+
+Check autorate status via:
+
+```bash
+cat /tmp/qosmate-autorate-state
+```
+
+Output shows current rates, achieved throughput, latency, and baseline values.
+
+View daemon logs:
+
+```bash
+logread | grep qosmate-autorate
+```
+
+#### Technical Notes
+
+- Autorate works with all supported QDisc types (CAKE, HFSC, HTB, Hybrid)
+- All runtime data is stored in `/tmp/`
+- The daemon is managed by procd for automatic restart on failure
+- Rate changes are applied immediately via `tc` commands
+
 ### DSCP Marking Rules
 
 QoSmate allows you to define custom DSCP (Differentiated Services Code Point) marking rules to prioritize specific types of traffic. These rules are defined in the `/etc/config/qosmate` file under the `rule` sections and via luci-app-qosmate.
