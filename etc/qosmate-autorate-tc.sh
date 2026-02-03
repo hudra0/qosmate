@@ -85,18 +85,13 @@ _autorate_update_htb() {
     local bk_cburst=$((5000 * bk_min / 8000))
     [ "$bk_cburst" -lt 1500 ] && bk_cburst=1500
 
-    tc class change dev "$dev" parent 1: classid 1:1 htb \
-        quantum "$htb_quantum" rate "${new_rate}kbit" ceil "${new_rate}kbit" \
-        burst "$root_burst" cburst "$root_cburst"
-    tc class change dev "$dev" parent 1:1 classid 1:11 htb \
-        quantum "$htb_quantum" rate "${prio_rate}kbit" ceil "${prio_ceil}kbit" \
-        burst "$prio_burst" cburst "$prio_cburst" prio 1
-    tc class change dev "$dev" parent 1:1 classid 1:13 htb \
-        quantum "$htb_quantum" rate "${be_min}kbit" ceil "${be_ceil}kbit" \
-        burst "$be_burst" cburst "$be_cburst" prio 2
-    tc class change dev "$dev" parent 1:1 classid 1:15 htb \
-        quantum "$htb_quantum" rate "${bk_min}kbit" ceil "${be_ceil}kbit" \
-        burst "$bk_burst" cburst "$bk_cburst" prio 3
+    # Atomic update via tc batch
+    printf '%s\n' \
+        "class change dev $dev parent 1: classid 1:1 htb quantum $htb_quantum rate ${new_rate}kbit ceil ${new_rate}kbit burst $root_burst cburst $root_cburst" \
+        "class change dev $dev parent 1:1 classid 1:11 htb quantum $htb_quantum rate ${prio_rate}kbit ceil ${prio_ceil}kbit burst $prio_burst cburst $prio_cburst prio 1" \
+        "class change dev $dev parent 1:1 classid 1:13 htb quantum $htb_quantum rate ${be_min}kbit ceil ${be_ceil}kbit burst $be_burst cburst $be_cburst prio 2" \
+        "class change dev $dev parent 1:1 classid 1:15 htb quantum $htb_quantum rate ${bk_min}kbit ceil ${be_ceil}kbit burst $bk_burst cburst $bk_cburst prio 3" \
+    | tc -batch -
 }
 
 _autorate_update_hfsc() {
@@ -112,18 +107,15 @@ _autorate_update_hfsc() {
     local gameburst=$((gamerate * 10))
     [ "$gameburst" -gt "$((new_rate * 97 / 100))" ] && gameburst=$((new_rate * 97 / 100))
 
-    tc class change dev "$dev" parent 1: classid 1:1 hfsc \
-        ls m2 "${new_rate}kbit" ul m2 "${new_rate}kbit"
-    tc class change dev "$dev" parent 1:1 classid 1:11 hfsc \
-        rt m1 "${gameburst}kbit" d "${DUR}ms" m2 "${gamerate}kbit"
-    tc class change dev "$dev" parent 1:1 classid 1:12 hfsc \
-        ls m1 "$((new_rate * 70 / 100))kbit" d "${DUR}ms" m2 "$((new_rate * 30 / 100))kbit"
-    tc class change dev "$dev" parent 1:1 classid 1:13 hfsc \
-        ls m1 "$((new_rate * 20 / 100))kbit" d "${DUR}ms" m2 "$((new_rate * 45 / 100))kbit"
-    tc class change dev "$dev" parent 1:1 classid 1:14 hfsc \
-        ls m1 "$((new_rate * 7 / 100))kbit" d "${DUR}ms" m2 "$((new_rate * 15 / 100))kbit"
-    tc class change dev "$dev" parent 1:1 classid 1:15 hfsc \
-        ls m1 "$((new_rate * 3 / 100))kbit" d "${DUR}ms" m2 "$((new_rate * 10 / 100))kbit"
+    # Atomic update via tc batch
+    printf '%s\n' \
+        "class change dev $dev parent 1: classid 1:1 hfsc ls m2 ${new_rate}kbit ul m2 ${new_rate}kbit" \
+        "class change dev $dev parent 1:1 classid 1:11 hfsc rt m1 ${gameburst}kbit d ${DUR}ms m2 ${gamerate}kbit" \
+        "class change dev $dev parent 1:1 classid 1:12 hfsc ls m1 $((new_rate * 70 / 100))kbit d ${DUR}ms m2 $((new_rate * 30 / 100))kbit" \
+        "class change dev $dev parent 1:1 classid 1:13 hfsc ls m1 $((new_rate * 20 / 100))kbit d ${DUR}ms m2 $((new_rate * 45 / 100))kbit" \
+        "class change dev $dev parent 1:1 classid 1:14 hfsc ls m1 $((new_rate * 7 / 100))kbit d ${DUR}ms m2 $((new_rate * 15 / 100))kbit" \
+        "class change dev $dev parent 1:1 classid 1:15 hfsc ls m1 $((new_rate * 3 / 100))kbit d ${DUR}ms m2 $((new_rate * 10 / 100))kbit" \
+    | tc -batch -
 }
 
 _autorate_update_hybrid() {
@@ -146,15 +138,14 @@ _autorate_update_hybrid() {
     local bulk_m2=$((new_rate * 10 / 100))
     [ "$bulk_m2" -le 0 ] && bulk_m2=1
 
-    tc class change dev "$dev" parent 1: classid 1:1 hfsc \
-        ls m2 "${new_rate}kbit" ul m2 "${new_rate}kbit"
-    tc class change dev "$dev" parent 1:1 classid 1:11 hfsc \
-        rt m1 "${gameburst}kbit" d "${DUR}ms" m2 "${gamerate}kbit"
-    tc class change dev "$dev" parent 1:1 classid 1:13 hfsc \
-        ls m1 "${cake_rate}kbit" d "${DUR}ms" m2 "${cake_rate}kbit"
-    tc class change dev "$dev" parent 1:1 classid 1:15 hfsc \
-        ls m1 "${bulk_m1}kbit" d "${DUR}ms" m2 "${bulk_m2}kbit"
-    tc qdisc change dev "$dev" parent 1:13 handle 13: cake bandwidth "${cake_rate}kbit"
+    # Atomic update via tc batch
+    printf '%s\n' \
+        "class change dev $dev parent 1: classid 1:1 hfsc ls m2 ${new_rate}kbit ul m2 ${new_rate}kbit" \
+        "class change dev $dev parent 1:1 classid 1:11 hfsc rt m1 ${gameburst}kbit d ${DUR}ms m2 ${gamerate}kbit" \
+        "class change dev $dev parent 1:1 classid 1:13 hfsc ls m1 ${cake_rate}kbit d ${DUR}ms m2 ${cake_rate}kbit" \
+        "class change dev $dev parent 1:1 classid 1:15 hfsc ls m1 ${bulk_m1}kbit d ${DUR}ms m2 ${bulk_m2}kbit" \
+        "qdisc change dev $dev parent 1:13 handle 13: cake bandwidth ${cake_rate}kbit" \
+    | tc -batch -
 }
 
 autorate_update_bandwidth() {
