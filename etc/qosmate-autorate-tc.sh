@@ -36,7 +36,10 @@ _autorate_calculate_gamerate() {
 
 _autorate_update_cake() {
     local new_rate="$1" dev="$2"
-    tc qdisc change dev "$dev" root cake bandwidth "${new_rate}kbit"
+    tc qdisc change dev "$dev" root cake bandwidth "${new_rate}kbit" 2>/dev/null || {
+        logger -t qosmate-autorate "ERROR: tc qdisc change failed for $dev"
+        return 1
+    }
 }
 
 _autorate_update_htb() {
@@ -91,7 +94,10 @@ _autorate_update_htb() {
         "class change dev $dev parent 1:1 classid 1:11 htb quantum $htb_quantum rate ${prio_rate}kbit ceil ${prio_ceil}kbit burst $prio_burst cburst $prio_cburst prio 1" \
         "class change dev $dev parent 1:1 classid 1:13 htb quantum $htb_quantum rate ${be_min}kbit ceil ${be_ceil}kbit burst $be_burst cburst $be_cburst prio 2" \
         "class change dev $dev parent 1:1 classid 1:15 htb quantum $htb_quantum rate ${bk_min}kbit ceil ${be_ceil}kbit burst $bk_burst cburst $bk_cburst prio 3" \
-    | tc -batch -
+    | tc -batch - 2>/dev/null || {
+        logger -t qosmate-autorate "ERROR: tc batch failed for $dev (htb)"
+        return 1
+    }
 }
 
 _autorate_update_hfsc() {
@@ -115,7 +121,10 @@ _autorate_update_hfsc() {
         "class change dev $dev parent 1:1 classid 1:13 hfsc ls m1 $((new_rate * 20 / 100))kbit d ${DUR}ms m2 $((new_rate * 45 / 100))kbit" \
         "class change dev $dev parent 1:1 classid 1:14 hfsc ls m1 $((new_rate * 7 / 100))kbit d ${DUR}ms m2 $((new_rate * 15 / 100))kbit" \
         "class change dev $dev parent 1:1 classid 1:15 hfsc ls m1 $((new_rate * 3 / 100))kbit d ${DUR}ms m2 $((new_rate * 10 / 100))kbit" \
-    | tc -batch -
+    | tc -batch - 2>/dev/null || {
+        logger -t qosmate-autorate "ERROR: tc batch failed for $dev (hfsc)"
+        return 1
+    }
 }
 
 _autorate_update_hybrid() {
@@ -145,7 +154,10 @@ _autorate_update_hybrid() {
         "class change dev $dev parent 1:1 classid 1:13 hfsc ls m1 ${cake_rate}kbit d ${DUR}ms m2 ${cake_rate}kbit" \
         "class change dev $dev parent 1:1 classid 1:15 hfsc ls m1 ${bulk_m1}kbit d ${DUR}ms m2 ${bulk_m2}kbit" \
         "qdisc change dev $dev parent 1:13 handle 13: cake bandwidth ${cake_rate}kbit" \
-    | tc -batch -
+    | tc -batch - 2>/dev/null || {
+        logger -t qosmate-autorate "ERROR: tc batch failed for $dev (hybrid)"
+        return 1
+    }
 }
 
 autorate_update_bandwidth() {
