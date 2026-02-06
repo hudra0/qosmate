@@ -9,6 +9,10 @@
 # shellcheck disable=SC3043,SC2034,SC1091,SC1090
 
 AUTORATE_STATE_FILE="/tmp/qosmate-autorate-state"
+AUTORATE_HISTORY_FILE="/tmp/qosmate-autorate-history"
+AUTORATE_FLASH_HISTORY="/etc/qosmate.d/autorate_hourly.csv"
+AUTORATE_MAX_HISTORY=1800   # RAM: 60 min at 2s interval
+AUTORATE_MAX_FLASH=720      # Flash: 30 days at 1h interval
 
 # Source OpenWrt functions for config_get
 . /lib/functions.sh
@@ -82,6 +86,26 @@ load_autorate_config() {
 }
 
 log_autorate() { logger -t qosmate-autorate "$1"; }
+
+# Consolidate RAM history into hourly average and append to flash
+# Flash format: ts,avg_ul,avg_dl,avg_a_ul,avg_a_dl,avg_lat,max_lat,avg_bl,avg_ulp,avg_dlp
+consolidate_to_flash() {
+    [ ! -f "$AUTORATE_HISTORY_FILE" ] || [ ! -s "$AUTORATE_HISTORY_FILE" ] && return
+    awk -F',' '{
+        n++; ul+=$2; dl+=$3; aul+=$4; adl+=$5; lat+=$6; bl+=$7; ulp+=$8; dlp+=$9
+        if($6+0 > mlat+0) mlat=$6; ts=$1
+    } END {
+        if(n>0) printf "%s,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+            ts, ul/n, dl/n, aul/n, adl/n, lat/n, mlat, bl/n, ulp/n, dlp/n
+    }' "$AUTORATE_HISTORY_FILE" >> "$AUTORATE_FLASH_HISTORY"
+    # Truncate flash to max entries
+    local lc
+    lc=$(wc -l < "$AUTORATE_FLASH_HISTORY" 2>/dev/null) || lc=0
+    if [ "$lc" -gt "$AUTORATE_MAX_FLASH" ]; then
+        tail -n "$AUTORATE_MAX_FLASH" "$AUTORATE_FLASH_HISTORY" > "${AUTORATE_FLASH_HISTORY}.tmp" && \
+            mv "${AUTORATE_FLASH_HISTORY}.tmp" "$AUTORATE_FLASH_HISTORY"
+    fi
+}
 
 # Read interface bytes - result in _bytes_result
 read_bytes() {
@@ -203,6 +227,8 @@ run_daemon() {
     local reflector_failures=0 last_good_latency=0
     # Direction heuristic
     local ul_load_pct=0 dl_load_pct=0
+    # History tracking (write every 4th loop = ~2s at 500ms interval)
+    local history_writes=0
     
     # Convert ms to seconds for sleep (only once at start)
     local sleep_sec
@@ -237,7 +263,7 @@ run_daemon() {
     
     # Signal handling: TERM/INT exit cleanly, state file kept for recovery
     trap '_handle_signal' TERM INT
-    trap 'log_autorate "Daemon stopped"' EXIT
+    trap 'consolidate_to_flash; log_autorate "Daemon stopped"' EXIT
     
     while [ "$_shutdown" -eq 0 ]; do
         # Interruptible sleep: run in background and wait
@@ -352,6 +378,26 @@ run_daemon() {
             "$ul_rate" "$dl_rate" "$achieved_ul" "$achieved_dl" "$_latency_result" "$baseline_latency" \
             "$ul_load_pct" "$dl_load_pct" \
             > "$AUTORATE_STATE_FILE"
+        
+        # Write history every 4th loop (~2s at 500ms interval)
+        if [ $((loop_count % 4)) -eq 0 ]; then
+            printf '%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+                "$current_time" "$ul_rate" "$dl_rate" "$achieved_ul" "$achieved_dl" \
+                "$_latency_result" "$baseline_latency" "$ul_load_pct" "$dl_load_pct" \
+                >> "$AUTORATE_HISTORY_FILE"
+            history_writes=$((history_writes + 1))
+            
+            # Truncate RAM history every 100 writes (~200s)
+            if [ $((history_writes % 100)) -eq 0 ]; then
+                tail -n "$AUTORATE_MAX_HISTORY" "$AUTORATE_HISTORY_FILE" > "${AUTORATE_HISTORY_FILE}.tmp" && \
+                    mv "${AUTORATE_HISTORY_FILE}.tmp" "$AUTORATE_HISTORY_FILE"
+            fi
+            
+            # Consolidate to flash every 1800 writes (~1 hour)
+            if [ $((history_writes % 1800)) -eq 0 ]; then
+                consolidate_to_flash
+            fi
+        fi
     done
 }
 
