@@ -270,7 +270,7 @@ run_daemon() {
     
     # Signal handling: TERM/INT exit cleanly, state file kept for recovery
     trap '_handle_signal' TERM INT
-    trap 'consolidate_to_flash; log_autorate "Daemon stopped"' EXIT
+    trap '[ "$(uci -q get qosmate.autorate.flash_history)" = "1" ] && consolidate_to_flash; log_autorate "Daemon stopped"' EXIT
     
     while [ "$_shutdown" -eq 0 ]; do
         # Interruptible sleep: run in background and wait
@@ -401,10 +401,10 @@ run_daemon() {
                     mv "${AUTORATE_HISTORY_FILE}.tmp" "$AUTORATE_HISTORY_FILE"
             fi
             
-            # Consolidate to flash every hour
+            # Consolidate to flash every hour (if enabled via UCI)
             if [ $((current_time - last_consolidate)) -ge 3600 ]; then
                 last_consolidate=$current_time
-                consolidate_to_flash
+                [ "$(uci -q get qosmate.autorate.flash_history)" = "1" ] && consolidate_to_flash
             fi
         fi
     done
