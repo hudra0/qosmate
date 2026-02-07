@@ -79,6 +79,7 @@ config autorate 'autorate'
 	option refractory_decrease '1'
 	option adjust_up_factor '102'
 	option adjust_down_factor '85'
+	option flash_history '0'
 	option log_changes '0'
 
 #config rule 'cod1'
