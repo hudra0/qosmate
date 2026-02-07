@@ -11,8 +11,8 @@
 AUTORATE_STATE_FILE="/tmp/qosmate-autorate-state"
 AUTORATE_HISTORY_FILE="/tmp/qosmate-autorate-history"
 AUTORATE_FLASH_HISTORY="/etc/qosmate.d/autorate_hourly.csv"
-AUTORATE_MAX_HISTORY=1800   # RAM: 60 min at 2s interval
-AUTORATE_MAX_FLASH=720      # Flash: 30 days at 1h interval
+AUTORATE_MAX_HISTORY=1800   # RAM: 60 min at 1 write per 2s
+AUTORATE_MAX_FLASH=4320     # Flash: 30 days at 6 entries/h (10 min buckets)
 
 # Source OpenWrt functions for config_get
 . /lib/functions.sh
@@ -87,16 +87,21 @@ load_autorate_config() {
 
 log_autorate() { logger -t qosmate-autorate "$1"; }
 
-# Consolidate RAM history into hourly average and append to flash
+# Consolidate RAM history into 10-min bucket summaries and append to flash
+# Produces ~6 entries per hour (avg values + max latency per bucket)
 # Flash format: ts,avg_ul,avg_dl,avg_a_ul,avg_a_dl,avg_lat,max_lat,avg_bl,avg_ulp,avg_dlp
 consolidate_to_flash() {
     [ ! -f "$AUTORATE_HISTORY_FILE" ] || [ ! -s "$AUTORATE_HISTORY_FILE" ] && return
     awk -F',' '{
-        n++; ul+=$2; dl+=$3; aul+=$4; adl+=$5; lat+=$6; bl+=$7; ulp+=$8; dlp+=$9
-        if($6+0 > mlat+0) mlat=$6; ts=$1
+        b = int((NR-1) / 300)
+        n[b]++; ul[b]+=$2; dl[b]+=$3; aul[b]+=$4; adl[b]+=$5
+        lat[b]+=$6; bl[b]+=$7; ulp[b]+=$8; dlp[b]+=$9
+        if($6+0 > mlat[b]+0) mlat[b]=$6; ts[b]=$1
     } END {
-        if(n>0) printf "%s,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
-            ts, ul/n, dl/n, aul/n, adl/n, lat/n, mlat, bl/n, ulp/n, dlp/n
+        for(i=0; i<=b; i++) if(n[i]>0)
+            printf "%s,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+                ts[i], ul[i]/n[i], dl[i]/n[i], aul[i]/n[i], adl[i]/n[i],
+                lat[i]/n[i], mlat[i], bl[i]/n[i], ulp[i]/n[i], dlp[i]/n[i]
     }' "$AUTORATE_HISTORY_FILE" >> "$AUTORATE_FLASH_HISTORY"
     # Truncate flash to max entries
     local lc
@@ -227,8 +232,10 @@ run_daemon() {
     local reflector_failures=0 last_good_latency=0
     # Direction heuristic
     local ul_load_pct=0 dl_load_pct=0
-    # History tracking (write every 4th loop = ~2s at 500ms interval)
-    local history_writes=0
+    # Time-based history tracking (wall-clock, independent of loop speed)
+    local last_history_write=0
+    local last_truncate=0
+    local last_consolidate=0
     
     # Convert ms to seconds for sleep (only once at start)
     local sleep_sec
@@ -379,22 +386,24 @@ run_daemon() {
             "$ul_load_pct" "$dl_load_pct" \
             > "$AUTORATE_STATE_FILE"
         
-        # Write history every 4th loop (~2s at 500ms interval)
-        if [ $((loop_count % 4)) -eq 0 ]; then
+        # Time-based history write (every 2s real time, independent of loop speed)
+        if [ $((current_time - last_history_write)) -ge 2 ]; then
+            last_history_write=$current_time
             printf '%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
                 "$current_time" "$ul_rate" "$dl_rate" "$achieved_ul" "$achieved_dl" \
                 "$_latency_result" "$baseline_latency" "$ul_load_pct" "$dl_load_pct" \
                 >> "$AUTORATE_HISTORY_FILE"
-            history_writes=$((history_writes + 1))
             
-            # Truncate RAM history every 100 writes (~200s)
-            if [ $((history_writes % 100)) -eq 0 ]; then
+            # Truncate RAM history every 3 minutes
+            if [ $((current_time - last_truncate)) -ge 180 ]; then
+                last_truncate=$current_time
                 tail -n "$AUTORATE_MAX_HISTORY" "$AUTORATE_HISTORY_FILE" > "${AUTORATE_HISTORY_FILE}.tmp" && \
                     mv "${AUTORATE_HISTORY_FILE}.tmp" "$AUTORATE_HISTORY_FILE"
             fi
             
-            # Consolidate to flash every 1800 writes (~1 hour)
-            if [ $((history_writes % 1800)) -eq 0 ]; then
+            # Consolidate to flash every hour
+            if [ $((current_time - last_consolidate)) -ge 3600 ]; then
+                last_consolidate=$current_time
                 consolidate_to_flash
             fi
         fi
