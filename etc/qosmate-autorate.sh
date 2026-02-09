@@ -198,12 +198,16 @@ calculate_new_rate() {
     [ "$_rate_result" -gt "$max_rate" ] && _rate_result=$max_rate
 }
 
-# Get current time in seconds from /proc/uptime
-get_uptime_seconds() {
-    local uptime_str
+# Get current time from /proc/uptime (single read, two results)
+# _time_result: seconds (integer), _time_cs_result: centiseconds (integer)
+get_uptime() {
+    local uptime_str _frac
     read -r uptime_str _ < /proc/uptime
-    # Remove decimal part using parameter expansion
     _time_result="${uptime_str%%.*}"
+    _frac="${uptime_str#*.}"
+    _frac="${_frac%"${_frac#??}"}"
+    [ ${#_frac} -eq 1 ] && _frac="${_frac}0"
+    _time_cs_result=$((_time_result * 100 + _frac))
 }
 
 # Main daemon loop - runs in foreground (procd expects this)
@@ -226,6 +230,7 @@ run_daemon() {
     local prev_ul_bytes prev_dl_bytes curr_ul_bytes curr_dl_bytes
     local achieved_ul=0 achieved_dl=0 baseline_latency=0 baseline_samples=0
     local last_ul_change=0 last_dl_change=0 current_time loop_count=0
+    local _time_cs_result=0 prev_time_cs=0 delta_ms
     local new_ul_rate new_dl_rate ul_change_pct dl_change_pct
     local _time_result=0
     # Reflector failure tracking
@@ -284,8 +289,8 @@ run_daemon() {
         [ ! -d "/sys/class/net/$wan_iface" ] && break
         [ ! -d "/sys/class/net/$lan_iface" ] && break
         
-        # Get current time from /proc/uptime
-        get_uptime_seconds
+        # Get current time from /proc/uptime (seconds + centiseconds in one read)
+        get_uptime
         current_time=$_time_result
         loop_count=$((loop_count + 1))
         
@@ -293,14 +298,17 @@ run_daemon() {
         read_bytes "$wan_iface" tx; curr_ul_bytes=$_bytes_result
         read_bytes "$lan_iface" tx; curr_dl_bytes=$_bytes_result
         
-        # Calculate achieved rates
-        calculate_rate_kbps "$curr_ul_bytes" "$prev_ul_bytes" "$AUTORATE_INTERVAL"
+        # Calculate achieved rates using real elapsed time
+        delta_ms=$(( (_time_cs_result - prev_time_cs) * 10 ))
+        [ "$delta_ms" -le 0 ] && delta_ms=$AUTORATE_INTERVAL
+        calculate_rate_kbps "$curr_ul_bytes" "$prev_ul_bytes" "$delta_ms"
         achieved_ul=$_rate_result
-        calculate_rate_kbps "$curr_dl_bytes" "$prev_dl_bytes" "$AUTORATE_INTERVAL"
+        calculate_rate_kbps "$curr_dl_bytes" "$prev_dl_bytes" "$delta_ms"
         achieved_dl=$_rate_result
         
         prev_ul_bytes=$curr_ul_bytes
         prev_dl_bytes=$curr_dl_bytes
+        prev_time_cs=$_time_cs_result
         
         # Measure latency every 2nd loop
         if [ $((loop_count % 2)) -eq 0 ]; then
