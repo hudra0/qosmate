@@ -11,8 +11,7 @@
 AUTORATE_STATE_FILE="/tmp/qosmate-autorate-state"
 AUTORATE_HISTORY_FILE="/tmp/qosmate-autorate-history"
 AUTORATE_FLASH_HISTORY="/etc/qosmate.d/autorate_hourly.csv"
-AUTORATE_MAX_HISTORY=1800   # RAM: 60 min at 1 write per 2s
-AUTORATE_MAX_FLASH=4320     # Flash: 30 days at 6 entries/h (10 min buckets)
+AUTORATE_MAX_FLASH=4320     # Flash: 30 days at ~6 entries/h (10 min buckets)
 
 # Source OpenWrt functions for config_get
 . /lib/functions.sh
@@ -88,20 +87,22 @@ load_autorate_config() {
 log_autorate() { logger -t qosmate-autorate "$1"; }
 
 # Consolidate RAM history into 10-min bucket summaries and append to flash
-# Produces ~6 entries per hour (avg values + max latency per bucket)
+# Buckets are based on timestamp (int(ts/600)) so gaps don't corrupt data
 # Flash format: ts,avg_ul,avg_dl,avg_a_ul,avg_a_dl,avg_lat,max_lat,avg_bl,avg_ulp,avg_dlp
 consolidate_to_flash() {
     [ ! -f "$AUTORATE_HISTORY_FILE" ] || [ ! -s "$AUTORATE_HISTORY_FILE" ] && return
     awk -F',' '{
-        b = int((NR-1) / 300)
+        b = int($1 / 600)
+        if(!(b in n)) keys[++kc] = b
         n[b]++; ul[b]+=$2; dl[b]+=$3; aul[b]+=$4; adl[b]+=$5
         lat[b]+=$6; bl[b]+=$7; ulp[b]+=$8; dlp[b]+=$9
         if($6+0 > mlat[b]+0) mlat[b]=$6; ts[b]=$1
     } END {
-        for(i=0; i<=b; i++) if(n[i]>0)
+        for(i=1; i<=kc; i++) { b=keys[i]
             printf "%s,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
-                ts[i], ul[i]/n[i], dl[i]/n[i], aul[i]/n[i], adl[i]/n[i],
-                lat[i]/n[i], mlat[i], bl[i]/n[i], ulp[i]/n[i], dlp[i]/n[i]
+                ts[b], ul[b]/n[b], dl[b]/n[b], aul[b]/n[b], adl[b]/n[b],
+                lat[b]/n[b], mlat[b], bl[b]/n[b], ulp[b]/n[b], dlp[b]/n[b]
+        }
     }' "$AUTORATE_HISTORY_FILE" >> "$AUTORATE_FLASH_HISTORY"
     # Truncate flash to max entries
     local lc
@@ -207,7 +208,7 @@ get_uptime() {
     _frac="${uptime_str#*.}"
     _frac="${_frac%"${_frac#??}"}"
     [ ${#_frac} -eq 1 ] && _frac="${_frac}0"
-    _time_cs_result=$((_time_result * 100 + _frac))
+    _time_cs_result=$((_time_result * 100 + ${_frac#0}))
 }
 
 # Main daemon loop - runs in foreground (procd expects this)
@@ -265,9 +266,10 @@ run_daemon() {
         fi
     fi
     
-    # Initialize byte counters
+    # Initialize byte counters and timestamp for first rate calculation
     read_bytes "$wan_iface" tx; prev_ul_bytes=$_bytes_result
     read_bytes "$lan_iface" tx; prev_dl_bytes=$_bytes_result
+    get_uptime; prev_time_cs=$_time_cs_result
     
     log_autorate "Daemon started (WAN=$wan_iface, interval=${AUTORATE_INTERVAL}ms)"
     log_autorate "UL: min=$AUTORATE_MIN_UL base=$AUTORATE_BASE_UL max=$AUTORATE_MAX_UL (start=${ul_rate})"
@@ -402,10 +404,11 @@ run_daemon() {
                 "$_latency_result" "$baseline_latency" "$ul_load_pct" "$dl_load_pct" \
                 >> "$AUTORATE_HISTORY_FILE"
             
-            # Truncate RAM history every 3 minutes
+            # Truncate RAM history every 3 minutes (keep last 3600s by timestamp)
             if [ $((current_time - last_truncate)) -ge 180 ]; then
                 last_truncate=$current_time
-                tail -n "$AUTORATE_MAX_HISTORY" "$AUTORATE_HISTORY_FILE" > "${AUTORATE_HISTORY_FILE}.tmp" && \
+                local cutoff=$((current_time - 3600))
+                awk -F, -v c="$cutoff" '$1 >= c' "$AUTORATE_HISTORY_FILE" > "${AUTORATE_HISTORY_FILE}.tmp" && \
                     mv "${AUTORATE_HISTORY_FILE}.tmp" "$AUTORATE_HISTORY_FILE"
             fi
             
