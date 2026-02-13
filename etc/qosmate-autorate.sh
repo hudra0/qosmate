@@ -400,7 +400,7 @@ run_daemon() {
                 ul_rate=$new_ul_rate
                 last_ul_change=$current_time
             else
-                log_autorate "WARNING: UL tc update rejected (${ul_rate} -> ${new_ul_rate} kbps), keeping internal UL state"
+                log_autorate "WARNING: UL tc update failed, keeping $ul_rate kbps (requested $new_ul_rate kbps)"
             fi
         fi
         
@@ -415,7 +415,7 @@ run_daemon() {
                 dl_rate=$new_dl_rate
                 last_dl_change=$current_time
             else
-                log_autorate "WARNING: DL tc update rejected (${dl_rate} -> ${new_dl_rate} kbps), keeping internal DL state"
+                log_autorate "WARNING: DL tc update failed, keeping $dl_rate kbps (requested $new_dl_rate kbps)"
             fi
         fi
         
