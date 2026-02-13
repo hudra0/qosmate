@@ -251,6 +251,7 @@ run_daemon() {
     local new_ul_rate new_dl_rate ul_change_pct dl_change_pct
     local _time_result=0
     local state_restore_ttl=300 state_age=-1 startup_uptime=0
+    local restored_ul_rate="" restored_dl_rate=""
     # Reflector failure tracking
     local reflector_failures=0 last_good_latency=0
     # Direction heuristic
@@ -287,16 +288,32 @@ run_daemon() {
         if [ "$state_age" -ge 0 ] && [ "$state_age" -le "$state_restore_ttl" ]; then
             if [ -n "$_prev_ul" ] && [ "$_prev_ul" -gt 0 ] 2>/dev/null && \
                [ "$_prev_ul" -ge "$AUTORATE_MIN_UL" ] && [ "$_prev_ul" -le "$AUTORATE_MAX_UL" ]; then
-                ul_rate=$_prev_ul
+                restored_ul_rate=$_prev_ul
             fi
             if [ -n "$_prev_dl" ] && [ "$_prev_dl" -gt 0 ] 2>/dev/null && \
                [ "$_prev_dl" -ge "$AUTORATE_MIN_DL" ] && [ "$_prev_dl" -le "$AUTORATE_MAX_DL" ]; then
-                dl_rate=$_prev_dl
+                restored_dl_rate=$_prev_dl
             fi
         elif [ "$state_age" -gt "$state_restore_ttl" ] 2>/dev/null; then
             log_autorate "State snapshot too old (${state_age}s), starting from base rates"
         else
             log_autorate "State snapshot has no valid timestamp, starting from base rates"
+        fi
+    fi
+
+    # Keep live qdisc rates aligned with restored daemon state after restart.
+    if [ -n "$restored_ul_rate" ] && [ "$restored_ul_rate" != "$ul_rate" ]; then
+        if autorate_update_bandwidth "$restored_ul_rate" "$wan_iface" "egress"; then
+            ul_rate=$restored_ul_rate
+        else
+            log_autorate "WARNING: Failed to restore UL rate $restored_ul_rate kbps on $wan_iface, using base $ul_rate kbps"
+        fi
+    fi
+    if [ -n "$restored_dl_rate" ] && [ "$restored_dl_rate" != "$dl_rate" ]; then
+        if autorate_update_bandwidth "$restored_dl_rate" "$lan_iface" "ingress"; then
+            dl_rate=$restored_dl_rate
+        else
+            log_autorate "WARNING: Failed to restore DL rate $restored_dl_rate kbps on $lan_iface, using base $dl_rate kbps"
         fi
     fi
     
