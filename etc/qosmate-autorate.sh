@@ -31,6 +31,7 @@ _bytes_result=0
 
 # Load configuration using config_get
 load_autorate_config() {
+    local _interval_raw
     config_load qosmate || return 1
     
     # Settings section
@@ -79,16 +80,17 @@ load_autorate_config() {
     : "${GAMEUP:=$((UPRATE * 15 / 100 + 400))}"
     : "${GAMEDOWN:=$((DOWNRATE * 15 / 100 + 400))}"
 
-    # Ensure interval is a positive integer to prevent divide-by-zero.
+    # Validate interval to prevent divide-by-zero in rate calculations
+    _interval_raw="$AUTORATE_INTERVAL"
     case "$AUTORATE_INTERVAL" in
         ''|*[!0-9]*)
-            log_autorate "WARNING: Invalid AUTORATE_INTERVAL='$AUTORATE_INTERVAL', using 500ms"
             AUTORATE_INTERVAL=500
+            logger -t qosmate-autorate "WARNING: Invalid autorate interval '$_interval_raw', using 500ms"
             ;;
         *)
             if [ "$AUTORATE_INTERVAL" -le 0 ]; then
-                log_autorate "WARNING: Non-positive AUTORATE_INTERVAL='$AUTORATE_INTERVAL', using 500ms"
                 AUTORATE_INTERVAL=500
+                logger -t qosmate-autorate "WARNING: Non-positive autorate interval '$_interval_raw', using 500ms"
             fi
             ;;
     esac
@@ -180,16 +182,8 @@ measure_latency() {
 # Formula: (bytes * 8) / interval_ms = bits/ms = kbit/s
 calculate_rate_kbps() {
     local delta_bytes=$(($1 - $2))
-    local interval_ms="$3"
     [ "$delta_bytes" -lt 0 ] && delta_bytes=0
-    case "$interval_ms" in
-        ''|*[!0-9]*)
-            _rate_result=0
-            return
-            ;;
-    esac
-    [ "$interval_ms" -le 0 ] && { _rate_result=0; return; }
-    _rate_result=$((delta_bytes * 8 / interval_ms))
+    _rate_result=$((delta_bytes * 8 / $3))
 }
 
 # Calculate new rate - result in _rate_result
@@ -256,6 +250,7 @@ run_daemon() {
     local _time_cs_result=0 prev_time_cs=0 delta_ms
     local new_ul_rate new_dl_rate ul_change_pct dl_change_pct
     local _time_result=0
+    local state_restore_ttl=300 state_age=-1 startup_uptime=0
     # Reflector failure tracking
     local reflector_failures=0 last_good_latency=0
     # Direction heuristic
@@ -269,22 +264,39 @@ run_daemon() {
     local sleep_sec
     sleep_sec=$(awk "BEGIN{printf \"%.3f\", $AUTORATE_INTERVAL/1000}")
     
-    # Try to restore rates from previous run (survives daemon restart)
+    # Capture startup uptime once for state age calculation
+    get_uptime
+    startup_uptime=$_time_result
+
+    # Try to restore rates from recent state snapshot (survives short restarts)
     if [ -f "$AUTORATE_STATE_FILE" ]; then
-        local _prev_ul _prev_dl _key _val
+        local _prev_ul _prev_dl _prev_state_uptime _key _val
         while IFS='=' read -r _key _val; do
             case "$_key" in
                 ul_rate) _prev_ul="$_val" ;;
                 dl_rate) _prev_dl="$_val" ;;
+                state_uptime) _prev_state_uptime="$_val" ;;
             esac
         done < "$AUTORATE_STATE_FILE"
-        if [ -n "$_prev_ul" ] && [ "$_prev_ul" -gt 0 ] 2>/dev/null && \
-           [ "$_prev_ul" -ge "$AUTORATE_MIN_UL" ] && [ "$_prev_ul" -le "$AUTORATE_MAX_UL" ]; then
-            ul_rate=$_prev_ul
-        fi
-        if [ -n "$_prev_dl" ] && [ "$_prev_dl" -gt 0 ] 2>/dev/null && \
-           [ "$_prev_dl" -ge "$AUTORATE_MIN_DL" ] && [ "$_prev_dl" -le "$AUTORATE_MAX_DL" ]; then
-            dl_rate=$_prev_dl
+
+        case "$_prev_state_uptime" in
+            ''|*[!0-9]*) state_age=-1 ;;
+            *) state_age=$((startup_uptime - _prev_state_uptime)) ;;
+        esac
+
+        if [ "$state_age" -ge 0 ] && [ "$state_age" -le "$state_restore_ttl" ]; then
+            if [ -n "$_prev_ul" ] && [ "$_prev_ul" -gt 0 ] 2>/dev/null && \
+               [ "$_prev_ul" -ge "$AUTORATE_MIN_UL" ] && [ "$_prev_ul" -le "$AUTORATE_MAX_UL" ]; then
+                ul_rate=$_prev_ul
+            fi
+            if [ -n "$_prev_dl" ] && [ "$_prev_dl" -gt 0 ] 2>/dev/null && \
+               [ "$_prev_dl" -ge "$AUTORATE_MIN_DL" ] && [ "$_prev_dl" -le "$AUTORATE_MAX_DL" ]; then
+                dl_rate=$_prev_dl
+            fi
+        elif [ "$state_age" -gt "$state_restore_ttl" ] 2>/dev/null; then
+            log_autorate "State snapshot too old (${state_age}s), starting from base rates"
+        else
+            log_autorate "State snapshot has no valid timestamp, starting from base rates"
         fi
     fi
     
@@ -325,7 +337,6 @@ run_daemon() {
         # Calculate achieved rates using real elapsed time
         delta_ms=$(( (_time_cs_result - prev_time_cs) * 10 ))
         [ "$delta_ms" -le 0 ] && delta_ms=$AUTORATE_INTERVAL
-        [ "$delta_ms" -le 0 ] && delta_ms=1
         calculate_rate_kbps "$curr_ul_bytes" "$prev_ul_bytes" "$delta_ms"
         achieved_ul=$_rate_result
         calculate_rate_kbps "$curr_dl_bytes" "$prev_dl_bytes" "$delta_ms"
@@ -400,7 +411,7 @@ run_daemon() {
                 ul_rate=$new_ul_rate
                 last_ul_change=$current_time
             else
-                log_autorate "WARNING: UL tc update failed, keeping $ul_rate kbps (requested $new_ul_rate kbps)"
+                log_autorate "WARNING: Failed to apply UL rate $new_ul_rate kbps, keeping $ul_rate kbps"
             fi
         fi
         
@@ -415,14 +426,14 @@ run_daemon() {
                 dl_rate=$new_dl_rate
                 last_dl_change=$current_time
             else
-                log_autorate "WARNING: DL tc update failed, keeping $dl_rate kbps (requested $new_dl_rate kbps)"
+                log_autorate "WARNING: Failed to apply DL rate $new_dl_rate kbps, keeping $dl_rate kbps"
             fi
         fi
         
         # Write state file (latency in tenths of ms internally)
-        printf 'ul_rate=%s\ndl_rate=%s\nachieved_ul=%s\nachieved_dl=%s\nlatency=%s\nbaseline=%s\nul_load_pct=%s\ndl_load_pct=%s\n' \
+        printf 'ul_rate=%s\ndl_rate=%s\nachieved_ul=%s\nachieved_dl=%s\nlatency=%s\nbaseline=%s\nul_load_pct=%s\ndl_load_pct=%s\nstate_uptime=%s\n' \
             "$ul_rate" "$dl_rate" "$achieved_ul" "$achieved_dl" "$_latency_result" "$baseline_latency" \
-            "$ul_load_pct" "$dl_load_pct" \
+            "$ul_load_pct" "$dl_load_pct" "$current_time" \
             > "$AUTORATE_STATE_FILE"
         
         # Time-based history write (every 2s real time, independent of loop speed)
@@ -452,13 +463,49 @@ run_daemon() {
 
 # Show current status
 show_status() {
-    if [ -f "$AUTORATE_STATE_FILE" ]; then
-        echo "Autorate state:"
-        cat "$AUTORATE_STATE_FILE"
-        return 0
+    local running=0 state_age=-1 state_ttl=300
+    local _state_uptime _key _val
+
+    /etc/init.d/qosmate-autorate running >/dev/null 2>&1 && running=1
+
+    if [ "$running" -eq 1 ]; then
+        echo "Autorate daemon is running"
+    else
+        echo "Autorate daemon is not running"
     fi
-    echo "Autorate not running or no state available"
-    return 1
+
+    if [ -f "$AUTORATE_STATE_FILE" ]; then
+        while IFS='=' read -r _key _val; do
+            case "$_key" in
+                state_uptime) _state_uptime="$_val"; break ;;
+            esac
+        done < "$AUTORATE_STATE_FILE"
+
+        case "$_state_uptime" in
+            ''|*[!0-9]*) ;;
+            *)
+                get_uptime
+                state_age=$((_time_result - _state_uptime))
+                [ "$state_age" -lt 0 ] && state_age=-1
+                ;;
+        esac
+
+        if [ "$running" -eq 1 ]; then
+            echo "Autorate state:"
+        else
+            echo "Last autorate state snapshot (daemon stopped):"
+        fi
+        cat "$AUTORATE_STATE_FILE"
+
+        if [ "$state_age" -ge 0 ]; then
+            echo "state_age_seconds=$state_age"
+            [ "$state_age" -gt "$state_ttl" ] && echo "state_stale=1" || echo "state_stale=0"
+        fi
+    else
+        echo "No autorate state available"
+    fi
+
+    [ "$running" -eq 1 ]
 }
 
 case "$1" in
