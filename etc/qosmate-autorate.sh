@@ -79,6 +79,20 @@ load_autorate_config() {
     : "${GAMEUP:=$((UPRATE * 15 / 100 + 400))}"
     : "${GAMEDOWN:=$((DOWNRATE * 15 / 100 + 400))}"
 
+    # Interval must be a positive integer to avoid division by zero in rate math
+    case "$AUTORATE_INTERVAL" in
+        ''|*[!0-9]*)
+            log_autorate "WARNING: Invalid autorate interval '$AUTORATE_INTERVAL', using default 500ms"
+            AUTORATE_INTERVAL=500
+            ;;
+        *)
+            if [ "$AUTORATE_INTERVAL" -le 0 ]; then
+                log_autorate "WARNING: Non-positive autorate interval '$AUTORATE_INTERVAL', using default 500ms"
+                AUTORATE_INTERVAL=500
+            fi
+            ;;
+    esac
+
     # Convert thresholds from ms (user config) to tenths of ms (internal)
     AUTORATE_LAT_INC_THR=$((AUTORATE_LAT_INC_THR * 10))
     AUTORATE_LAT_DEC_THR=$((AUTORATE_LAT_DEC_THR * 10))
@@ -165,9 +179,20 @@ measure_latency() {
 # Calculate rate in kbps - result in _rate_result
 # Formula: (bytes * 8) / interval_ms = bits/ms = kbit/s
 calculate_rate_kbps() {
-    local delta_bytes=$(($1 - $2))
+    local delta_bytes interval_ms
+    delta_bytes=$(($1 - $2))
     [ "$delta_bytes" -lt 0 ] && delta_bytes=0
-    _rate_result=$((delta_bytes * 8 / $3))
+
+    interval_ms="$3"
+    case "$interval_ms" in
+        ''|*[!0-9]*)
+            _rate_result=0
+            return 0
+            ;;
+    esac
+    [ "$interval_ms" -le 0 ] && { _rate_result=0; return 0; }
+
+    _rate_result=$((delta_bytes * 8 / interval_ms))
 }
 
 # Calculate new rate - result in _rate_result
@@ -303,6 +328,7 @@ run_daemon() {
         # Calculate achieved rates using real elapsed time
         delta_ms=$(( (_time_cs_result - prev_time_cs) * 10 ))
         [ "$delta_ms" -le 0 ] && delta_ms=$AUTORATE_INTERVAL
+        [ "$delta_ms" -le 0 ] && delta_ms=1
         calculate_rate_kbps "$curr_ul_bytes" "$prev_ul_bytes" "$delta_ms"
         achieved_ul=$_rate_result
         calculate_rate_kbps "$curr_dl_bytes" "$prev_dl_bytes" "$delta_ms"
