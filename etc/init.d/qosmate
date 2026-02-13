@@ -1961,6 +1961,8 @@ stop_service() {
 
     # Only disable if not in shutdown and not in restart
     if [ "$DISABLE_ON_STOP" != "0" ] && [ -z "$FROM_SHUTDOWN" ]; then
+        # Keep autorate enable-state in sync with qosmate disable-state.
+        /etc/init.d/qosmate-autorate disable 2>/dev/null
         disable
         uci set qosmate.global.enabled='0'
         uci commit qosmate
