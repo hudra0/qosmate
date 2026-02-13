@@ -18,7 +18,7 @@ EXTRA_HELP="
         validate_custom_rules      Validate custom rules
         health_check               Check if QoSmate is properly configured and running"
 
-REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake kmod-sched-red luci-lib-jsonc lua jq"
+REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake kmod-sched-red luci-lib-jsonc lua jq coreutils-sleep"
 
 ### Utility vars
 _NL_='
@@ -71,10 +71,17 @@ QOSMATE_HOTPLUG_SCRIPT=/etc/hotplug.d/iface/13-qosmateHotplug
 QOSMATE_VERSION_FILE_BACKEND=$QOSMATE_SERVICE_PATH
 
 QOSMATE_FILE_TYPES_BACKEND="GEN EXTRA" # change the value if adding more types
+QOSMATE_AUTORATE_SCRIPT=/etc/qosmate-autorate.sh
+QOSMATE_AUTORATE_TC_SCRIPT=/etc/qosmate-autorate-tc.sh
+QOSMATE_AUTORATE_SERVICE=/etc/init.d/qosmate-autorate
+
 QOSMATE_GEN_FILES_BACKEND="
     $QOSMATE_SERVICE_PATH
     $QOSMATE_MAIN_SCRIPT
     $QOSMATE_DEFAULTS_FILE
+    $QOSMATE_AUTORATE_SCRIPT
+    $QOSMATE_AUTORATE_TC_SCRIPT
+    $QOSMATE_AUTORATE_SERVICE
     /usr/lib/tc/experimental.dist
     /usr/lib/tc/normal.dist
     /usr/lib/tc/normmix20-64.dist
@@ -82,7 +89,9 @@ QOSMATE_GEN_FILES_BACKEND="
     /usr/lib/tc/paretonormal.dist"
 QOSMATE_EXEC_FILES_BACKEND="
     $QOSMATE_SERVICE_PATH
-    $QOSMATE_MAIN_SCRIPT"
+    $QOSMATE_MAIN_SCRIPT
+    $QOSMATE_AUTORATE_SCRIPT
+    $QOSMATE_AUTORATE_SERVICE"
 QOSMATE_EXTRA_FILES_BACKEND="" # might be useful in the future?
 
 
@@ -131,6 +140,7 @@ QOSMATE_EXEC_FILES_FRONTEND="
     "$QOSMATE_VERSION_FILE_BACKEND" "$QOSMATE_FILE_TYPES_BACKEND" "$QOSMATE_GEN_FILES_BACKEND" \
     "$QOSMATE_EXEC_FILES_BACKEND" "$QOSMATE_EXTRA_FILES_BACKEND" "$QOSMATE_FILE_TYPES_FRONTEND" \
     "$QOSMATE_GEN_FILES_FRONTEND" "$QOSMATE_EXTRA_FILES_FRONTEND" "$QOSMATE_EXEC_FILES_FRONTEND" \
+    "$QOSMATE_AUTORATE_SCRIPT" "$QOSMATE_AUTORATE_TC_SCRIPT" "$QOSMATE_AUTORATE_SERVICE" \
     "${global_enabled:=}" "${ROOT_QDISC:=}" "${gameqdisc:=}"
 
 
@@ -1382,6 +1392,22 @@ try_load_and_fix_config() {
             hfsc:GAMEUP) def_val=$((UPRATE*15/100+400)) ;;
             hfsc:GAMEDOWN) def_val=$((DOWNRATE*15/100+400)) ;;
             hfsc:netem_direction) var_name=NETEM_DIRECTION ;;
+            # Autorate defaults (based on configured rates)
+            autorate:enabled) var_name=AUTORATE_ENABLED ;;
+            autorate:min_ul_rate) def_val=$((UPRATE * 25 / 100)); var_name=AUTORATE_MIN_UL ;;
+            autorate:base_ul_rate) def_val="$UPRATE"; var_name=AUTORATE_BASE_UL ;;
+            autorate:max_ul_rate) def_val=$((UPRATE * 105 / 100)); var_name=AUTORATE_MAX_UL ;;
+            autorate:min_dl_rate) def_val=$((DOWNRATE * 25 / 100)); var_name=AUTORATE_MIN_DL ;;
+            autorate:base_dl_rate) def_val="$DOWNRATE"; var_name=AUTORATE_BASE_DL ;;
+            autorate:max_dl_rate) def_val=$((DOWNRATE * 105 / 100)); var_name=AUTORATE_MAX_DL ;;
+            autorate:interval) var_name=AUTORATE_INTERVAL ;;
+            autorate:latency_increase_threshold) var_name=AUTORATE_LAT_INC_THR ;;
+            autorate:latency_decrease_threshold) var_name=AUTORATE_LAT_DEC_THR ;;
+            autorate:reflectors) var_name=AUTORATE_REFLECTORS ;;
+            autorate:refractory_increase) var_name=AUTORATE_REFRACT_INC ;;
+            autorate:refractory_decrease) var_name=AUTORATE_REFRACT_DEC ;;
+            autorate:adjust_up_factor) var_name=AUTORATE_ADJ_UP ;;
+            autorate:adjust_down_factor) var_name=AUTORATE_ADJ_DOWN ;;
         esac
 
         NO_EXPORT='' config_get "$var_name" "$section" "$opt_name" "$def_val"
@@ -1908,6 +1934,14 @@ start_service() {
 
     /etc/init.d/firewall reload &&
     enabled || /etc/init.d/qosmate enable || return 1
+
+    # Start autorate service if enabled (separate procd-managed service)
+    if [ "$AUTORATE_ENABLED" = "1" ] && [ -f /etc/init.d/qosmate-autorate ]; then
+        log_msg "" "Starting autorate service..."
+        /etc/init.d/qosmate-autorate enable 2>/dev/null
+        /etc/init.d/qosmate-autorate start
+    fi
+
     log_msg "Service started"
 }
 
@@ -1921,9 +1955,14 @@ stop_service() {
     fi
 
     print_msg "Stopping service qosmate..."
+    
+    # Stop autorate service (separate procd-managed service)
+    /etc/init.d/qosmate-autorate stop 2>/dev/null
 
     # Only disable if not in shutdown and not in restart
     if [ "$DISABLE_ON_STOP" != "0" ] && [ -z "$FROM_SHUTDOWN" ]; then
+        # Keep autorate enable-state in sync with qosmate disable-state.
+        /etc/init.d/qosmate-autorate disable 2>/dev/null
         disable
         uci set qosmate.global.enabled='0'
         uci commit qosmate
