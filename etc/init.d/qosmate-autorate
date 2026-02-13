@@ -37,7 +37,6 @@ start_service() {
 
 stop_service() {
     logger -t qosmate-autorate "Stopping autorate daemon"
-    rm -f /tmp/qosmate-autorate-state
 }
 
 service_triggers() {
