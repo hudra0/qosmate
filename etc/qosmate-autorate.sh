@@ -373,9 +373,12 @@ run_daemon() {
             if [ "$AUTORATE_LOG_CHANGES" = "1" ] || [ "$ul_change_pct" -ge 5 ]; then
                 log_autorate "UL: $ul_rate -> $new_ul_rate kbps (${ul_change_pct}%, latency=$((_latency_result/10)).$((_latency_result%10))ms)"
             fi
-            autorate_update_bandwidth "$new_ul_rate" "$wan_iface" "egress"
-            ul_rate=$new_ul_rate
-            last_ul_change=$current_time
+            if autorate_update_bandwidth "$new_ul_rate" "$wan_iface" "egress"; then
+                ul_rate=$new_ul_rate
+                last_ul_change=$current_time
+            else
+                log_autorate "WARNING: UL tc update rejected (${ul_rate} -> ${new_ul_rate} kbps), keeping internal UL state"
+            fi
         fi
         
         # Apply download rate change
@@ -385,9 +388,12 @@ run_daemon() {
             if [ "$AUTORATE_LOG_CHANGES" = "1" ] || [ "$dl_change_pct" -ge 5 ]; then
                 log_autorate "DL: $dl_rate -> $new_dl_rate kbps (${dl_change_pct}%, latency=$((_latency_result/10)).$((_latency_result%10))ms)"
             fi
-            autorate_update_bandwidth "$new_dl_rate" "$lan_iface" "ingress"
-            dl_rate=$new_dl_rate
-            last_dl_change=$current_time
+            if autorate_update_bandwidth "$new_dl_rate" "$lan_iface" "ingress"; then
+                dl_rate=$new_dl_rate
+                last_dl_change=$current_time
+            else
+                log_autorate "WARNING: DL tc update rejected (${dl_rate} -> ${new_dl_rate} kbps), keeping internal DL state"
+            fi
         fi
         
         # Write state file (latency in tenths of ms internally)
