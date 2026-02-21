@@ -53,6 +53,7 @@ TMP_CFG_FILE=$TMP_CFG_DIR/qosmate
 QOSMATE_DEFAULTS_FILE=${QOSMATE_D}/qosmate-defaults
 QOSMATE_CUSTOM_RULES_FILE=${QOSMATE_D}/custom_rules.nft
 QOSMATE_INLINE_RULES_FILE=${QOSMATE_D}/inline_dscptag.nft
+QOSMATE_RUN_DIR=/tmp/qosmate
 
 # Local path of JS files
 QOSMATE_UPD_DIR=/var/run/qosmate-update
@@ -1927,6 +1928,8 @@ start_service() {
 
     preserve_config_files # Add config files to sysupgrade.conf
 
+    try_mkdir -p "$QOSMATE_RUN_DIR"
+
     # Save the current WAN interface to a temporary file
     printf '%s\n' "$WAN" > /tmp/qosmate_wan
 
@@ -1985,8 +1988,9 @@ stop_service() {
 
     nft destroy table inet dscptag
 
-    # Remove the temporary file
+    # Remove temporary/runtime files
     rm -f /tmp/qosmate_wan
+    rm -rf "$QOSMATE_RUN_DIR"
 
     print_msg "Reloading network service..."
     /etc/init.d/network reload
