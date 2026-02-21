@@ -241,6 +241,10 @@ run_daemon() {
     fi
     
     [ -z "$WAN" ] && { log_autorate "ERROR: WAN not configured"; exit 1; }
+
+    # Read active cake qdisc type (written by qosmate.sh at setup time)
+    CAKE_TYPE=$(cat /tmp/qosmate/cake_type 2>/dev/null)
+    : "${CAKE_TYPE:=cake}"
     
     local wan_iface="$WAN" lan_iface="ifb-$WAN"
     local ul_rate="$AUTORATE_BASE_UL" dl_rate="$AUTORATE_BASE_DL"
