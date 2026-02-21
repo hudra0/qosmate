@@ -127,6 +127,30 @@ get_cake_link_params() {
         "${ETHER_VLAN_KEYWORD:+ $ETHER_VLAN_KEYWORD}"
 }
 
+# Select cake or cake_mq based on USE_MQ setting and system capabilities
+# $1: interface name to check for multi-queue support
+# Sets REPLY to "cake" or "cake_mq"
+select_cake_qdisc() {
+    local iface="$1" num_queues=0
+    REPLY="cake"
+
+    [ "$USE_MQ" != "1" ] && return
+
+    num_queues=$(find /sys/class/net/"$iface"/queues/ -maxdepth 1 -type d -name 'tx-*' 2>/dev/null | wc -l)
+
+    if [ "$num_queues" -gt 1 ] && tc qdisc replace dev "$iface" root cake_mq 2>/dev/null; then
+        tc qdisc del dev "$iface" root 2>/dev/null
+        log_msg "Using cake_mq for $iface ($num_queues TX queues)"
+        REPLY="cake_mq"
+    else
+        if [ "$num_queues" -le 1 ]; then
+            log_msg "cake_mq not used for $iface: only $num_queues TX queue(s), using cake"
+        else
+            log_msg "cake_mq not available in kernel, using cake for $iface"
+        fi
+    fi
+}
+
 ##############################
 # Variable checks and dynamic rule generation
 ##############################
@@ -1210,8 +1234,15 @@ print_msg "" "Setting up ctinfo downstream shaping..."
 # Set up ingress handle for WAN interface
 tc qdisc add dev "$WAN" handle ffff: ingress
 
-# Create IFB interface
-ip link add name "ifb-$WAN" type ifb
+# Create IFB interface (multi-queue when USE_MQ is enabled for cake_mq ingress support)
+# Match the WAN TX queue count so egress and ingress CAKE instances are symmetric
+ifb_mq_args=""
+if [ "$USE_MQ" = "1" ]; then
+    wan_tx_queues=$(find /sys/class/net/"$WAN"/queues/ -maxdepth 1 -type d -name 'tx-*' 2>/dev/null | wc -l)
+    [ "$wan_tx_queues" -gt 1 ] && ifb_mq_args="numtxqueues $wan_tx_queues"
+fi
+# shellcheck disable=SC2086  # ifb_mq_args needs word splitting (e.g. "numtxqueues 4" → two args)
+ip link add name "ifb-$WAN" $ifb_mq_args type ifb
 ip link set "ifb-$WAN" up
 
 # Redirect ingress traffic from WAN to IFB and restore DSCP from conntrack
@@ -1452,9 +1483,10 @@ setup_hfsc() {
     local TARG=$((540*8/RATE+4))
     for i in 12 13 14 15; do 
         if [ "$nongameqdisc" = "cake" ]; then
+            # shellcheck disable=SC2086  # nongameqdiscoptions needs word splitting (e.g. "besteffort ack-filter")
             tc qdisc add dev "$DEV" parent "1:$i" cake $nongameqdiscoptions
         elif [ "$nongameqdisc" = "fq_codel" ]; then
-            tc qdisc add dev "$DEV" parent "1:$i" fq_codel memory_limit $((RATE*200/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
+            tc qdisc add dev "$DEV" parent "1:$i" fq_codel memory_limit "$((RATE*200/8))" interval "${INTVL}ms" target "${TARG}ms" quantum "$((MTU * 2))"
         else
             print_msg -err "Unsupported qdisc for non-game traffic: $nongameqdisc"
             exit 1
@@ -1516,6 +1548,12 @@ setup_cake() {
     # Get CAKE link parameters
     local ack_filter_egress_val cake_link_params="$(get_cake_link_params)"
 
+    # Select cake or cake_mq based on WAN capabilities (IFB mirrors WAN queue count)
+    local CAKE_QDISC_EGR CAKE_QDISC_IGR
+    select_cake_qdisc "$WAN"
+    CAKE_QDISC_EGR="$REPLY"
+    CAKE_QDISC_IGR="$REPLY"
+
     # Egress (Upload) CAKE setup
     case "$ACK_FILTER_EGRESS" in
         auto) ack_filter_egress_val=$(( (DOWNRATE / UPRATE) >= 15 )) ;;
@@ -1534,8 +1572,8 @@ setup_cake() {
     append_cake_opt "nat" "$NAT_EGRESS" &&
     append_cake_opt "wash" "$WASHDSCPUP" &&
     append_cake_opt "ack-filter" "$ack_filter_egress_val" &&
-    tc qdisc add dev "$WAN" root handle 1: cake $CAKE_OPTS || qdisc_setup_failed
-debug_log "EGRESS cake opts: '$CAKE_OPTS'"
+    tc qdisc add dev "$WAN" root handle 1: "$CAKE_QDISC_EGR" $CAKE_OPTS || qdisc_setup_failed
+debug_log "EGRESS $CAKE_QDISC_EGR opts: '$CAKE_OPTS'"
     
 
     # Ingress (Download) CAKE setup
@@ -1550,8 +1588,11 @@ debug_log "EGRESS cake opts: '$CAKE_OPTS'"
     append_cake_opt "$EXTRA_PARAMETERS_INGRESS" "1" &&
     append_cake_opt "nat" "$NAT_INGRESS" &&
     append_cake_opt "wash" "$WASHDSCPDOWN" &&
-    tc qdisc add dev "$LAN" root cake $CAKE_OPTS || qdisc_setup_failed
-debug_log "INGRESS cake opts: '$CAKE_OPTS'"
+    tc qdisc add dev "$LAN" root "$CAKE_QDISC_IGR" $CAKE_OPTS || qdisc_setup_failed
+debug_log "INGRESS $CAKE_QDISC_IGR opts: '$CAKE_OPTS'"
+
+    # Write active cake qdisc type for autorate daemon
+    printf '%s\n' "$CAKE_QDISC_EGR" > /tmp/qosmate/cake_type
 }
 
 # Helper function to set up hybrid qdisc on an interface
@@ -1887,6 +1928,8 @@ case "$ROOT_QDISC" in
         # Setup WAN (egress/upload) and LAN (ingress/download) directly
         setup_hybrid "$WAN" "$UPRATE" "$GAMEUP" "wan"
         setup_hybrid "$LAN" "$DOWNRATE" "$GAMEDOWN" "lan"
+        # cake_mq not supported as child qdisc under HFSC
+        printf '%s\n' "cake" > /tmp/qosmate/cake_type
         ;;
     cake)
         print_msg "Applying CAKE queueing discipline."
