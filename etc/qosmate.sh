@@ -1041,7 +1041,7 @@ INLINE_FILE="/etc/qosmate.d/inline_dscptag.nft"
 INLINE_INCLUDE=""
 
 if [ -s "$INLINE_FILE" ]; then
-    TMP_CHECK_FILE="/tmp/qosmate_inline_sh_check.nft"
+    TMP_CHECK_FILE="$(mktemp)"
 
     {
         printf '%s\n\t%s\n' "table inet __qosmate_sh_ctx {" "chain __dscptag_sh_ctx {"
