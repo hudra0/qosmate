@@ -2086,6 +2086,16 @@ status_service() {
         fi
     fi
 
+    if [ "$AUTORATE_ENABLED" = "1" ]; then
+        if [ -f /etc/init.d/qosmate-autorate ] && /etc/init.d/qosmate-autorate running; then
+            print_msg "Autorate: active"
+        else
+            print_msg "Autorate: enabled in config but not running"
+        fi
+    else
+        print_msg "Autorate: off"
+    fi
+
     # Display QoSmate version information
     print_msg "" "==== Version Information ===="
     check_version
