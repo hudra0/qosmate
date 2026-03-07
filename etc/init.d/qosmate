@@ -2037,14 +2037,14 @@ status_service() {
         qdiscs="$(tc qdisc show dev "$dev" 2>/dev/null | sed -n 's/^qdisc\s\s*\([^ \t]*\).* root .*/\1/p')"
         qdiscs="${qdiscs//$'\n'/ }"
         active_qdisc=''
-        for qdisc in cake hfsc htb; do
+        for qdisc in cake cake_mq hfsc htb; do
             case "${qdiscs}" in "${qdisc}"|"${qdisc} "*|*" ${qdisc}"|*" ${qdisc} "*)
                 active_qdisc="$qdisc"
             esac
         done
 
         case "$active_qdisc" in
-            cake) qdisc_print=CAKE ;;
+            cake|cake_mq) qdisc_print=CAKE ;;
             hfsc) qdisc_print=HFSC ;;
             htb) qdisc_print=HTB ;;
         esac
@@ -2064,10 +2064,26 @@ status_service() {
         "Game traffic download: $GAMEDOWN kbps"
     if [ "$ROOT_QDISC" = "cake" ]; then
         print_msg "Queue discipline: CAKE (Root qdisc)"
+        local active_cake_type=''
+        read -r active_cake_type < /tmp/qosmate/cake_type 2>/dev/null
+        if [ "$active_cake_type" = "cake_mq" ]; then
+            print_msg "Multi-Queue CAKE: active (cake_mq)"
+        elif [ "$USE_MQ" = "1" ]; then
+            if [ "$active_cake_type" = "cake" ]; then
+                print_msg "Multi-Queue CAKE: not available, using standard cake"
+            else
+                print_msg "Multi-Queue CAKE: enabled in config (service not running)"
+            fi
+        else
+            print_msg "Multi-Queue CAKE: off"
+        fi
     elif [ "$ROOT_QDISC" = "htb" ]; then
         print_msg "Queue discipline: HTB (Root qdisc)"
     else
         print_msg "Queue discipline: $gameqdisc (for game traffic in HFSC)"
+        if [ "$ROOT_QDISC" = "hybrid" ] && [ "$USE_MQ" = "1" ]; then
+            print_msg "Multi-Queue CAKE: not supported in hybrid mode"
+        fi
     fi
 
     # Display QoSmate version information
