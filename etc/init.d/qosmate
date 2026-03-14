@@ -18,7 +18,7 @@ EXTRA_HELP="
         validate_custom_rules      Validate custom rules
         health_check               Check if QoSmate is properly configured and running"
 
-REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake kmod-sched-red luci-lib-jsonc lua jq coreutils-sleep"
+REQUIRED_PACKAGES="kmod-sched ip-full kmod-veth tc-full kmod-netem kmod-sched-ctinfo kmod-ifb kmod-sched-cake kmod-sched-red kmod-sched-fq-pie luci-lib-jsonc lua jq coreutils-sleep"
 
 ### Utility vars
 _NL_='
