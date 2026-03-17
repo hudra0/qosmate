@@ -1017,19 +1017,21 @@ fi
 # Conditionally defining TCPMSS rules based on UPRATE and DOWNRATE
 
 if [ "$UPRATE" -lt 3000 ]; then
-    # Clamp MSS between 536 and 1500
+    # Clamp MSS between 536/1280 and 1500
     # Use iifname (ingress from WAN) to clamp SYN-ACK from server, limiting our upload packet size
     SAFE_MSS=$(( MSS > 1500 ? 1500 : (MSS < 536 ? 536 : MSS) ))
-    RULE_SET_TCPMSS_UP="meta iifname \"$WAN\" tcp flags syn tcp option maxseg size set $SAFE_MSS counter;"
+    SAFE_MSS6=$(( MSS > 1500 ? 1500 : (MSS < 1280 ? 1280 : MSS) ))
+    RULE_SET_TCPMSS_UP="meta iifname \"$WAN\" tcp flags syn tcp option maxseg size set meta nfproto map { ipv4 counter : $SAFE_MSS , ipv6 counter : $SAFE_MSS6 };"
 else
     RULE_SET_TCPMSS_UP=''
 fi
 
 if [ "$DOWNRATE" -lt 3000 ]; then
-    # Clamp MSS between 536 and 1500
+    # Clamp MSS between 536/1280 and 1500
     # Use oifname (egress to WAN) to clamp SYN to server, limiting our download packet size
     SAFE_MSS=$(( MSS > 1500 ? 1500 : (MSS < 536 ? 536 : MSS) ))
-    RULE_SET_TCPMSS_DOWN="meta oifname \"$WAN\" tcp flags syn tcp option maxseg size set $SAFE_MSS counter;"
+    SAFE_MSS6=$(( MSS > 1500 ? 1500 : (MSS < 1280 ? 1280 : MSS) ))
+    RULE_SET_TCPMSS_DOWN="meta oifname \"$WAN\" tcp flags syn tcp option maxseg size set meta nfproto map { ipv4 counter : $SAFE_MSS , ipv6 counter : $SAFE_MSS6 };"
 else
     RULE_SET_TCPMSS_DOWN=''
 fi
