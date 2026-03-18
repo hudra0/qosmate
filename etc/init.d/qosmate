@@ -123,7 +123,8 @@ QOSMATE_JS_FILENAMES="
     connections.js
     custom_rules.js
     ipsets.js
-    statistics.js"
+    statistics.js
+    htb.js"
 # generate js file list with paths
 QOSMATE_JS_FILES_FRONTEND=
 for js_file in ${QOSMATE_JS_FILENAMES}; do
@@ -142,7 +143,7 @@ QOSMATE_EXEC_FILES_FRONTEND="
     "$QOSMATE_EXEC_FILES_BACKEND" "$QOSMATE_EXTRA_FILES_BACKEND" "$QOSMATE_FILE_TYPES_FRONTEND" \
     "$QOSMATE_GEN_FILES_FRONTEND" "$QOSMATE_EXTRA_FILES_FRONTEND" "$QOSMATE_EXEC_FILES_FRONTEND" \
     "$QOSMATE_AUTORATE_SCRIPT" "$QOSMATE_AUTORATE_TC_SCRIPT" "$QOSMATE_AUTORATE_SERVICE" \
-    "${global_enabled:=}" "${ROOT_QDISC:=}" "${gameqdisc:=}"
+    "${global_enabled:=}" "${ROOT_QDISC:=}" "${gameqdisc:=}" "${htbqdisc:=}"
 
 
 ### Utility functions
@@ -2078,7 +2079,7 @@ status_service() {
             print_msg "Multi-Queue CAKE: off"
         fi
     elif [ "$ROOT_QDISC" = "htb" ]; then
-        print_msg "Queue discipline: HTB (Root qdisc)"
+        print_msg "Queue discipline: HTB (Root qdisc). Internal qdisc in use: $htbqdisc"
     else
         print_msg "Queue discipline: $gameqdisc (for game traffic in HFSC)"
         if [ "$ROOT_QDISC" = "hybrid" ] && [ "$USE_MQ" = "1" ]; then
