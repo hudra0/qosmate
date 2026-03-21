@@ -1358,6 +1358,9 @@ setup_game_qdisc() {
     local INTVL=$((100+2*1500*8/RATE))
     local TARG=$((540*8/RATE+4))
 
+    # for fq_pie
+    local TARG_FQP=$((540*8/RATE+14))
+
     # Delete previous qdisc on this handle if it exists (optional, but good practice)
     tc qdisc del dev "$DEV" parent 1:11 handle 10: > /dev/null 2>&1
 
@@ -1393,6 +1396,9 @@ setup_game_qdisc() {
         ;;
         "fq_codel")
         tc qdisc add dev "$DEV" parent "1:11" handle 10: fq_codel memory_limit $((RATE*200/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
+        ;;
+        "fq_pie")
+        tc qdisc add dev "$DEV" parent "1:11" handle 10: fq_pie memory_limit $((RATE*200/8)) target "${TARG_FQP}ms" quantum $((MTU * 2))
         ;;
         "netem")
             # Only apply NETEM if this direction is enabled
@@ -1481,12 +1487,15 @@ setup_hfsc() {
     # Attach non-game qdiscs
     local INTVL=$((100+2*1500*8/RATE))
     local TARG=$((540*8/RATE+4))
+    local TARG_FQP=$((540*8/RATE+14))
     for i in 12 13 14 15; do 
         if [ "$nongameqdisc" = "cake" ]; then
             # shellcheck disable=SC2086  # nongameqdiscoptions needs word splitting (e.g. "besteffort ack-filter")
             tc qdisc add dev "$DEV" parent "1:$i" cake $nongameqdiscoptions
         elif [ "$nongameqdisc" = "fq_codel" ]; then
             tc qdisc add dev "$DEV" parent "1:$i" fq_codel memory_limit "$((RATE*200/8))" interval "${INTVL}ms" target "${TARG}ms" quantum "$((MTU * 2))"
+        elif [ "$nongameqdisc" = "fq_pie" ]; then
+            tc qdisc add dev "$DEV" parent "1:$i" fq_pie memory_limit "$((RATE*200/8))" target "${TARG_FQP}ms" quantum "$((MTU * 2))"
         else
             print_msg -err "Unsupported qdisc for non-game traffic: $nongameqdisc"
             exit 1
@@ -1657,16 +1666,24 @@ setup_hybrid() {
     tc qdisc replace dev "$DEV" parent 1:13 handle 13: cake $CAKE_OPTS || qdisc_setup_failed
 debug_log "$DIR HYBRID cake opts: '$CAKE_OPTS'"
 
-    # Class 1:15 - Bulk traffic (HFSC LS + fq_codel)
+    # Class 1:15 - Bulk traffic (HFSC LS + fq_codel / fq_pie)
     # Use HFSC limits: m1 3%, m2 10%
     local bulk_rate_m1=$((RATE*3/100)); [ $bulk_rate_m1 -le 0 ] && bulk_rate_m1=1
     local bulk_rate_m2=$((RATE*10/100)); [ $bulk_rate_m2 -le 0 ] && bulk_rate_m2=1
     tc class add dev "$DEV" parent 1:1 classid 1:15 hfsc ls m1 "${bulk_rate_m1}kbit" d "${DUR}ms" m2 "${bulk_rate_m2}kbit"
-    # Attach fq_codel (using calculations and options from HFSC config)
+    # Attach fq_codel / fq_pie (using calculations and options from HFSC config)
     local INTVL=$((100+2*1500*8/RATE))
     local TARG=$((540*8/RATE+4))
+    local TARG_FQP=$((540*8/RATE+14))
     tc qdisc del dev "$DEV" parent 1:15 handle 15: > /dev/null 2>&1
-    tc qdisc replace dev "$DEV" parent 1:15 handle 15: fq_codel memory_limit $((RATE*200/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
+    if [ "$nongameqdisc" = "fq_codel" ]; then
+        tc qdisc replace dev "$DEV" parent 1:15 handle 15: fq_codel memory_limit $((RATE*200/8)) interval "${INTVL}ms" target "${TARG}ms" quantum $((MTU * 2))
+    elif [ "$nongameqdisc" = "fq_pie" ]; then
+        tc qdisc replace dev "$DEV" parent 1:15 handle 15: fq_pie memory_limit $((RATE*200/8)) target "${TARG_FQP}ms" quantum $((MTU * 2))
+    else
+        print_msg -err "Unsupported qdisc for bulk traffic: $nongameqdisc"
+        exit 1
+    fi
 
     # Apply DSCP Filters (on ingress always, on egress only when SFO active)
     if [ "$DIR" = "lan" ] || [ "$SFO_ENABLED" = "1" ]; then
@@ -1860,24 +1877,45 @@ setup_htb() {
         burst "$BK_BURST" cburst "$BK_CBURST" prio 3
 
     # Attach leaf qdiscs
-    # Calculate fq_codel parameters
+    # Calculate fq_codel / fq_pie parameters
     local INTVL=$((100+2*1500*8/RATE))
     local TARG=$((540*8/RATE+4))
+    local TARG_FQP=$((540*8/RATE+14))
 
-    # Priority class gets fq_codel with aggressive settings
-    tc qdisc add dev "$DEV" parent 1:11 handle 110: fq_codel \
-        interval "${INTVL}ms" target "${TARG}ms" \
-        quantum 300
+    if [ "$htbqdisc" = "fq_codel" ]; then
+        # Priority class gets fq_codel with aggressive settings
+        tc qdisc add dev "$DEV" parent 1:11 handle 110: fq_codel \
+            interval "${INTVL}ms" target "${TARG}ms" \
+            quantum 300
 
-    # Best effort with standard settings
-    tc qdisc add dev "$DEV" parent 1:13 handle 130: fq_codel \
-        interval "${INTVL}ms" target "${TARG}ms" \
-        quantum 1500
+        # Best effort with standard settings
+        tc qdisc add dev "$DEV" parent 1:13 handle 130: fq_codel \
+            interval "${INTVL}ms" target "${TARG}ms" \
+            quantum 1500
 
-    # Background with larger target
-    tc qdisc add dev "$DEV" parent 1:15 handle 150: fq_codel \
-        interval "$((INTVL*2))ms" target "$((TARG*2))ms" \
-        quantum 300
+        # Background with larger target
+        tc qdisc add dev "$DEV" parent 1:15 handle 150: fq_codel \
+            interval "$((INTVL*2))ms" target "$((TARG*2))ms" \
+            quantum 300
+    elif [ "$htbqdisc" = "fq_pie" ]; then
+        # Priority class gets fq_pie with aggressive settings
+        tc qdisc add dev "$DEV" parent 1:11 handle 110: fq_pie \
+            target "${TARG_FQP}ms" \
+            quantum 300
+
+        # Best effort with standard settings
+        tc qdisc add dev "$DEV" parent 1:13 handle 130: fq_pie \
+            target "${TARG_FQP}ms" \
+            quantum 1500
+
+        # Background with larger target
+        tc qdisc add dev "$DEV" parent 1:15 handle 150: fq_pie \
+            target "$((TARG_FQP*2))ms" \
+            quantum 300
+    else
+        print_msg -err "Unsupported qdisc for htb: $htbqdisc"
+        exit 1
+    fi
 
     # Apply DSCP filters (on ingress always, on egress only when SFO active)
     if [ "$DIR" = "lan" ] || [ "$SFO_ENABLED" = "1" ]; then
@@ -1907,7 +1945,7 @@ setup_htb() {
 # Validate gameqdisc choice (used by HFSC and Hybrid)
 if [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; then
     case "$gameqdisc" in
-        drr|qfq|pfifo|bfifo|red|fq_codel|netem) ;; # Supported qdiscs
+        drr|qfq|pfifo|bfifo|red|fq_codel|fq_pie|netem) ;; # Supported qdiscs
         *)
             print_msg -warn "Unsupported gameqdisc '$gameqdisc' selected in config. Reverting to 'pfifo'."
             gameqdisc="pfifo" # Revert to a simple default as fallback
