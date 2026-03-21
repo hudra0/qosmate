@@ -72,6 +72,7 @@ uclient-fetch -O /www/luci-static/resources/view/qosmate/connections.js https://
 uclient-fetch -O /www/luci-static/resources/view/qosmate/custom_rules.js https://raw.githubusercontent.com/hudra0/luci-app-qosmate/$LATEST_TAG/htdocs/luci-static/resources/view/custom_rules.js && \
 uclient-fetch -O /www/luci-static/resources/view/qosmate/ipsets.js https://raw.githubusercontent.com/hudra0/luci-app-qosmate/$LATEST_TAG/htdocs/luci-static/resources/view/ipsets.js && \
 uclient-fetch -O /www/luci-static/resources/view/qosmate/statistics.js https://raw.githubusercontent.com/hudra0/luci-app-qosmate/$LATEST_TAG/htdocs/luci-static/resources/view/statistics.js && \
+uclient-fetch -O /www/luci-static/resources/view/qosmate/statistics.js https://raw.githubusercontent.com/hudra0/luci-app-qosmate/$LATEST_TAG/htdocs/luci-static/resources/view/htb.js && \
 uclient-fetch -O /usr/share/luci/menu.d/luci-app-qosmate.json https://raw.githubusercontent.com/hudra0/luci-app-qosmate/$LATEST_TAG/root/usr/share/luci/menu.d/luci-app-qosmate.json && \
 uclient-fetch -O /usr/share/rpcd/acl.d/luci-app-qosmate.json https://raw.githubusercontent.com/hudra0/luci-app-qosmate/$LATEST_TAG/root/usr/share/rpcd/acl.d/luci-app-qosmate.json && \
 uclient-fetch -O /usr/libexec/rpcd/luci.qosmate https://raw.githubusercontent.com/hudra0/luci-app-qosmate/$LATEST_TAG/root/usr/libexec/rpcd/luci.qosmate && \
@@ -124,7 +125,7 @@ Before starting with QoSmate configuration:
 2. Enable WASH in both directions (WASHDSCPUP and WASHDSCPDOWN)
 3. Choose your Root Queueing Discipline:
    - For older/less powerful routers, use HFSC or HTB as it requires fewer system resources
-   - Hybrid mode uses HFSC + gameqdisc for realtime and HFSC + fq_codel for bulk classes while CAKE manages all other traffic
+   - Hybrid mode uses HFSC + gameqdisc for realtime and HFSC + fq_codel / fq_pie for bulk classes while CAKE manages all other traffic
 4. Consider overhead settings:
    - Default settings are conservative to cover most use cases
    - It's better to overestimate overhead than to underestimate it
@@ -168,7 +169,7 @@ Remember that these are starting points - optimal settings may depend on your sp
 | gameqdisc           | Queueing discipline for game traffic. Options include 'pfifo ' 'bfifo' , 'fq_codel' , 'red' , and 'netem'. Each has different characteristics for managing realtime traffic.                                                                                                                         | enum (pfifo, bfifo fq_codel, red, netem)     | pfifo                   |
 | GAMEUP              | Upload bandwidth reserved for gaming in kbps. Formula ensures minimum bandwidth for games even on slower connections.                                                                                                                                                                                | integer                                      | (UPRATE*15/100+400)     |
 | GAMEDOWN            | Download bandwidth reserved for gaming in kbps. Similar to GAMEUP, but for download traffic.                                                                                                                                                                                                         | integer                                      | (DOWNRATE*15/100+400)   |
-| nongameqdisc        | Queueing discipline for non-realtime traffic. 'fq_codel' or 'cake'.                                                                                                                                                                                                                                  | enum (fq_codel, cake)                        | fq_codel                |
+| nongameqdisc        | Queueing discipline for non-realtime traffic. 'fq_codel', 'fq_pie', or 'cake'.                                                                                                                                                                                                                                  | enum (fq_codel, fq_pie, cake)                        | fq_codel                |
 | nongameqdiscoptions | Additional cake options when cake is set as the non-game qdisc.                                                                                                                                                                                                                                      | string                                       | "besteffort ack-filter" |
 | MAXDEL              | Maximum delay in milliseconds. This sets an upper bound on queueing delay, helping to maintain responsiveness even under load.                                                                                                                                                                       | integer                                      | 24                      |
 | PFIFOMIN            | Minimum number of packets in the pfifo queue.                                                                                                                                                                                                                                                        | integer                                      | 5                       |
@@ -1294,14 +1295,14 @@ QoSmate supports three traffic shaping systems: HFSC, HTB and CAKE. Each combine
 HFSC in QoSmate creates a hierarchical queueing structure with integrated traffic shaping that divides traffic into distinct classes with different service guarantees. The system offers control over both bandwidth and latency for different traffic types.
 
 #### HFSC Queue Structure
-![image](https://github.com/user-attachments/assets/8e2948e9-6ffa-46ff-b9e2-43e0f370bc82)
+![image](./assets/hfsc-queue-hierarchy.png)
 
 QoSmate's HFSC implementation organizes traffic into 5 main classes:
 
 1. **Realtime Class (1:11)** - Highest priority class for gaming and latency-sensitive applications
    - Handles packets marked with DSCP values CS5, CS6, CS7, and EF
    - Limited to GAMEUP/GAMEDOWN bandwidth (configurable, defaults to 15% of total bandwidth + 400kbps)
-   - Uses configurable qdisc (pfifo, bfifo, red, fq_codel, or netem)
+   - Uses configurable qdisc (pfifo, bfifo, red, fq_codel, fq_pie, or netem)
 
 2. **Fast Interactive Class (1:12)** - For interactive, non-gaming applications
    - Handles packets marked with DSCP values CS4, AF41, and AF42
@@ -1327,10 +1328,10 @@ HFSC uses service curves to control bandwidth allocation and latency:
 1. **Realtime Traffic (Gaming)**
    - Gets guaranteed minimum bandwidth regardless of other traffic
    - Uses qdisc configurable via `gameqdisc` option
-   - Can use RED, FQ_CODEL, PFIFO, BFIFO or NETEM qdisc for fine-tuned control
+   - Can use RED, FQ_CODEL, FQ_PIE, PFIFO, BFIFO or NETEM qdisc for fine-tuned control
 
 2. **Non-Realtime Traffic**
-   - Uses either FQ_CODEL or CAKE qdisc (configurable)
+   - Uses FQ_CODEL, FQ_PIE, or CAKE qdisc (configurable)
    - Fair allocation within each class
    - Classes only compete when link is saturated
 
@@ -1368,13 +1369,13 @@ Hybrid mode sets HFSC as the root scheduler and uses three classes:
 2. **CAKE Class (1:13)**
    - Manages most traffic with CAKE for fairness and host isolation.
 3. **Bulk Class (1:15)**
-   - Uses HFSC with `fq_codel` for CS1 bulk traffic.
+   - Uses HFSC with `fq_codel` or `fq_pie` for CS1 bulk traffic.
 
 This approach keeps latency low for realtime flows while benefiting from CAKE's advanced features for general traffic.
 
 ### HTB (Hierarchical Token Bucket)
 
-HTB in QoSmate creates a hierarchical queueing structure with three classes using FQ-CoDel as leaf qdiscs.
+HTB in QoSmate creates a hierarchical queueing structure with three classes using either FQ-CoDel or FQ-PIE as leaf qdiscs.
 
 #### HTB Queue Structure
 
@@ -1383,24 +1384,24 @@ QoSmate's HTB implementation organizes traffic into 3 main classes:
 1. **Priority Class (1:11)** - Highest priority for realtime/gaming traffic
    - Handles packets marked with DSCP values EF, CS5, CS6, CS7
    - Guaranteed minimum rate scaling with bandwidth (5-40% hyperbolic curve, min 800 kbit)
-   - Uses FQ-CoDel with aggressive settings (lower target/interval)
+   - Uses FQ-CoDel / FQ-PIE with aggressive settings (lower target/interval)
 
 2. **Best Effort Class (1:13)** - Default for general traffic
    - Handles unmarked packets and most traffic
    - Guaranteed ~16% rate, can use up to almost full bandwidth
-   - Uses FQ-CoDel with standard settings
+   - Uses FQ-CoDel / FQ-PIE with standard settings
 
 3. **Background Class (1:15)** - Lowest priority for bulk traffic
    - Handles packets marked with DSCP CS1
    - Guaranteed ~16% rate, can use up to almost full bandwidth
-   - Uses FQ-CoDel with relaxed settings (higher target/interval)
+   - Uses FQ-CoDel / FQ-PIE with relaxed settings (higher target/interval)
 
 #### How HTB Prioritization Works
 
 - Dynamic scaling of class rates and parameters based on total bandwidth
 - Burst allowances for brief speed increases without bufferbloat
 - Priority-based scheduling: Higher priority classes get excess bandwidth first (borrowing from unused capacity)
-- Fair sharing within classes using FQ-CoDel
+- Fair sharing within classes using FQ-CoDel / FQ-PIE
 
 HTB provides simple 3-tier prioritization with automatic parameter tuning for different connection speeds.
 
