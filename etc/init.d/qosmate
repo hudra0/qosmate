@@ -9,12 +9,13 @@ USE_PROCD=1
 VERSION="dev"
 UPD_CHANNEL="release"
 
-EXTRA_COMMANDS="check_version update auto_setup auto_setup_noninteractive validate_custom_rules health_check"
+EXTRA_COMMANDS="check_version update auto_setup auto_setup_noninteractive auto_setup_detached validate_custom_rules health_check"
 EXTRA_HELP="
         check_version              Check for updates
         update                     Update qosmate
         auto_setup                 Automatically configure qosmate
         auto_setup_noninteractive  Automatically configure qosmate with no interaction
+        auto_setup_detached        Start the non-interactive auto-setup in the background
         validate_custom_rules      Validate custom rules
         health_check               Check if QoSmate is properly configured and running"
 
@@ -54,6 +55,7 @@ QOSMATE_DEFAULTS_FILE=${QOSMATE_D}/qosmate-defaults
 QOSMATE_CUSTOM_RULES_FILE=${QOSMATE_D}/custom_rules.nft
 QOSMATE_INLINE_RULES_FILE=${QOSMATE_D}/inline_dscptag.nft
 QOSMATE_RUN_DIR=/tmp/qosmate
+QOSMATE_AUTO_SETUP_OUTPUT=/tmp/qosmate_auto_setup_output.txt
 
 # Local path of JS files
 QOSMATE_UPD_DIR=/var/run/qosmate-update
@@ -2218,6 +2220,48 @@ parse_speedtest_output() {
     :
 }
 
+# Prints WAN throughput in Mbit/s once per second as "<rx> <tx>", until killed.
+# 1 - network device
+sample_wan_rates() {
+    local stats="/sys/class/net/${1}/statistics" prev_rx prev_tx rx tx
+    read -r prev_rx < "$stats/rx_bytes" && read -r prev_tx < "$stats/tx_bytes" || return 1
+    while sleep 1; do
+        read -r rx < "$stats/rx_bytes" && read -r tx < "$stats/tx_bytes" || return 1
+        printf '%s %s\n' $(( (rx - prev_rx) * 8 / 1000000 )) $(( (tx - prev_tx) * 8 / 1000000 ))
+        prev_rx=$rx prev_tx=$tx
+    done
+}
+
+# Median of the samples reaching at least half of the peak sample, which is the plateau of a test
+# phase. Ignores ramp-up, idle time and the ACK traffic of the opposite direction.
+# Prints 0 if there is no usable plateau.
+# 1 - samples file, 2 - column (1 = rx, 2 = tx)
+plateau_rate() {
+    [ -s "$1" ] || { echo "0"; return 0; }
+    awk -v col="$2" '
+        { v[NR] = $col + 0; if (v[NR] > peak) peak = v[NR] }
+        END {
+            if (peak <= 0) { print 0; exit }
+            for (i = 1; i <= NR; i++) if (v[i] >= peak / 2) s[++n] = v[i]
+            if (n < 3) { print 0; exit }
+            for (i = 2; i <= n; i++) { x = s[i]; for (j = i - 1; j > 0 && s[j] > x; j--) s[j + 1] = s[j]; s[j + 1] = x }
+            print (n % 2) ? s[(n + 1) / 2] : int((s[n / 2] + s[n / 2 + 1]) / 2)
+        }' "$1" 2>/dev/null
+}
+
+# 1, 2 - rates to compare
+lower_of() {
+    awk -v a="$1" -v b="$2" 'BEGIN{print (a < b) ? a : b}'
+}
+
+# Warns when the speed test result is implausibly higher than what crossed the interface.
+# 1 - direction label, 2 - reported rate, 3 - measured rate
+warn_if_overreported() {
+    awk -v r="$2" -v m="$3" 'BEGIN{exit !(m > 0 && r > m * 1.25)}' &&
+        print_msg "Warning: the speed test reported $2 Mbit/s $1, but only $3 Mbit/s crossed the WAN interface. Using the measured value."
+    :
+}
+
 auto_setup() {
     try_auto_setup "$@" && return 0
     error_out "auto-setup failed."
@@ -2380,15 +2424,49 @@ try_auto_setup() {
         fi
 
         print_msg "Running speed test... This may take a few minutes."
-        SPEED_RESULT=$($SPEEDTEST_CMD)
 
-        DOWNLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Download) &&
-        UPLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Upload) ||
-            return 1
+        local samples_file=/tmp/qosmate-speedtest-samples sampler_pid speedtest_rv retried=''
+        local reported_down reported_up measured_down measured_up
+
+        while :; do
+            sample_wan_rates "$FINAL_INTERFACE" > "$samples_file" &
+            sampler_pid=$!
+            SPEED_RESULT=$($SPEEDTEST_CMD 2>&1)
+            speedtest_rv=$?
+            kill "$sampler_pid" 2>/dev/null
+
+            [ "$speedtest_rv" = 0 ] &&
+            DOWNLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Download) &&
+            UPLOAD_SPEED=$(printf %s "$SPEED_RESULT" | parse_speedtest_output "$SPEEDTEST_CMD" Upload) &&
+                break
+
+            [ -z "$retried" ] || {
+                # include the tool output, otherwise the failure is only reported generically
+                error_out "Speed test failed (exit code $speedtest_rv). Speed test output:" "$SPEED_RESULT"
+                return 1
+            }
+            retried=1
+            log_msg -warn "Speed test failed (exit code $speedtest_rv), retrying once."
+        done
+
+        # A speed test measures at the socket, so it can report several times the rate that actually
+        # crossed the link (speedtest-go does this on upload). Cross-check with the WAN counters.
+        reported_down="$DOWNLOAD_SPEED" reported_up="$UPLOAD_SPEED"
+        measured_down=$(plateau_rate "$samples_file" 1)
+        measured_up=$(plateau_rate "$samples_file" 2)
+        rm -f "$samples_file"
+
+        # Use the lower value: the test may over-report, the counters may include foreign traffic
+        [ "$measured_down" != 0 ] && DOWNLOAD_SPEED=$(lower_of "$reported_down" "$measured_down")
+        [ "$measured_up" != 0 ] && UPLOAD_SPEED=$(lower_of "$reported_up" "$measured_up")
+
+        warn_if_overreported download "$reported_down" "$measured_down"
+        warn_if_overreported upload "$reported_up" "$measured_up"
 
         print_msg "Speed test results:" \
             "Download speed: $DOWNLOAD_SPEED Mbit/s" \
-            "Upload speed: $UPLOAD_SPEED Mbit/s"
+            "Upload speed: $UPLOAD_SPEED Mbit/s" \
+            "WAN counters during the test: $measured_down Mbit/s down, $measured_up Mbit/s up (speed test: $reported_down / $reported_up)"
     fi
 
     # Convert speeds to kbps and apply 90% rule
@@ -2419,37 +2497,29 @@ try_auto_setup() {
         fi
     fi
 
-    if [ -n "$gaming_ip" ]; then
-        # Validate IP address format
-        if [[ $gaming_ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-            # Check if rules for this IP already exist
-            local ip_configured=
-            config_foreach is_ip_configured rule "$gaming_ip"
-            # $ip_configured is set in is_ip_configured()
-            if [ -n "$ip_configured" ]; then
-                print_msg "Rules for IP $gaming_ip already exist. Skipping addition of new rules."
-                gaming_ip=
-            fi
-        else
-            print_msg "Invalid IP address format. No gaming device rules added."
-            gaming_ip=
-        fi
-    fi
-
-    if [ -n "$gaming_ip" ]; then
-        # Only an egress rule is needed: the DSCP is stored in conntrack and restored on ingress via tc-ctinfo
-        uci add qosmate rule 1>/dev/null &&
-        uci set "qosmate.@rule[-1].name=Game_Console" &&
-        uci set "qosmate.@rule[-1].proto=udp" &&
-        uci set "qosmate.@rule[-1].src_ip=${gaming_ip}" &&
-        uci add_list "qosmate.@rule[-1].dest_port=!=80" &&
-        uci add_list "qosmate.@rule[-1].dest_port=!=443" &&
-        uci set "qosmate.@rule[-1].class=cs5" &&
-        uci set "qosmate.@rule[-1].counter=1" ||
-            return 1
-        print_msg "Gaming device rule added for IP: $gaming_ip"
+    # Exactly one outcome is reported, so the UI can always tell the user what happened
+    local ip_configured=
+    if [ -z "$gaming_ip" ]; then
+        print_msg "No gaming device IP given - no rule added."
+    elif [[ ! "$gaming_ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        print_msg "Invalid IP address format '$gaming_ip' - no gaming device rule added."
     else
-        print_msg "No gaming device IP added."
+        config_foreach is_ip_configured rule "$gaming_ip" # sets $ip_configured
+        if [ -n "$ip_configured" ]; then
+            print_msg "A rule for IP $gaming_ip already exists - keeping it."
+        else
+            # Only an egress rule is needed: the DSCP is stored in conntrack and restored on ingress via tc-ctinfo
+            uci add qosmate rule 1>/dev/null &&
+            uci set "qosmate.@rule[-1].name=Game_Console" &&
+            uci set "qosmate.@rule[-1].proto=udp" &&
+            uci set "qosmate.@rule[-1].src_ip=${gaming_ip}" &&
+            uci add_list "qosmate.@rule[-1].dest_port=!=80" &&
+            uci add_list "qosmate.@rule[-1].dest_port=!=443" &&
+            uci set "qosmate.@rule[-1].class=cs5" &&
+            uci set "qosmate.@rule[-1].counter=1" ||
+                return 1
+            print_msg "Gaming device rule added for IP: $gaming_ip"
+        fi
     fi
 
     uci commit qosmate || return 1
@@ -2464,14 +2534,33 @@ try_auto_setup() {
 }
 
 auto_setup_noninteractive() {
-    local output_file="/tmp/qosmate_auto_setup_output.txt" auto_setup_rv
+    local auto_setup_rv
     {
         echo "Starting qosmate non-interactive auto-setup..."
         auto_setup -n "$1" 2>&1
-    } > "$output_file"
-    auto_setup_rv=$?
-    echo "$output_file"
+        auto_setup_rv=$?
+        # lets callers polling this file tell a finished run from a partial or stale one
+        echo "AUTO_SETUP_DONE rv=$auto_setup_rv"
+    } > "$QOSMATE_AUTO_SETUP_OUTPUT"
+    echo "$QOSMATE_AUTO_SETUP_OUTPUT"
     return $auto_setup_rv
+}
+
+# Starts the non-interactive auto-setup detached and prints the output file path right away.
+# A speed test regularly takes longer than uhttpd's script_timeout (60s by default), which kills
+# the CGI and leaves the caller with a half-written file, so the caller polls the file instead.
+# 1 - optional gaming device IP
+auto_setup_detached() {
+    printf '%s\n' "Starting qosmate auto-setup..." > "$QOSMATE_AUTO_SETUP_OUTPUT" || return 1
+    # A new session is required, not just a background job: ash waits for children of the same
+    # session in a command substitution, which is how callers read this function's output.
+    if check_util setsid; then
+        setsid "$QOSMATE_SERVICE_PATH" auto_setup_noninteractive "$1" >/dev/null 2>&1 &
+    else
+        log_msg -warn "setsid is not available, running the auto-setup in the foreground."
+        auto_setup_noninteractive "$1" >/dev/null 2>&1
+    fi
+    echo "$QOSMATE_AUTO_SETUP_OUTPUT"
 }
 
 health_check() {
