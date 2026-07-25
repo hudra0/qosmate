@@ -2437,23 +2437,17 @@ try_auto_setup() {
     fi
 
     if [ -n "$gaming_ip" ]; then
-        local direction ip_dir port_dir
-        for direction in Inbound Outbound; do
-            case "$direction" in
-                Inbound) ip_dir=dest port_dir=src ;;
-                Outbound) ip_dir=src port_dir=dest ;;
-            esac
-            uci add qosmate rule 1>/dev/null &&
-            uci set "qosmate.@rule[-1].name=Game_Console_${direction}" &&
-            uci set "qosmate.@rule[-1].proto=udp" &&
-            uci set "qosmate.@rule[-1].${ip_dir}_ip=${gaming_ip}" &&
-            uci add_list "qosmate.@rule[-1].${port_dir}_port=!=80" &&
-            uci add_list "qosmate.@rule[-1].${port_dir}_port=!=443" &&
-            uci set "qosmate.@rule[-1].class=cs5" &&
-            uci set "qosmate.@rule[-1].counter=1" ||
-                return 1
-        done
-        print_msg "Gaming device rules added for IP: $gaming_ip"
+        # Only an egress rule is needed: the DSCP is stored in conntrack and restored on ingress via tc-ctinfo
+        uci add qosmate rule 1>/dev/null &&
+        uci set "qosmate.@rule[-1].name=Game_Console" &&
+        uci set "qosmate.@rule[-1].proto=udp" &&
+        uci set "qosmate.@rule[-1].src_ip=${gaming_ip}" &&
+        uci add_list "qosmate.@rule[-1].dest_port=!=80" &&
+        uci add_list "qosmate.@rule[-1].dest_port=!=443" &&
+        uci set "qosmate.@rule[-1].class=cs5" &&
+        uci set "qosmate.@rule[-1].counter=1" ||
+            return 1
+        print_msg "Gaming device rule added for IP: $gaming_ip"
     else
         print_msg "No gaming device IP added."
     fi
