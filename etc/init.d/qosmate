@@ -9,12 +9,13 @@ USE_PROCD=1
 VERSION="dev"
 UPD_CHANNEL="release"
 
-EXTRA_COMMANDS="check_version update auto_setup auto_setup_noninteractive validate_custom_rules health_check"
+EXTRA_COMMANDS="check_version update auto_setup auto_setup_noninteractive auto_setup_detached validate_custom_rules health_check"
 EXTRA_HELP="
         check_version              Check for updates
         update                     Update qosmate
         auto_setup                 Automatically configure qosmate
         auto_setup_noninteractive  Automatically configure qosmate with no interaction
+        auto_setup_detached        Start the non-interactive auto-setup in the background
         validate_custom_rules      Validate custom rules
         health_check               Check if QoSmate is properly configured and running"
 
@@ -54,6 +55,7 @@ QOSMATE_DEFAULTS_FILE=${QOSMATE_D}/qosmate-defaults
 QOSMATE_CUSTOM_RULES_FILE=${QOSMATE_D}/custom_rules.nft
 QOSMATE_INLINE_RULES_FILE=${QOSMATE_D}/inline_dscptag.nft
 QOSMATE_RUN_DIR=/tmp/qosmate
+QOSMATE_AUTO_SETUP_OUTPUT=/tmp/qosmate_auto_setup_output.txt
 
 # Local path of JS files
 QOSMATE_UPD_DIR=/var/run/qosmate-update
@@ -2532,14 +2534,33 @@ try_auto_setup() {
 }
 
 auto_setup_noninteractive() {
-    local output_file="/tmp/qosmate_auto_setup_output.txt" auto_setup_rv
+    local auto_setup_rv
     {
         echo "Starting qosmate non-interactive auto-setup..."
         auto_setup -n "$1" 2>&1
-    } > "$output_file"
-    auto_setup_rv=$?
-    echo "$output_file"
+        auto_setup_rv=$?
+        # lets callers polling this file tell a finished run from a partial or stale one
+        echo "AUTO_SETUP_DONE rv=$auto_setup_rv"
+    } > "$QOSMATE_AUTO_SETUP_OUTPUT"
+    echo "$QOSMATE_AUTO_SETUP_OUTPUT"
     return $auto_setup_rv
+}
+
+# Starts the non-interactive auto-setup detached and prints the output file path right away.
+# A speed test regularly takes longer than uhttpd's script_timeout (60s by default), which kills
+# the CGI and leaves the caller with a half-written file, so the caller polls the file instead.
+# 1 - optional gaming device IP
+auto_setup_detached() {
+    printf '%s\n' "Starting qosmate auto-setup..." > "$QOSMATE_AUTO_SETUP_OUTPUT" || return 1
+    # A new session is required, not just a background job: ash waits for children of the same
+    # session in a command substitution, which is how callers read this function's output.
+    if check_util setsid; then
+        setsid "$QOSMATE_SERVICE_PATH" auto_setup_noninteractive "$1" >/dev/null 2>&1 &
+    else
+        log_msg -warn "setsid is not available, running the auto-setup in the foreground."
+        auto_setup_noninteractive "$1" >/dev/null 2>&1
+    fi
+    echo "$QOSMATE_AUTO_SETUP_OUTPUT"
 }
 
 health_check() {
