@@ -1007,21 +1007,28 @@ else
 fi
 
 # Conditionally defining TCP down-prioritization rules based on enabled flags
-if [ "$TCP_DOWNPRIO_INITIAL_ENABLED" -eq 1 ]; then
+# Both thresholds are derived from DOWNRATE. With DOWNRATE=0 first10s would be 0 and the
+# rule would down-prioritize every TCP connection, so the rules are skipped in that case.
+if [ "$TCP_DOWNPRIO_INITIAL_ENABLED" -eq 1 ] && [ "$DOWNRATE" -gt 0 ]; then
     downprio_initial_rules="meta l4proto tcp ct bytes < \$first500ms jump mark_500ms"
 else
     downprio_initial_rules="# Initial TCP down-prioritization disabled"
 fi
 
-if [ "$TCP_DOWNPRIO_SUSTAINED_ENABLED" -eq 1 ]; then
+if [ "$TCP_DOWNPRIO_SUSTAINED_ENABLED" -eq 1 ] && [ "$DOWNRATE" -gt 0 ]; then
     downprio_sustained_rules="meta l4proto tcp ct bytes > \$first10s jump mark_10s"
 else
     downprio_sustained_rules="# Sustained TCP down-prioritization disabled"
 fi
 
-# Conditionally defining TCPMSS rules based on UPRATE and DOWNRATE
+if [ "$DOWNRATE" -eq 0 ] && { [ "$TCP_DOWNPRIO_INITIAL_ENABLED" -eq 1 ] || [ "$TCP_DOWNPRIO_SUSTAINED_ENABLED" -eq 1 ]; }; then
+    log_msg -warn "TCP down-prioritization disabled: its byte thresholds are derived from DOWNRATE, which is 0."
+fi
 
-if [ "$UPRATE" -lt 3000 ]; then
+# Conditionally defining TCPMSS rules based on UPRATE and DOWNRATE
+# A rate of 0 means "this direction is not shaped", not "slow link", so no clamping then
+
+if [ "$UPRATE" -gt 0 ] && [ "$UPRATE" -lt 3000 ]; then
     # Clamp MSS between 536 and 1500
     # Use iifname (ingress from WAN) to clamp SYN-ACK from server, limiting our upload packet size
     SAFE_MSS=$(( MSS > 1500 ? 1500 : (MSS < 536 ? 536 : MSS) ))
@@ -1030,7 +1037,7 @@ else
     RULE_SET_TCPMSS_UP=''
 fi
 
-if [ "$DOWNRATE" -lt 3000 ]; then
+if [ "$DOWNRATE" -gt 0 ] && [ "$DOWNRATE" -lt 3000 ]; then
     # Clamp MSS between 536 and 1500
     # Use oifname (egress to WAN) to clamp SYN to server, limiting our download packet size
     SAFE_MSS=$(( MSS > 1500 ? 1500 : (MSS < 536 ? 536 : MSS) ))
@@ -1234,25 +1241,40 @@ DSCPEOF
 
 ## Set up ctinfo downstream shaping
 
-print_msg "" "Setting up ctinfo downstream shaping..."
+if [ "$SHAPE_INGRESS" = 1 ]; then
+    print_msg "" "Setting up ctinfo downstream shaping..."
 
-# Set up ingress handle for WAN interface
-tc qdisc add dev "$WAN" handle ffff: ingress
+    # Set up ingress handle for WAN interface
+    tc qdisc add dev "$WAN" handle ffff: ingress
 
-# Create IFB interface (multi-queue when USE_MQ is enabled for cake_mq ingress support)
-# Match the WAN TX queue count so egress and ingress CAKE instances are symmetric
-ifb_mq_args=""
-if [ "$USE_MQ" = "1" ]; then
-    wan_tx_queues=$(find /sys/class/net/"$WAN"/queues/ -maxdepth 1 -type d -name 'tx-*' 2>/dev/null | wc -l)
-    [ "$wan_tx_queues" -gt 1 ] && ifb_mq_args="numtxqueues $wan_tx_queues"
+    # Create IFB interface (multi-queue when USE_MQ is enabled for cake_mq ingress support)
+    # Match the WAN TX queue count so egress and ingress CAKE instances are symmetric
+    ifb_mq_args=""
+    if [ "$USE_MQ" = "1" ]; then
+        wan_tx_queues=$(find /sys/class/net/"$WAN"/queues/ -maxdepth 1 -type d -name 'tx-*' 2>/dev/null | wc -l)
+        [ "$wan_tx_queues" -gt 1 ] && ifb_mq_args="numtxqueues $wan_tx_queues"
+    fi
+    # shellcheck disable=SC2086  # ifb_mq_args needs word splitting (e.g. "numtxqueues 4" → two args)
+    ip link add name "ifb-$WAN" $ifb_mq_args type ifb
+    ip link set "ifb-$WAN" up
+
+    # Redirect ingress traffic from WAN to IFB and restore DSCP from conntrack
+    tc filter add dev "$WAN" parent ffff: protocol all matchall action ctinfo dscp 63 128 mirred egress redirect dev "ifb-$WAN"
+    LAN=ifb-$WAN
+else
+    # Rate 0 disables this direction: drop a previously created ingress path
+    print_msg "" "Ingress shaping disabled (DOWNRATE=0) - removing ingress path."
+    LAN=''
+    tc qdisc del dev "ifb-$WAN" root > /dev/null 2>&1
+    tc qdisc del dev "$WAN" ingress > /dev/null 2>&1
+    ip link del "ifb-$WAN" > /dev/null 2>&1
 fi
-# shellcheck disable=SC2086  # ifb_mq_args needs word splitting (e.g. "numtxqueues 4" → two args)
-ip link add name "ifb-$WAN" $ifb_mq_args type ifb
-ip link set "ifb-$WAN" up
 
-# Redirect ingress traffic from WAN to IFB and restore DSCP from conntrack
-tc filter add dev "$WAN" parent ffff: protocol all matchall action ctinfo dscp 63 128 mirred egress redirect dev "ifb-$WAN"
-LAN=ifb-$WAN
+# Minimum jitter estimate; only meaningful for a direction that is actually shaped
+jitter_up="not shaped (UPRATE=0)"
+jitter_down="not shaped (DOWNRATE=0)"
+[ "$SHAPE_EGRESS" = 1 ] && jitter_up="$(((1500*8)*3/UPRATE)) ms"
+[ "$SHAPE_INGRESS" = 1 ] && jitter_down="$(((1500*8)*3/DOWNRATE)) ms"
 
 cat <<EOF
 
@@ -1272,9 +1294,9 @@ heading to the LAN.
 Based on your link total bandwidth, the **minimum** amount of jitter
 you should expect in your network is about:
 
-UP = $(((1500*8)*3/UPRATE)) ms
+UP = $jitter_up
 
-DOWN = $(((1500*8)*3/DOWNRATE)) ms
+DOWN = $jitter_down
 
 In order to get lower minimum jitter you must upgrade the speed of
 your link, no queuing system can help.
@@ -1554,47 +1576,52 @@ setup_cake() {
     local ack_filter_egress_val cake_link_params="$(get_cake_link_params)"
 
     # Select cake or cake_mq based on WAN capabilities (IFB mirrors WAN queue count)
-    local CAKE_QDISC_EGR CAKE_QDISC_IGR
+    local CAKE_QDISC_EGR CAKE_QDISC_IGR CAKE_OPTS
     select_cake_qdisc "$WAN"
     CAKE_QDISC_EGR="$REPLY"
     CAKE_QDISC_IGR="$REPLY"
 
     # Egress (Upload) CAKE setup
-    case "$ACK_FILTER_EGRESS" in
-        auto) ack_filter_egress_val=$(( (DOWNRATE / UPRATE) >= 15 )) ;;
-        *[!0-9]*|'') qdisc_setup_failed "Invalid value '$ACK_FILTER_EGRESS' for ACK_FILTER_EGRESS." ;;
-        *) ack_filter_egress_val=$ACK_FILTER_EGRESS ;;
-    esac
+    if [ "$SHAPE_EGRESS" = 1 ]; then
+        case "$ACK_FILTER_EGRESS" in
+            # 'auto' needs a known download rate; keep the filter off without ingress shaping
+            auto) ack_filter_egress_val=$(( DOWNRATE > 0 && (DOWNRATE / UPRATE) >= 15 )) ;;
+            *[!0-9]*|'') qdisc_setup_failed "Invalid value '$ACK_FILTER_EGRESS' for ACK_FILTER_EGRESS." ;;
+            *) ack_filter_egress_val=$ACK_FILTER_EGRESS ;;
+        esac
 
-    local CAKE_OPTS="bandwidth ${UPRATE}kbit"
-    # shellcheck disable=SC2086
-    append_cake_opt "$PRIORITY_QUEUE_EGRESS" "1" &&
-    append_cake_opt "dual-srchost" "$HOST_ISOLATION" &&
-    append_cake_opt "rtt ${RTT}ms" "${RTT:+1}" &&
-    append_cake_opt "$cake_link_params" "1" &&
-    append_cake_opt "$LINK_COMPENSATION" "1" &&
-    append_cake_opt "$EXTRA_PARAMETERS_EGRESS" "1" &&
-    append_cake_opt "nat" "$NAT_EGRESS" &&
-    append_cake_opt "wash" "$WASHDSCPUP" &&
-    append_cake_opt "ack-filter" "$ack_filter_egress_val" &&
-    tc qdisc add dev "$WAN" root handle 1: "$CAKE_QDISC_EGR" $CAKE_OPTS || qdisc_setup_failed
-debug_log "EGRESS $CAKE_QDISC_EGR opts: '$CAKE_OPTS'"
+        CAKE_OPTS="bandwidth ${UPRATE}kbit"
+        # shellcheck disable=SC2086
+        append_cake_opt "$PRIORITY_QUEUE_EGRESS" "1" &&
+        append_cake_opt "dual-srchost" "$HOST_ISOLATION" &&
+        append_cake_opt "rtt ${RTT}ms" "${RTT:+1}" &&
+        append_cake_opt "$cake_link_params" "1" &&
+        append_cake_opt "$LINK_COMPENSATION" "1" &&
+        append_cake_opt "$EXTRA_PARAMETERS_EGRESS" "1" &&
+        append_cake_opt "nat" "$NAT_EGRESS" &&
+        append_cake_opt "wash" "$WASHDSCPUP" &&
+        append_cake_opt "ack-filter" "$ack_filter_egress_val" &&
+        tc qdisc add dev "$WAN" root handle 1: "$CAKE_QDISC_EGR" $CAKE_OPTS || qdisc_setup_failed
+        debug_log "EGRESS $CAKE_QDISC_EGR opts: '$CAKE_OPTS'"
+    fi
     
 
     # Ingress (Download) CAKE setup
-    CAKE_OPTS="bandwidth ${DOWNRATE}kbit ingress"
-    # shellcheck disable=SC2086
-    append_cake_opt "autorate-ingress" "$AUTORATE_INGRESS" &&
-    append_cake_opt "$PRIORITY_QUEUE_INGRESS" "1" &&
-    append_cake_opt "dual-dsthost" "$HOST_ISOLATION" &&
-    append_cake_opt "rtt ${RTT}ms" "${RTT:+1}" &&
-    append_cake_opt "$cake_link_params" "1" &&
-    append_cake_opt "$LINK_COMPENSATION" "1" &&
-    append_cake_opt "$EXTRA_PARAMETERS_INGRESS" "1" &&
-    append_cake_opt "nat" "$NAT_INGRESS" &&
-    append_cake_opt "wash" "$WASHDSCPDOWN" &&
-    tc qdisc add dev "$LAN" root "$CAKE_QDISC_IGR" $CAKE_OPTS || qdisc_setup_failed
-debug_log "INGRESS $CAKE_QDISC_IGR opts: '$CAKE_OPTS'"
+    if [ "$SHAPE_INGRESS" = 1 ]; then
+        CAKE_OPTS="bandwidth ${DOWNRATE}kbit ingress"
+        # shellcheck disable=SC2086
+        append_cake_opt "autorate-ingress" "$AUTORATE_INGRESS" &&
+        append_cake_opt "$PRIORITY_QUEUE_INGRESS" "1" &&
+        append_cake_opt "dual-dsthost" "$HOST_ISOLATION" &&
+        append_cake_opt "rtt ${RTT}ms" "${RTT:+1}" &&
+        append_cake_opt "$cake_link_params" "1" &&
+        append_cake_opt "$LINK_COMPENSATION" "1" &&
+        append_cake_opt "$EXTRA_PARAMETERS_INGRESS" "1" &&
+        append_cake_opt "nat" "$NAT_INGRESS" &&
+        append_cake_opt "wash" "$WASHDSCPDOWN" &&
+        tc qdisc add dev "$LAN" root "$CAKE_QDISC_IGR" $CAKE_OPTS || qdisc_setup_failed
+        debug_log "INGRESS $CAKE_QDISC_IGR opts: '$CAKE_OPTS'"
+    fi
 
     # Write active cake qdisc type for autorate daemon
     printf '%s\n' "$CAKE_QDISC_EGR" > /tmp/qosmate/cake_type
@@ -1920,19 +1947,28 @@ if [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; then
     esac
 fi
 
+# A rate of 0 disables that direction. Remove leftovers of a disabled direction so that
+# switching a rate to 0 takes effect even without a full service restart.
+[ "$SHAPE_EGRESS" = 1 ] || {
+    print_msg "" "Egress shaping disabled (UPRATE=0) - removing root qdisc on $WAN."
+    tc qdisc del dev "$WAN" root > /dev/null 2>&1
+}
+[ "$SHAPE_EGRESS" = 1 ] || [ "$SHAPE_INGRESS" = 1 ] ||
+    log_msg -warn "No shaping active: both UPRATE and DOWNRATE are 0. Only nftables DSCP marking is applied."
+
 # Main logic for selecting and applying the QoS system
 case "$ROOT_QDISC" in
     hfsc)
         print_msg "Applying HFSC queueing discipline."
         # Call the renamed function (formerly setqdisc)
-        setup_hfsc "$WAN" "$UPRATE" "$GAMEUP" "$gameqdisc" wan
-        setup_hfsc "$LAN" "$DOWNRATE" "$GAMEDOWN" "$gameqdisc" lan
+        [ "$SHAPE_EGRESS" = 1 ] && setup_hfsc "$WAN" "$UPRATE" "$GAMEUP" "$gameqdisc" wan
+        [ "$SHAPE_INGRESS" = 1 ] && setup_hfsc "$LAN" "$DOWNRATE" "$GAMEDOWN" "$gameqdisc" lan
         ;;
     hybrid)
         print_msg "Applying Hybrid (HFSC+CAKE) queueing discipline."
         # Setup WAN (egress/upload) and LAN (ingress/download) directly
-        setup_hybrid "$WAN" "$UPRATE" "$GAMEUP" "wan"
-        setup_hybrid "$LAN" "$DOWNRATE" "$GAMEDOWN" "lan"
+        [ "$SHAPE_EGRESS" = 1 ] && setup_hybrid "$WAN" "$UPRATE" "$GAMEUP" "wan"
+        [ "$SHAPE_INGRESS" = 1 ] && setup_hybrid "$LAN" "$DOWNRATE" "$GAMEDOWN" "lan"
         # cake_mq not supported as child qdisc under HFSC
         printf '%s\n' "cake" > /tmp/qosmate/cake_type
         ;;
@@ -1942,8 +1978,8 @@ case "$ROOT_QDISC" in
         ;;
     htb)
         print_msg "Applying HTB queueing discipline."
-        setup_htb "$WAN" "$UPRATE" "wan"
-        setup_htb "$LAN" "$DOWNRATE" "lan"
+        [ "$SHAPE_EGRESS" = 1 ] && setup_htb "$WAN" "$UPRATE" "wan"
+        [ "$SHAPE_INGRESS" = 1 ] && setup_htb "$LAN" "$DOWNRATE" "lan"
         ;;
     *) # Fallback for unsupported ROOT_QDISC
         print_msg -err "Unsupported ROOT_QDISC: '$ROOT_QDISC'. Check /etc/config/qosmate."
@@ -1951,8 +1987,8 @@ case "$ROOT_QDISC" in
         ROOT_QDISC="hfsc"
         gameqdisc="pfifo" # Safe default for fallback
         # Apply the fallback configuration using the renamed function
-        setup_hfsc "$WAN" "$UPRATE" "$GAMEUP" "$gameqdisc" wan
-        setup_hfsc "$LAN" "$DOWNRATE" "$GAMEDOWN" "$gameqdisc" lan
+        [ "$SHAPE_EGRESS" = 1 ] && setup_hfsc "$WAN" "$UPRATE" "$GAMEUP" "$gameqdisc" wan
+        [ "$SHAPE_INGRESS" = 1 ] && setup_hfsc "$LAN" "$DOWNRATE" "$GAMEDOWN" "$gameqdisc" lan
         ;;
 esac
 
@@ -1960,8 +1996,13 @@ esac
 # Restore DSCP values from conntrack for egress packets
 # Only needed when Software Flow Offloading is active
 if [ "$SFO_ENABLED" = "1" ]; then
-    print_msg "" "Software Flow Offloading detected - enabling SFO compatibility mode..."
-    tc filter add dev "$WAN" parent 1: prio 1 protocol all matchall action ctinfo dscp 63 128 continue
+    if [ "$SHAPE_EGRESS" = 1 ]; then
+        print_msg "" "Software Flow Offloading detected - enabling SFO compatibility mode..."
+        tc filter add dev "$WAN" parent 1: prio 1 protocol all matchall action ctinfo dscp 63 128 continue
+    else
+        # The filter attaches to the egress root qdisc, which does not exist without egress shaping
+        print_msg "" "Software Flow Offloading detected, but egress shaping is disabled - skipping SFO filter."
+    fi
 else
     print_msg "" "Software Flow Offloading disabled - dynamic rules fully functional..."
 fi
@@ -1977,10 +2018,8 @@ elif [ "$ROOT_QDISC" = "hybrid" ] && [ "$gameqdisc" = "red" ]; then
 else
    # Check if tc command exists before trying to run it
    if command -v tc >/dev/null; then
-       print_msg "--- Egress ($WAN) ---"
-       tc -s qdisc show dev "$WAN"
-       print_msg "--- Ingress ($LAN) ---"
-       tc -s qdisc show dev "$LAN"
+       [ "$SHAPE_EGRESS" = 1 ] && { print_msg "--- Egress ($WAN) ---"; tc -s qdisc show dev "$WAN"; }
+       [ "$SHAPE_INGRESS" = 1 ] && { print_msg "--- Ingress ($LAN) ---"; tc -s qdisc show dev "$LAN"; }
    else
         print_msg "Warning: 'tc' command not found. Cannot display QoS status."
    fi

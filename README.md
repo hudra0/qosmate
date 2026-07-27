@@ -157,9 +157,35 @@ Remember that these are starting points - optimal settings may depend on your sp
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ------- |
 | enabled       | Enables or disables QoSmate. Set to 1 to enable, 0 to disable.                                                                                                             | boolean           | 1       |
 | WAN           | Specifies the WAN interface. This is crucial for applying QoS rules to the correct network interface. It's typically the interface connected to your ISP.                                                                      | string            | eth1    |
-| DOWNRATE      | Download rate in kbps. Set this to about 80-90% of your actual download speed to allow for overhead and prevent bufferbloat. This creates a buffer that helps maintain low latency even when the connection is fully utilized. | integer           | 90000   |
-| UPRATE        | Upload rate in kbps. Set this to about 80-90% of your actual upload speed for the same reasons as DOWNRATE.                                                                                                                    | integer           | 45000   |
+| DOWNRATE      | Download rate in kbps. Set this to about 80-90% of your actual download speed to allow for overhead and prevent bufferbloat. This creates a buffer that helps maintain low latency even when the connection is fully utilized. Set to 0 to disable ingress shaping, see [One-Directional Shaping](#one-directional-shaping). | integer           | 90000   |
+| UPRATE        | Upload rate in kbps. Set this to about 80-90% of your actual upload speed for the same reasons as DOWNRATE. Set to 0 to disable egress shaping.                                                                                | integer           | 45000   |
 | ROOT_QDISC    | Specifies the root queueing discipline. Options are 'hfsc', 'cake', 'hybrid', or 'htb' | enum (hfsc, cake, hybrid, htb) | hfsc    |
+
+### One-Directional Shaping
+
+Setting a rate to `0` disables shaping for that direction, the same convention `sqm-scripts` uses.
+
+| Configuration | Effect |
+| ------------- | ------ |
+| `DOWNRATE` and `UPRATE` greater than 0 | Both directions are shaped (default) |
+| `DOWNRATE=0` | Upload only. No IFB device, no ingress hook and no redirect are created, so the download path is left untouched |
+| `UPRATE=0` | Download only. No egress qdisc is created; classification still works because the DSCP is stored in conntrack and restored on the IFB |
+| both `0` | Nothing is shaped, only the nftables rules are applied |
+
+What `DOWNRATE=0` costs you:
+
+- **TCP bulk detection** (`TCP_DOWNPRIO_INITIAL_ENABLED`, `TCP_DOWNPRIO_SUSTAINED_ENABLED`) is
+  switched off, because its byte thresholds are derived from the download rate.
+- **`ACK_FILTER_EGRESS=auto`** cannot compute the download/upload ratio and therefore stays off. Set
+  it to `1` or `0` explicitly for a defined behaviour.
+- **Incoming packets carry no DSCP**, because the restore happens on the IFB. Devices behind the
+  router, for example an access point applying WMM, will not see any marking.
+- **CAKE ingress options** have no effect, and so does `WASHDSCPDOWN` in CAKE mode. With HFSC,
+  Hybrid and HTB, `WASHDSCPDOWN` keeps working because it is implemented in nftables.
+
+`status` and `health_check` report a disabled direction as such, so it stays distinguishable from a
+broken setup. Autorate adjusts only the direction that is actually shaped and does not start when
+both rates are 0.
 
 ### HFSC + Hybrid Specific Settings
 

@@ -5,7 +5,6 @@ START=99
 STOP=99
 
 USE_PROCD=1
-
 VERSION="dev"
 UPD_CHANNEL="release"
 
@@ -1419,25 +1418,31 @@ try_load_and_fix_config() {
     IFS="$DEFAULT_IFS"
 
     # Ensure valid values for DOWNRATE, UPRATE
-    case "$ROOT_QDISC" in hfsc|hybrid)
-        local opt val commit_req='' min_val=1000
-        for opt in DOWNRATE UPRATE; do
-            eval "val=\"\${${opt}}\""
-            if ! [ "$val" -gt 0 ]; then
-                log_msg -warn "$opt is '$val' for $ROOT_QDISC. Setting to minimum value of $min_val kbps."
-                eval "$opt=$min_val"
-                uci set "qosmate.settings.${opt}=${min_val}"
-                commit_req=1
-            fi
-        done
-        [ -z "$commit_req" ] || uci commit qosmate || return 1
-    esac
+    # A rate of 0 is valid and means "do not shape this direction" (same convention as
+    # sqm-scripts and ACKRATE=0): actually shaping to 0 would kill the link. Empty,
+    # negative and non-numeric values still fall back to the minimum.
+    local opt val commit_req='' min_val=1000
+    for opt in DOWNRATE UPRATE; do
+        eval "val=\"\${${opt}}\""
+        case "$val" in
+            ''|*[!0-9]*) ;; # empty or non-numeric: fixed below
+            *) continue      # numeric, including 0
+        esac
+        log_msg -warn "$opt is '$val'. Setting to minimum value of $min_val kbps."
+        eval "$opt=$min_val"
+        uci set "qosmate.settings.${opt}=${min_val}"
+        commit_req=1
+    done
+    [ -z "$commit_req" ] || uci commit qosmate || return 1
 
     # Limit DOWNRATE based on BWMAXRATIO
     if [ "$UPRATE" -gt 0 ] && [ $((DOWNRATE > UPRATE*BWMAXRATIO)) -eq 1 ]; then
         print_msg "We limit the downrate to at most $BWMAXRATIO times the upstream rate to ensure no upstream ACK floods occur which can cause game packet drops"
         DOWNRATE=$((BWMAXRATIO*UPRATE))
     fi
+
+    # A rate of 0 disables shaping for that direction; all components derive from these
+    export SHAPE_EGRESS=$((UPRATE > 0)) SHAPE_INGRESS=$((DOWNRATE > 0))
 
     return $parse_rv
 }
@@ -2028,15 +2033,20 @@ status_service() {
     fi
     print_msg "qosmate global:enabled is $config_enabled."
 
-    local dir dev qdisc qdiscs active_qdisc \
+    local dir dev shape rate_opt qdisc qdiscs active_qdisc \
         IFB="ifb-$WAN"
 
     # Check and report if traffic shaping is active
     for dir in egress ingress; do
         case "$dir" in
-            egress) dev="$WAN" ;;
-            ingress) dev="$IFB" ;;
+            egress) dev="$WAN" shape="$SHAPE_EGRESS" rate_opt=UPRATE ;;
+            ingress) dev="$IFB" shape="$SHAPE_INGRESS" rate_opt=DOWNRATE ;;
         esac
+        # A rate of 0 disables that direction: report the intent instead of a missing qdisc
+        [ "$shape" = 1 ] || {
+            print_msg "Traffic shaping on the $dir interface is disabled by configuration ($rate_opt=0)."
+            continue
+        }
         qdiscs="$(tc qdisc show dev "$dev" 2>/dev/null | sed -n 's/^qdisc\s\s*\([^ \t]*\).* root .*/\1/p')"
         qdiscs="${qdiscs//$'\n'/ }"
         active_qdisc=''
@@ -2059,10 +2069,13 @@ status_service() {
         fi
     done
 
-    # Show summary of current settings
+    # Show summary of current settings; a rate of 0 means the direction is not shaped
+    local up_print="$UPRATE kbps" down_print="$DOWNRATE kbps"
+    [ "$SHAPE_EGRESS" = 1 ] || up_print="$UPRATE kbps (shaping disabled)"
+    [ "$SHAPE_INGRESS" = 1 ] || down_print="$DOWNRATE kbps (shaping disabled)"
     print_msg "" "==== Current Settings ====" \
-        "Upload rate: $UPRATE kbps" \
-        "Download rate: $DOWNRATE kbps" \
+        "Upload rate: $up_print" \
+        "Download rate: $down_print" \
         "Game traffic upload: $GAMEUP kbps" \
         "Game traffic download: $GAMEDOWN kbps"
     if [ "$ROOT_QDISC" = "cake" ]; then
@@ -2599,12 +2612,26 @@ health_check() {
         errors=$((errors + 1))
     fi
 
-    # Check tc configuration on WAN interface
-    if [ -n "$WAN" ] && tc qdisc show dev "$WAN" 2>/dev/null | grep -E -q "hfsc|cake|htb"; then
-        status="${status}tc:ok;"
-    else
+    # Check tc configuration for every direction that is configured to be shaped.
+    # A rate of 0 disables that direction, so its absence must not count as a failure.
+    local tc_dev tc_devs='' tc_ok=1
+    if [ -z "$WAN" ]; then
         status="${status}tc:failed;"
         errors=$((errors + 1))
+    else
+        [ "$SHAPE_EGRESS" = 1 ] && tc_devs="$WAN"
+        [ "$SHAPE_INGRESS" = 1 ] && tc_devs="$tc_devs ifb-$WAN"
+        for tc_dev in $tc_devs; do
+            tc qdisc show dev "$tc_dev" 2>/dev/null | grep -E -q "hfsc|cake|htb" || tc_ok=0
+        done
+        if [ -z "$tc_devs" ]; then
+            status="${status}tc:off;"
+        elif [ "$tc_ok" = 1 ]; then
+            status="${status}tc:ok;"
+        else
+            status="${status}tc:failed;"
+            errors=$((errors + 1))
+        fi
     fi
 
     status="${status}config:${config_status};"

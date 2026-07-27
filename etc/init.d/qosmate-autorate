@@ -12,7 +12,7 @@ AUTORATE_SCRIPT=/etc/qosmate-autorate.sh
 . /lib/functions.sh
 
 start_service() {
-    local enabled wan
+    local enabled wan downrate
     
     config_load qosmate || return 1
     config_get_bool enabled autorate enabled 0
@@ -20,10 +20,15 @@ start_service() {
     [ "$enabled" != "1" ] && return 0
     [ ! -x "$AUTORATE_SCRIPT" ] && return 1
     
-    # Check if qosmate is running (WAN configured and IFB exists)
+    # Check if qosmate is running. A DOWNRATE of 0 disables ingress shaping, so no IFB
+    # exists in that case and the egress root qdisc is what proves qosmate is up.
     config_get wan settings WAN
+    config_get downrate settings DOWNRATE
     [ -z "$wan" ] && return 1
-    ip link show "ifb-$wan" >/dev/null 2>&1 || return 1
+    case "${downrate:-0}" in
+        0|*[!0-9]*) tc qdisc show dev "$wan" 2>/dev/null | grep -E -q "hfsc|cake|htb" || return 1 ;;
+        *) ip link show "ifb-$wan" >/dev/null 2>&1 || return 1 ;;
+    esac
     
     logger -t qosmate-autorate "Starting autorate daemon via procd"
     

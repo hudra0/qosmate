@@ -39,6 +39,13 @@ load_autorate_config() {
     config_get UPRATE settings UPRATE
     config_get DOWNRATE settings DOWNRATE
     config_get ROOT_QDISC settings ROOT_QDISC
+
+    # A rate of 0 means "do not shape this direction", so that direction is not adjusted.
+    # Guard against empty or non-numeric values to keep the arithmetic below safe.
+    case "$UPRATE" in ''|*[!0-9]*) UPRATE=0 ;; esac
+    case "$DOWNRATE" in ''|*[!0-9]*) DOWNRATE=0 ;; esac
+    SHAPE_EGRESS=$((UPRATE > 0))
+    SHAPE_INGRESS=$((DOWNRATE > 0))
     
     # HFSC section
     config_get GAMEUP hfsc GAMEUP
@@ -242,13 +249,19 @@ run_daemon() {
     
     [ -z "$WAN" ] && { log_autorate "ERROR: WAN not configured"; exit 1; }
 
+    # Nothing to adjust when neither direction is shaped
+    if [ "$SHAPE_EGRESS" != 1 ] && [ "$SHAPE_INGRESS" != 1 ]; then
+        log_autorate "ERROR: neither direction is shaped (UPRATE=0 and DOWNRATE=0)"
+        exit 1
+    fi
+
     # Read active cake qdisc type (written by qosmate.sh at setup time)
     CAKE_TYPE=$(cat /tmp/qosmate/cake_type 2>/dev/null)
     : "${CAKE_TYPE:=cake}"
     
     local wan_iface="$WAN" lan_iface="ifb-$WAN"
     local ul_rate="$AUTORATE_BASE_UL" dl_rate="$AUTORATE_BASE_DL"
-    local prev_ul_bytes prev_dl_bytes curr_ul_bytes curr_dl_bytes
+    local prev_ul_bytes=0 prev_dl_bytes=0 curr_ul_bytes=0 curr_dl_bytes=0
     local achieved_ul=0 achieved_dl=0 baseline_latency=0 baseline_samples=0
     local last_ul_change=0 last_dl_change=0 current_time loop_count=0
     local _time_cs_result=0 prev_time_cs=0 delta_ms
@@ -306,14 +319,14 @@ run_daemon() {
     fi
 
     # Keep live qdisc rates aligned with restored daemon state after restart.
-    if [ -n "$restored_ul_rate" ] && [ "$restored_ul_rate" != "$ul_rate" ]; then
+    if [ "$SHAPE_EGRESS" = 1 ] && [ -n "$restored_ul_rate" ] && [ "$restored_ul_rate" != "$ul_rate" ]; then
         if autorate_update_bandwidth "$restored_ul_rate" "$wan_iface" "egress"; then
             ul_rate=$restored_ul_rate
         else
             log_autorate "WARNING: Failed to restore UL rate $restored_ul_rate kbps on $wan_iface, using base $ul_rate kbps"
         fi
     fi
-    if [ -n "$restored_dl_rate" ] && [ "$restored_dl_rate" != "$dl_rate" ]; then
+    if [ "$SHAPE_INGRESS" = 1 ] && [ -n "$restored_dl_rate" ] && [ "$restored_dl_rate" != "$dl_rate" ]; then
         if autorate_update_bandwidth "$restored_dl_rate" "$lan_iface" "ingress"; then
             dl_rate=$restored_dl_rate
         else
@@ -323,12 +336,20 @@ run_daemon() {
     
     # Initialize byte counters and timestamp for first rate calculation
     read_bytes "$wan_iface" tx; prev_ul_bytes=$_bytes_result
-    read_bytes "$lan_iface" tx; prev_dl_bytes=$_bytes_result
+    [ "$SHAPE_INGRESS" = 1 ] && { read_bytes "$lan_iface" tx; prev_dl_bytes=$_bytes_result; }
     get_uptime; prev_time_cs=$_time_cs_result
     
     log_autorate "Daemon started (WAN=$wan_iface, interval=${AUTORATE_INTERVAL}ms)"
-    log_autorate "UL: min=$AUTORATE_MIN_UL base=$AUTORATE_BASE_UL max=$AUTORATE_MAX_UL (start=${ul_rate})"
-    log_autorate "DL: min=$AUTORATE_MIN_DL base=$AUTORATE_BASE_DL max=$AUTORATE_MAX_DL (start=${dl_rate})"
+    if [ "$SHAPE_EGRESS" = 1 ]; then
+        log_autorate "UL: min=$AUTORATE_MIN_UL base=$AUTORATE_BASE_UL max=$AUTORATE_MAX_UL (start=${ul_rate})"
+    else
+        log_autorate "UL: not shaped (UPRATE=0) - upload rate is not adjusted"
+    fi
+    if [ "$SHAPE_INGRESS" = 1 ]; then
+        log_autorate "DL: min=$AUTORATE_MIN_DL base=$AUTORATE_BASE_DL max=$AUTORATE_MAX_DL (start=${dl_rate})"
+    else
+        log_autorate "DL: not shaped (DOWNRATE=0) - download rate is not adjusted"
+    fi
     
     # Signal handling: TERM/INT exit cleanly, state file kept for recovery
     trap '_handle_signal' TERM INT
@@ -344,7 +365,7 @@ run_daemon() {
         
         # Check if interfaces still exist (avoid race condition during restart)
         [ ! -d "/sys/class/net/$wan_iface" ] && break
-        [ ! -d "/sys/class/net/$lan_iface" ] && break
+        [ "$SHAPE_INGRESS" = 1 ] && [ ! -d "/sys/class/net/$lan_iface" ] && break
         
         # Get current time from /proc/uptime (seconds + centiseconds in one read)
         get_uptime
@@ -353,7 +374,7 @@ run_daemon() {
         
         # Read current byte counters
         read_bytes "$wan_iface" tx; curr_ul_bytes=$_bytes_result
-        read_bytes "$lan_iface" tx; curr_dl_bytes=$_bytes_result
+        [ "$SHAPE_INGRESS" = 1 ] && { read_bytes "$lan_iface" tx; curr_dl_bytes=$_bytes_result; }
         
         # Calculate achieved rates using real elapsed time
         delta_ms=$(( (_time_cs_result - prev_time_cs) * 10 ))
@@ -422,7 +443,7 @@ run_daemon() {
         fi
         
         # Apply upload rate change
-        if [ "$new_ul_rate" != "$ul_rate" ]; then
+        if [ "$SHAPE_EGRESS" = 1 ] && [ "$new_ul_rate" != "$ul_rate" ]; then
             ul_change_pct=$(( (new_ul_rate - ul_rate) * 100 / ul_rate ))
             [ "$ul_change_pct" -lt 0 ] && ul_change_pct=$((-ul_change_pct))
             if [ "$AUTORATE_LOG_CHANGES" = "1" ] || [ "$ul_change_pct" -ge 5 ]; then
@@ -437,7 +458,7 @@ run_daemon() {
         fi
         
         # Apply download rate change
-        if [ "$new_dl_rate" != "$dl_rate" ]; then
+        if [ "$SHAPE_INGRESS" = 1 ] && [ "$new_dl_rate" != "$dl_rate" ]; then
             dl_change_pct=$(( (new_dl_rate - dl_rate) * 100 / dl_rate ))
             [ "$dl_change_pct" -lt 0 ] && dl_change_pct=$((-dl_change_pct))
             if [ "$AUTORATE_LOG_CHANGES" = "1" ] || [ "$dl_change_pct" -ge 5 ]; then
