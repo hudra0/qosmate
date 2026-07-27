@@ -117,6 +117,7 @@ config autorate 'autorate'
 #	list ip4 '192.168.37.50'
 #	list ip4 '192.168.37.51'
 #	list ip4 '192.168.37.52'
+#	list ip4 '192.168.37.100-192.168.37.150'
 #	option enabled '1'
 
 #config ipset

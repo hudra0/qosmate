@@ -409,7 +409,7 @@ QoSmate allows you to define custom DSCP (Differentiated Services Code Point) ma
 | ------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ------- |
 | name          | A unique name for the rule. Used for identification and logging.                                       | string                                                                                                                    |         |
 | proto         | The protocol to match. Determines which type of traffic the rule applies to.                           | enum (tcp, udp, icmp)                                                                                                     |         |
-| src_ip        | Source IP address or range to match. Can use CIDR notation for networks.                               | string                                                                                                                    |         |
+| src_ip        | Source IP to match. Single address, CIDR notation, or a range like '192.168.1.1-192.168.1.200'.        | string                                                                                                                    |         |
 | src_port      | Source port or range to match. Can use individual ports or ranges like '1000-2000'.                    | string                                                                                                                    |         |
 | dest_ip       | Destination IP address or range to match. Similar to src_ip in format.                                 | string                                                                                                                    |         |
 | dest_port     | Destination port or range to match. Similar to src_port in format.                                     | string                                                                                                                    |         |
@@ -544,8 +544,8 @@ QoSmate features an integrated IP Sets UI which allows you to manage both static
 | name          | Name of the IP set. Used to reference the set in QoS rules with the @ prefix (e.g., @gaming_devices). Must contain only letters, numbers, and underscores.  | string                   |         |
 | mode          | Defines how the set is populated. 'static' for manually specified IP lists, 'dynamic' for automatically populated sets (e.g., via DNS resolution).           | enum (static, dynamic)   | static  |
 | family        | Specifies the IP version for addresses in this set.                                                                                                         | enum (ipv4, ipv6)       | ipv4    |
-| ip4           | List of IPv4 addresses or networks to include in the set. Only applicable when mode is 'static'.                                                            | list(string)            |         |
-| ip6           | List of IPv6 addresses or networks to include in the set. Only applicable when mode is 'static'.                                                            | list(string)            |         |
+| ip4           | List of IPv4 addresses, networks or ranges (e.g. 192.168.1.1-192.168.1.200) to include in the set. Only applicable when mode is 'static'.                   | list(string)             |         |
+| ip6           | List of IPv6 addresses, networks or ranges (e.g. 2001:db8::1-2001:db8::ff) to include in the set. Only applicable when mode is 'static'.                    | list(string)             |         |
 | timeout       | Duration after which entries are removed from the set if not refreshed. Format: number + unit (s/m/h). Only applicable when mode is 'dynamic'.              | string                   | 1h      |
 | enabled       | Enables or disables the IP set.                                                                                                                             | boolean                  | 1       |
 
@@ -563,6 +563,22 @@ config ipset
     list ip4 '192.168.1.52'
     list ip4 '192.168.1.53'
 ```
+
+Instead of listing every address individually, you can use CIDR notation or an address range:
+
+```bash
+config ipset
+    option name 'guest_devices'
+    option mode 'static'
+    option family 'ipv4'
+    list ip4 '192.168.1.100-192.168.1.150'
+    list ip4 '192.168.2.0/24'
+```
+
+Overlapping entries are merged automatically. If a range covers an address that is also listed
+separately, nftables collapses both into a single interval, so `nft list set inet dscptag <name>`
+may show fewer entries than the configuration contains.
+
 This set can then be referenced in your QoS rules:
 ```bash
 config rule
@@ -628,7 +644,7 @@ Rate limits are configured via the LuCI interface under **Network â†’ QoSmate â†
 |--------|-------------|------|---------|
 | name | Descriptive name for the rate limit rule | string | |
 | enabled | Enables or disables this rate limit rule | boolean | 1 |
-| target | List of IP/IPv6 addresses or subnets to limit. Supports negation (!=) and set references (@setname) | list(string) | |
+| target | List of IP/IPv6 addresses, subnets or ranges to limit. Supports negation (!=) and set references (@setname) | list(string) | |
 | download_limit | Maximum download speed in Kbit/s (0 = unlimited) | integer | 10000 |
 | upload_limit | Maximum upload speed in Kbit/s (0 = unlimited) | integer | 10000 |
 | burst_factor | Burst allowance multiplier. 0 = strict limiting, 1.0 = rate as burst, higher = more burst | float | 1.0 |

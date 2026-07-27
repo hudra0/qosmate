@@ -190,7 +190,7 @@ create_nft_sets() {
 
     # shellcheck disable=SC2329
     create_set() {
-        local section="$1" name ip_list mode timeout set_flags
+        local section="$1" name ip_list mode timeout set_flags family nft_type elements=""
 
         config_get name "$section" name
         # Only process if enabled (default: enabled)
@@ -222,24 +222,13 @@ create_nft_sets() {
                 echo "set $name { type ipv4_addr; flags $set_flags; timeout $timeout; }"
             fi
         else
-            set_flags="interval"
-            if [ -n "$ip_list" ]; then
-                if [ "$family" = "ipv6" ]; then
-                    debug_log "Creating static IPv6 set: $name"
-                    echo "set $name { type ipv6_addr; flags $set_flags; elements = { $(echo "$ip_list" | tr ' ' ',') }; }"
-                else
-                    debug_log "Creating static IPv4 set: $name"
-                    echo "set $name { type ipv4_addr; flags $set_flags; elements = { $(echo "$ip_list" | tr ' ' ',') }; }"
-                fi
-            else
-                if [ "$family" = "ipv6" ]; then
-                    debug_log "Creating empty static IPv6 set: $name"
-                    echo "set $name { type ipv6_addr; flags $set_flags; }"
-                else
-                    debug_log "Creating empty static IPv4 set: $name"
-                    echo "set $name { type ipv4_addr; flags $set_flags; }"
-                fi
-            fi
+            nft_type="ipv4_addr"
+            [ "$family" = "ipv6" ] && nft_type="ipv6_addr"
+            # auto-merge collapses overlapping entries (e.g. a range covering an
+            # already listed single IP), which nftables would otherwise reject
+            [ -n "$ip_list" ] && elements=" elements = { $(echo "$ip_list" | tr ' ' ',') };"
+            debug_log "Creating static $family set: $name"
+            echo "set $name { type $nft_type; flags interval; auto-merge;$elements }"
         fi
         sets_created="$sets_created $name"
     }
