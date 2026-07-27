@@ -106,20 +106,25 @@ get_tc_overhead_params() {
 }
 
 # Get CAKE parameters from common link settings
-# $1 = "hybrid" to force manual overhead for consistency with HFSC
+# $1 = "hybrid": CAKE runs below an HFSC root that already accounts for the overhead
 get_cake_link_params() {
     local preset="$COMMON_LINK_PRESETS"
     local oh="${OVERHEAD}"
     local base=""
 
+    # The HFSC root carries a tc stab, which rewrites qdisc_pkt_len for the whole
+    # hierarchy. "raw" makes CAKE bill that already adjusted length instead of
+    # adding the overhead a second time.
+    [ "$1" = "hybrid" ] && { printf 'raw'; return; }
+
     # Determine base keyword and default overhead
     case "$preset" in
         *atm*|*adsl*|*pppoa*|*pppoe*|*bridged*|*ipoa*|conservative)
-            [ "$1" = "hybrid" ] && base="atm" || base="${preset}"
+            base="${preset}"
             : "${oh:=44}"
             ;;
         docsis)       base="docsis";   : "${oh:=25}" ;;
-        cake-ethernet) base="ethernet"; [ "$1" != "hybrid" ] && oh="" || : "${oh:=38}" ;;
+        cake-ethernet) base="ethernet"; oh="" ;;
         raw)          base="raw";      : "${oh:=0}" ;;
         ethernet|*)   base="ethernet"; : "${oh:=40}" ;;
     esac
