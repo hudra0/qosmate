@@ -177,7 +177,7 @@ apply_dscp_filters() {
 # 2: selector (1|0)
 #    for wash, nat, ack-filter: selector value '1' translates to prefix '', any other value translates to prefix 'no[-]'
 #    for other options: selector value '1' translates to 'don't skip option', any other value translates to 'skip option'
-# Also defined in qosmate-lib-cake.sh; kept here so hybrid (still in qosmate.sh) can call it.
+# Shared by cake and hybrid mode libs (sourced after this file).
 append_cake_opt() {
     [ ${#} = 2 ] || { error_out "append_cake_opt: invalid args '$*'."; return 1; }
     local prefix='' \
@@ -222,5 +222,12 @@ for_each_shaped_dir() {
     # shellcheck source=/dev/null
     . "$QOSMATE_LIB_HTB" || { error_out "Failed to load HTB library '$QOSMATE_LIB_HTB'."; exit 1; }
 }
+
+: "${QOSMATE_LIB_HFSC_HYBRID:=/etc/qosmate.d/qosmate-lib-hfsc-hybrid.sh}"
+case "$ROOT_QDISC" in hfsc|hybrid)
+    # shellcheck source=/dev/null
+    . "$QOSMATE_LIB_HFSC_HYBRID" ||
+        { error_out "Failed to load HFSC library '$QOSMATE_LIB_HFSC_HYBRID'."; exit 1; }
+esac
 
 :

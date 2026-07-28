@@ -3,25 +3,7 @@
 
 # shellcheck disable=SC3043
 
-# Appends option to ${CAKE_OPTS}
-# 1: parameter: nat|wash|ack_filter|*
-# 2: selector (1|0)
-#    for wash, nat, ack-filter: selector value '1' translates to prefix '', any other value translates to prefix 'no[-]'
-#    for other options: selector value '1' translates to 'don't skip option', any other value translates to 'skip option'
-append_cake_opt() {
-    [ ${#} = 2 ] || { error_out "append_cake_opt: invalid args '$*'."; return 1; }
-    local prefix='' \
-        param="$1" selector="$2"
-    [ -n "$param" ] || return 0
-    [ "$selector" != 1 ] &&
-        case "$param" in
-            wash|nat) prefix='no' ;;
-            ack-filter) prefix='no-' ;;
-            *) return 0 ;;
-        esac
-    CAKE_OPTS="${CAKE_OPTS} ${prefix}${param}"
-    :
-}
+# append_cake_opt lives in qosmate-lib-tc.sh (shared with hybrid).
 
 # Nested cake_apply sees setup_cake locals (BusyBox ash).
 setup_cake() {
