@@ -1512,6 +1512,18 @@ Where:
 - `63`: Mask to extract the DSCP value
 - `128`: Conditional bit to verify marked connections
 
+### TC library layout
+
+Traffic control setup lives under `/etc/qosmate.d/`:
+
+- `qosmate-lib-tc.sh` — shared primitives (overhead/link params, IFB/ctinfo, direction enable/disable) and orchestration via `setup_tc`
+- Mode libraries loaded on demand by root qdisc:
+  - `qosmate-lib-hfsc-hybrid.sh` (HFSC and Hybrid)
+  - `qosmate-lib-cake.sh`
+  - `qosmate-lib-htb.sh`
+
+`/etc/qosmate.sh` sources the shared TC library and calls `setup_tc` after nftables rules are in place.
+
 ### Hardware Compatibility
 
 While QoSmate works on most OpenWrt devices, some older devices or specific hardware or kernel configurations might have limitations in DSCP handling, particularly in how they interpret IP header bits for connection tracking.
