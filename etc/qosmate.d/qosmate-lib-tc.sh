@@ -8,17 +8,6 @@
 
 # shellcheck disable=SC3043
 
-# Runs tc and, when QOSMATE_TC_TRACE points to a file, records the invocation.
-# Returns tc's exit code unchanged so callers keep their own error handling.
-tc_run() {
-    [ -z "${QOSMATE_TC_TRACE:-}" ] || {
-        printf 'tc'
-        for _tc_arg in "$@"; do printf ' %s' "$_tc_arg"; done
-        printf '\n'
-    } >> "$QOSMATE_TC_TRACE"
-    tc "$@"
-}
-
 # Get tc stab parameters for HFSC/HTB/Hybrid
 get_tc_overhead_params() {
     local preset="$COMMON_LINK_PRESETS"
@@ -144,9 +133,14 @@ qdisc_setup_failed() {
     exit 1
 }
 
+# Applies the DSCP -> class u32 filters for one direction.
+# Ingress always needs them; egress only with SFO, because without SFO the
+# nftables priomap already sets the class.
 # 1 - device, 2 - IPv4 class enum list, 3 - IPv6 class enum list
-add_dscp_filter_sets() {
+apply_dscp_filters() {
     local dev="$1" v4_enums="$2" v6_enums="$3" class_enum
+
+    [ "$DIR" = "DOWN" ] || [ "$SFO_ENABLED" = "1" ] || return 0
 
     tc filter del dev "$dev" parent 1: prio 1 > /dev/null 2>&1
     tc filter del dev "$dev" parent 1: prio 2 > /dev/null 2>&1
@@ -158,18 +152,6 @@ add_dscp_filter_sets() {
         add_tc_filter "$dev" "$class_enum" ipv6
     done
     :
-}
-
-# Applies the DSCP -> class u32 filters for one direction.
-# Ingress always needs them; egress only with SFO, because without SFO the
-# nftables priomap already sets the class.
-# 1 - device, 2 - IPv4 class enum list, 3 - IPv6 class enum list
-apply_dscp_filters() {
-    local dev="$1" v4_enums="$2" v6_enums="$3"
-
-    [ "$DIR" = "DOWN" ] || [ "$SFO_ENABLED" = "1" ] || return 0
-
-    add_dscp_filter_sets "$dev" "$v4_enums" "$v6_enums"
 }
 
 # Appends option to ${CAKE_OPTS}
@@ -213,6 +195,8 @@ for_each_shaped_dir() {
 
 # Creates (or tears down) the IFB ingress path and sets LAN accordingly.
 setup_ingress_path() {
+    local ifb_mq_args wan_tx_queues
+
     if [ "$SHAPE_INGRESS" = 1 ]; then
         print_msg "" "Setting up ctinfo downstream shaping..."
 
