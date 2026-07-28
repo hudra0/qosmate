@@ -211,23 +211,162 @@ for_each_shaped_dir() {
     :
 }
 
-: "${QOSMATE_LIB_CAKE:=/etc/qosmate.d/qosmate-lib-cake.sh}"
-[ "$ROOT_QDISC" != cake ] || {
-    # shellcheck source=/dev/null
-    . "$QOSMATE_LIB_CAKE" || { error_out "Failed to load CAKE library '$QOSMATE_LIB_CAKE'."; exit 1; }
+# Creates (or tears down) the IFB ingress path and sets LAN accordingly.
+setup_ingress_path() {
+    if [ "$SHAPE_INGRESS" = 1 ]; then
+        print_msg "" "Setting up ctinfo downstream shaping..."
+
+        # Set up ingress handle for WAN interface
+        tc qdisc add dev "$WAN" handle ffff: ingress
+
+        # Create IFB interface (multi-queue when USE_MQ is enabled for cake_mq ingress support)
+        # Match the WAN TX queue count so egress and ingress CAKE instances are symmetric
+        ifb_mq_args=""
+        if [ "$USE_MQ" = "1" ]; then
+            wan_tx_queues=$(find /sys/class/net/"$WAN"/queues/ -maxdepth 1 -type d -name 'tx-*' 2>/dev/null | wc -l)
+            [ "$wan_tx_queues" -gt 1 ] && ifb_mq_args="numtxqueues $wan_tx_queues"
+        fi
+        # shellcheck disable=SC2086  # ifb_mq_args needs word splitting (e.g. "numtxqueues 4" → two args)
+        ip link add name "ifb-$WAN" $ifb_mq_args type ifb
+        ip link set "ifb-$WAN" up
+
+        # Redirect ingress traffic from WAN to IFB and restore DSCP from conntrack
+        tc filter add dev "$WAN" parent ffff: protocol all matchall action ctinfo dscp 63 128 mirred egress redirect dev "ifb-$WAN"
+        LAN=ifb-$WAN
+    else
+        # Rate 0 disables this direction: drop a previously created ingress path
+        print_msg "" "Ingress shaping disabled (DOWNRATE=0) - removing ingress path."
+        LAN=''
+        tc qdisc del dev "ifb-$WAN" root > /dev/null 2>&1
+        tc qdisc del dev "$WAN" ingress > /dev/null 2>&1
+        ip link del "ifb-$WAN" > /dev/null 2>&1
+    fi
 }
 
-: "${QOSMATE_LIB_HTB:=/etc/qosmate.d/qosmate-lib-htb.sh}"
-[ "$ROOT_QDISC" != htb ] || {
-    # shellcheck source=/dev/null
-    . "$QOSMATE_LIB_HTB" || { error_out "Failed to load HTB library '$QOSMATE_LIB_HTB'."; exit 1; }
+# Sources the mode library for $1 (ROOT_QDISC name). Call after fallback correction.
+load_mode_lib() {
+    case "$1" in
+        cake)
+            : "${QOSMATE_LIB_CAKE:=/etc/qosmate.d/qosmate-lib-cake.sh}"
+            # shellcheck source=/dev/null
+            . "$QOSMATE_LIB_CAKE" || { error_out "Failed to load CAKE library '$QOSMATE_LIB_CAKE'."; exit 1; }
+            ;;
+        htb)
+            : "${QOSMATE_LIB_HTB:=/etc/qosmate.d/qosmate-lib-htb.sh}"
+            # shellcheck source=/dev/null
+            . "$QOSMATE_LIB_HTB" || { error_out "Failed to load HTB library '$QOSMATE_LIB_HTB'."; exit 1; }
+            ;;
+        hfsc|hybrid)
+            : "${QOSMATE_LIB_HFSC_HYBRID:=/etc/qosmate.d/qosmate-lib-hfsc-hybrid.sh}"
+            # shellcheck source=/dev/null
+            . "$QOSMATE_LIB_HFSC_HYBRID" ||
+                { error_out "Failed to load HFSC library '$QOSMATE_LIB_HFSC_HYBRID'."; exit 1; }
+            ;;
+        *)
+            error_out "load_mode_lib: unsupported mode '$1'."
+            exit 1
+            ;;
+    esac
 }
 
-: "${QOSMATE_LIB_HFSC_HYBRID:=/etc/qosmate.d/qosmate-lib-hfsc-hybrid.sh}"
-case "$ROOT_QDISC" in hfsc|hybrid)
-    # shellcheck source=/dev/null
-    . "$QOSMATE_LIB_HFSC_HYBRID" ||
-        { error_out "Failed to load HFSC library '$QOSMATE_LIB_HFSC_HYBRID'."; exit 1; }
-esac
+# SFO egress ctinfo filter (prio 1) — only when SHAPE_EGRESS=1.
+apply_sfo_egress_filter() {
+    ## Set up ctinfo for upstream (egress) - SFO compatibility
+    # Restore DSCP values from conntrack for egress packets
+    # Only needed when Software Flow Offloading is active
+    if [ "$SFO_ENABLED" = "1" ]; then
+        if [ "$SHAPE_EGRESS" = 1 ]; then
+            print_msg "" "Software Flow Offloading detected - enabling SFO compatibility mode..."
+            tc filter add dev "$WAN" parent 1: prio 1 protocol all matchall action ctinfo dscp 63 128 continue
+        else
+            # The filter attaches to the egress root qdisc, which does not exist without egress shaping
+            print_msg "" "Software Flow Offloading detected, but egress shaping is disabled - skipping SFO filter."
+        fi
+    else
+        print_msg "" "Software Flow Offloading disabled - dynamic rules fully functional..."
+    fi
+}
+
+# Conditional tc -s status dump, gated by SHAPE_* and red gameqdisc crash avoidance.
+print_tc_status() {
+    # Conditional output of tc status
+    if [ "$ROOT_QDISC" = "hfsc" ] && [ "$gameqdisc" = "red" ]; then
+       print_msg "Can not output tc -s qdisc because it crashes on OpenWrt when using RED qdisc, but things are working!"
+    # Add check for hybrid mode with red gameqdisc
+    elif [ "$ROOT_QDISC" = "hybrid" ] && [ "$gameqdisc" = "red" ]; then
+       print_msg "Can not output tc -s qdisc because it crashes on OpenWrt when using RED qdisc in hybrid mode, but things are working!"
+    else
+       # Check if tc command exists before trying to run it
+       if command -v tc >/dev/null; then
+           [ "$SHAPE_EGRESS" = 1 ] && { print_msg "--- Egress ($WAN) ---"; tc -s qdisc show dev "$WAN"; }
+           [ "$SHAPE_INGRESS" = 1 ] && { print_msg "--- Ingress ($LAN) ---"; tc -s qdisc show dev "$LAN"; }
+       else
+            print_msg "Warning: 'tc' command not found. Cannot display QoS status."
+       fi
+    fi
+}
+
+# Full TC orchestration: validate, tear down disabled egress, load mode lib, apply, SFO, status.
+setup_tc() {
+    local skip_apply_msg=0
+
+    # Validate gameqdisc choice (used by HFSC and Hybrid)
+    if [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ]; then
+        case "$gameqdisc" in
+            drr|qfq|pfifo|bfifo|red|fq_codel|netem) ;; # Supported qdiscs
+            *)
+                print_msg -warn "Unsupported gameqdisc '$gameqdisc' selected in config. Reverting to 'pfifo'."
+                gameqdisc="pfifo" # Revert to a simple default as fallback
+                ;;
+        esac
+    fi
+
+    # A rate of 0 disables that direction. Remove leftovers of a disabled direction so that
+    # switching a rate to 0 takes effect even without a full service restart.
+    [ "$SHAPE_EGRESS" = 1 ] || {
+        print_msg "" "Egress shaping disabled (UPRATE=0) - removing root qdisc on $WAN."
+        tc qdisc del dev "$WAN" root > /dev/null 2>&1
+    }
+    [ "$SHAPE_EGRESS" = 1 ] || [ "$SHAPE_INGRESS" = 1 ] ||
+        log_msg -warn "No shaping active: both UPRATE and DOWNRATE are 0. Only nftables DSCP marking is applied."
+
+    # Correct unsupported ROOT_QDISC before loading the mode lib (stdout: err+warn, no "Applying HFSC")
+    case "$ROOT_QDISC" in
+        hfsc|hybrid|cake|htb) ;;
+        *)
+            print_msg -err "Unsupported ROOT_QDISC: '$ROOT_QDISC'. Check /etc/config/qosmate."
+            print_msg -warn "Falling back to default HFSC mode with pfifo game qdisc."
+            ROOT_QDISC="hfsc"
+            gameqdisc="pfifo"
+            skip_apply_msg=1
+            ;;
+    esac
+
+    load_mode_lib "$ROOT_QDISC"
+
+    case "$ROOT_QDISC" in
+        hfsc)
+            [ "$skip_apply_msg" = 1 ] || print_msg "Applying HFSC queueing discipline."
+            setup_hfsc
+            ;;
+        hybrid)
+            print_msg "Applying Hybrid (HFSC+CAKE) queueing discipline."
+            setup_hybrid
+            printf '%s\n' "cake" > /tmp/qosmate/cake_type
+            ;;
+        cake)
+            print_msg "Applying CAKE queueing discipline."
+            setup_cake
+            ;;
+        htb)
+            print_msg "Applying HTB queueing discipline."
+            setup_htb
+            ;;
+    esac
+
+    apply_sfo_egress_filter
+    print_msg "DONE!"
+    print_tc_status
+}
 
 :
