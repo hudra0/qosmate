@@ -217,4 +217,10 @@ for_each_shaped_dir() {
     . "$QOSMATE_LIB_CAKE" || { error_out "Failed to load CAKE library '$QOSMATE_LIB_CAKE'."; exit 1; }
 }
 
+: "${QOSMATE_LIB_HTB:=/etc/qosmate.d/qosmate-lib-htb.sh}"
+[ "$ROOT_QDISC" != htb ] || {
+    # shellcheck source=/dev/null
+    . "$QOSMATE_LIB_HTB" || { error_out "Failed to load HTB library '$QOSMATE_LIB_HTB'."; exit 1; }
+}
+
 :
