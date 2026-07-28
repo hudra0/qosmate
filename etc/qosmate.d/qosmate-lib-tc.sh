@@ -172,4 +172,49 @@ apply_dscp_filters() {
     add_dscp_filter_sets "$dev" "$v4_enums" "$v6_enums"
 }
 
+# Appends option to ${CAKE_OPTS}
+# 1: parameter: nat|wash|ack_filter|*
+# 2: selector (1|0)
+#    for wash, nat, ack-filter: selector value '1' translates to prefix '', any other value translates to prefix 'no[-]'
+#    for other options: selector value '1' translates to 'don't skip option', any other value translates to 'skip option'
+# Also defined in qosmate-lib-cake.sh; kept here so hybrid (still in qosmate.sh) can call it.
+append_cake_opt() {
+    [ ${#} = 2 ] || { error_out "append_cake_opt: invalid args '$*'."; return 1; }
+    local prefix='' \
+        param="$1" selector="$2"
+    [ -n "$param" ] || return 0
+    [ "$selector" != 1 ] &&
+        case "$param" in
+            wash|nat) prefix='no' ;;
+            ack-filter) prefix='no-' ;;
+            *) return 0 ;;
+        esac
+    CAKE_OPTS="${CAKE_OPTS} ${prefix}${param}"
+    :
+}
+
+# Runs $1 once per shaped direction with DIR/DEV/RATE/GAMERATE preset.
+# A rate of 0 disables that direction; this is the only place that decides it.
+for_each_shaped_dir() {
+    local apply_fn="$1" DIR DEV RATE GAMERATE
+    for DIR in UP DOWN; do
+        case "$DIR" in
+            UP)
+                [ "$SHAPE_EGRESS" = 1 ] || continue
+                DEV="$WAN" RATE="$UPRATE" GAMERATE="$GAMEUP" ;;
+            DOWN)
+                [ "$SHAPE_INGRESS" = 1 ] || continue
+                DEV="$LAN" RATE="$DOWNRATE" GAMERATE="$GAMEDOWN" ;;
+        esac
+        "$apply_fn" || return 1
+    done
+    :
+}
+
+: "${QOSMATE_LIB_CAKE:=/etc/qosmate.d/qosmate-lib-cake.sh}"
+[ "$ROOT_QDISC" != cake ] || {
+    # shellcheck source=/dev/null
+    . "$QOSMATE_LIB_CAKE" || { error_out "Failed to load CAKE library '$QOSMATE_LIB_CAKE'."; exit 1; }
+}
+
 :
