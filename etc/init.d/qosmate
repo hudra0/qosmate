@@ -53,6 +53,12 @@ TMP_CFG_FILE=$TMP_CFG_DIR/qosmate
 QOSMATE_DEFAULTS_FILE=${QOSMATE_D}/qosmate-defaults
 QOSMATE_CUSTOM_RULES_FILE=${QOSMATE_D}/custom_rules.nft
 QOSMATE_INLINE_RULES_FILE=${QOSMATE_D}/inline_dscptag.nft
+QOSMATE_LIB_TC=${QOSMATE_D}/qosmate-lib-tc.sh
+QOSMATE_LIB_HFSC_HYBRID=${QOSMATE_D}/qosmate-lib-hfsc-hybrid.sh
+QOSMATE_LIB_CAKE=${QOSMATE_D}/qosmate-lib-cake.sh
+QOSMATE_LIB_HTB=${QOSMATE_D}/qosmate-lib-htb.sh
+
+export QOSMATE_LIB_TC QOSMATE_LIB_HFSC_HYBRID QOSMATE_LIB_CAKE QOSMATE_LIB_HTB
 QOSMATE_RUN_DIR=/tmp/qosmate
 QOSMATE_AUTO_SETUP_OUTPUT=/tmp/qosmate_auto_setup_output.txt
 
@@ -84,6 +90,10 @@ QOSMATE_GEN_FILES_BACKEND="
     $QOSMATE_AUTORATE_SCRIPT
     $QOSMATE_AUTORATE_TC_SCRIPT
     $QOSMATE_AUTORATE_SERVICE
+    $QOSMATE_LIB_TC
+    $QOSMATE_LIB_HFSC_HYBRID
+    $QOSMATE_LIB_CAKE
+    $QOSMATE_LIB_HTB
     /usr/lib/tc/experimental.dist
     /usr/lib/tc/normal.dist
     /usr/lib/tc/normmix20-64.dist
