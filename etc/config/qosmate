@@ -87,6 +87,15 @@ config autorate 'autorate'
 # and tc-ctinfo restores it on ingress. One rule matching the upload direction therefore
 # covers both directions of a connection - a mirrored inbound rule would never match.
 
+config rule
+	option name 'WiFi Calling'
+	option proto 'udp'
+	list dest_port '500'
+	list dest_port '4500'
+	option class 'cs5'
+	option counter '1'
+	option enabled '0'
+
 #config rule 'cod1'
 #	option name 'cod1'
 #	option proto 'udp'
@@ -94,6 +103,14 @@ config autorate 'autorate'
 #	option src_port '3074'
 #	option dest_port '30000-65535'
 #	option class 'cs5'
+#	option counter '1'
+
+#config rule
+#	option name 'TeamViewer'
+#	option proto 'tcp'
+#	option dest_port '5938'
+#	option src_ip '192.168.1.190'
+#	option class 'cs4'
 #	option counter '1'
 
 #config rule
