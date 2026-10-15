@@ -1,0 +1,4 @@
+# all files on the left side of '='
+#     will be moved to paths on the right side of '=' during installation
+# (all of this inside the distribution directory, before copying files to permanent storage)
+/etc/config/qosmate=/etc/qosmate.d/qosmate-defaults

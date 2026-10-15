@@ -9,14 +9,14 @@
 
 # QoSmate: Quality of Service for OpenWrt
 
-QoSmate is a Quality of Service (QoS) tool for OpenWrt routers that aims to optimize network performance while allowing for controlled prioritization of specific traffic types. It uses nftables for packet classification and offers both CAKE (Common Applications Kept Enhanced) and HFSC (Hierarchical Fair Service Curve) queueing disciplines for traffic management. It uses tc-ctinfo to restore DSCP marks on ingress.
+QoSmate is a Quality of Service (QoS) tool for OpenWrt routers that aims to optimize network performance while allowing for controlled prioritization of specific traffic types. It uses nftables for packet classification and offers CAKE (Common Applications Kept Enhanced), HFSC (Hierarchical Fair Service Curve) and HTB queueing disciplines for traffic management. It uses tc-ctinfo to restore DSCP marks on ingress.
 
 The project builds upon the amazing work of [@dlakelan](https://github.com/dlakelan) and his [SimpleHFSCgamerscript](https://github.com/dlakelan/routerperf/blob/master/SimpleHFSCgamerscript.sh), extending its capabilities and adding a user-friendly interface. QoSmate integrates concepts from various QoS systems, including SQM, DSCPCLASSIFY and cake-qos-simple to provide a comprehensive approach to traffic control.
 
 > **Compatibility Note**: Officially, only OpenWrt is supported. Forks may introduce fundamental changes or adjustments that could impact compatibility or functionality.
 
 Key aspects of QoSmate include
-- Support for HFSC, CAKE, and Hybrid queueing disciplines
+- Support for HFSC, CAKE, Hybrid and HTB queueing disciplines
 - A LuCI-based interface for easy configuration
 - DSCP marking and traffic prioritization options via CLI and UI
 - Automatic package installation and setup
@@ -32,6 +32,10 @@ While QoSmate can benefit various types of network traffic, including gaming and
 QoSmate allows you to prioritize specific traffic types, but it's crucial to use this capability **judiciously**. Over-prioritization can negate the benefits of QoS, as elevating too much traffic essentially equates to no prioritization at all.
 
 > Remember that for every packet given preferential treatment, others may experience increased delay or even drops. The goal is to create a balanced, efficient network environment, not to prioritize everything.
+
+## Requirements
+
+QoSmate requires OpenWrt version 23.05 or later, utilizing Firewall 4 and nftables. While OpenWrt 22.03 offers nftables support, it lacks certain features essential for QoSmate's full functionality. A legacy branch is available for 22.03 compatibility, but I strongly recommend upgrading to the latest OpenWrt version, as there is generally no compelling reason to remain on 22.03.
 
 ## 1. Installation
 
@@ -119,8 +123,8 @@ Before starting with QoSmate configuration:
 1. Set your determined bandwidth values
 2. Enable WASH in both directions (WASHDSCPUP and WASHDSCPDOWN)
 3. Choose your Root Queueing Discipline:
-   - For older/less powerful routers, use HFSC as it requires fewer system resources
-   - Hybrid mode uses HFSC + fq_codel for realtime and bulk classes while CAKE manages all other traffic
+   - For older/less powerful routers, use HFSC or HTB as it requires fewer system resources
+   - Hybrid mode uses HFSC + gameqdisc for realtime and HFSC + fq_codel for bulk classes while CAKE manages all other traffic
 4. Consider overhead settings:
    - Default settings are conservative to cover most use cases
    - It's better to overestimate overhead than to underestimate it
@@ -153,16 +157,40 @@ Remember that these are starting points - optimal settings may depend on your sp
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ------- |
 | enabled       | Enables or disables QoSmate. Set to 1 to enable, 0 to disable.                                                                                                             | boolean           | 1       |
 | WAN           | Specifies the WAN interface. This is crucial for applying QoS rules to the correct network interface. It's typically the interface connected to your ISP.                                                                      | string            | eth1    |
-| DOWNRATE      | Download rate in kbps. Set this to about 80-90% of your actual download speed to allow for overhead and prevent bufferbloat. This creates a buffer that helps maintain low latency even when the connection is fully utilized. | integer           | 90000   |
-| UPRATE        | Upload rate in kbps. Set this to about 80-90% of your actual upload speed for the same reasons as DOWNRATE.                                                                                                                    | integer           | 45000   |
-| ROOT_QDISC    | Specifies the root queueing discipline. Options are 'hfsc', 'cake', or 'hybrid' | enum (hfsc, cake, hybrid) | hfsc    |
+| DOWNRATE      | Download rate in kbps. Set this to about 80-90% of your actual download speed to allow for overhead and prevent bufferbloat. This creates a buffer that helps maintain low latency even when the connection is fully utilized. Set to 0 to disable ingress shaping, see [One-Directional Shaping](#one-directional-shaping). | integer           | 90000   |
+| UPRATE        | Upload rate in kbps. Set this to about 80-90% of your actual upload speed for the same reasons as DOWNRATE. Set to 0 to disable egress shaping.                                                                                | integer           | 45000   |
+| ROOT_QDISC    | Specifies the root queueing discipline. Options are 'hfsc', 'cake', 'hybrid', or 'htb' | enum (hfsc, cake, hybrid, htb) | hfsc    |
 
-### HFSC Specific Settings
+### One-Directional Shaping
+
+Setting a rate to `0` disables shaping for that direction, the same convention `sqm-scripts` uses.
+
+| Configuration | Effect |
+| ------------- | ------ |
+| `DOWNRATE` and `UPRATE` greater than 0 | Both directions are shaped (default) |
+| `DOWNRATE=0` | Upload only. No IFB device, no ingress hook and no redirect are created, so the download path is left untouched |
+| `UPRATE=0` | Download only. No egress qdisc is created; classification still works because the DSCP is stored in conntrack and restored on the IFB |
+| both `0` | Nothing is shaped, only the nftables rules are applied |
+
+What `DOWNRATE=0` costs you:
+
+- **TCP bulk detection** (`TCP_DOWNPRIO_INITIAL_ENABLED`, `TCP_DOWNPRIO_SUSTAINED_ENABLED`) is
+  switched off, because its byte thresholds are derived from the download rate.
+- **`ACK_FILTER_EGRESS=auto`** cannot compute the download/upload ratio and therefore stays off. Set
+  it to `1` or `0` explicitly for a defined behaviour.
+- **Incoming packets carry no DSCP**, because the restore happens on the IFB. Devices behind the
+  router, for example an access point applying WMM, will not see any marking.
+- **CAKE ingress options** have no effect, and so does `WASHDSCPDOWN` in CAKE mode. With HFSC,
+  Hybrid and HTB, `WASHDSCPDOWN` keeps working because it is implemented in nftables.
+
+`status` and `health_check` report a disabled direction as such, so it stays distinguishable from a
+broken setup. Autorate adjusts only the direction that is actually shaped and does not start when
+both rates are 0.
+
+### HFSC + Hybrid Specific Settings
 
 | Config option       | Description                                                                                                                                                                                                                                                                                          | Type                                         | Default                 |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- | ----------------------- |
-| LINKTYPE            | Specifies the link type. This affects how overhead is calculated. 'ethernet' is common for most connections, 'atm' for DSL, and 'DOCSIS' for cable internet.                                                                                                                                         | enum (ethernet, atm, DOCSIS)                 | ethernet                |
-| OH                  | Overhead in bytes. This accounts for layer 2 encapsulation overhead. Adjust based on your connection type.                                                                                                                                                                                           | integer                                      |                         |
 | gameqdisc           | Queueing discipline for game traffic. Options include 'pfifo ' 'bfifo' , 'fq_codel' , 'red' , and 'netem'. Each has different characteristics for managing realtime traffic.                                                                                                                         | enum (pfifo, bfifo fq_codel, red, netem)     | pfifo                   |
 | GAMEUP              | Upload bandwidth reserved for gaming in kbps. Formula ensures minimum bandwidth for games even on slower connections.                                                                                                                                                                                | integer                                      | (UPRATE*15/100+400)     |
 | GAMEDOWN            | Download bandwidth reserved for gaming in kbps. Similar to GAMEUP, but for download traffic.                                                                                                                                                                                                         | integer                                      | (DOWNRATE*15/100+400)   |
@@ -177,15 +205,10 @@ Remember that these are starting points - optimal settings may depend on your sp
 | pktlossp            | Packet loss percentage for netem. Simulates network packet loss, useful for testing application resilience.                                                                                                                                                                                          | string                                       | none                    |
 
 ### CAKE Specific Settings
-All cake settings are described in the tc-cake man.
+All cake settings are described in the tc-cake man. **Note: Link layer settings (COMMON_LINK_PRESETS, OVERHEAD, MPU, etc.) have been moved to Advanced Settings and are now shared by all QDiscs.**
 
 | Config option            | Description                                                                                                                                                    | Type                                       | Default   |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | --------- |
-| COMMON_LINK_PRESETS      | Preset for common link types. Affects overhead calculations and default behaviors. 'ethernet' or 'conservative' is suitable for most connections.              | enum (ethernet, docsis, ... see cake man.) | ethernet  |
-| OVERHEAD                 | Manual overhead setting. If set, overrides the preset. Useful for fine-tuning or unusual setups.                                                               | integer                                    |           |
-| MPU                      | Minimum packet unit size. If set, overrides the preset.                                                                                                        | integer                                    |           |
-| LINK_COMPENSATION        | Additional compensation for link peculiarities.                                                                                                                | string (atm, ptm, noatm)                   |           |
-| ETHER_VLAN_KEYWORD       | Keyword for Ethernet VLAN compensation. Used when VLAN tagging affects packet sizes.                                                                           | string                                     |           |
 | PRIORITY_QUEUE_INGRESS   | Priority queue handling for incoming traffic. 'diffserv4' uses 4 tiers of priority based on DSCP markings.                                                     | enum (diffserv3, diffserv4, diffserv8)     | diffserv4 |
 | PRIORITY_QUEUE_EGRESS    | Priority queue handling for outgoing traffic. Usually matched with INGRESS for consistency.                                                                    | enum (diffserv3, diffserv4, diffserv8)     | diffserv4 |
 | HOST_ISOLATION           | Enables host isolation in CAKE. Prevents one client from monopolizing bandwidth, ensuring fair distribution among network devices. (dual-srchost/dual-dsthost) | boolean                                    | 1         |
@@ -200,7 +223,12 @@ All cake settings are described in the tc-cake man.
 ### Advanced Settings
 
 | **Config option**      | **Description**                                                                                                                                                                                                                                                                  | **Type**                         | **Default**        | 
-| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------------------ | 
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ------------------ |
+| COMMON_LINK_PRESETS    | Link layer preset for overhead calculation. Used by all QDiscs (HTB, HFSC, Hybrid, CAKE) for consistent overhead compensation.                                                                                                                                                   | enum (ethernet, docsis, atm, vdsl, etc.) | ethernet |
+| OVERHEAD               | Manual overhead setting in bytes. Overrides preset defaults. Default values: Ethernet=40 (HFSC/HTB), ATM=44, DOCSIS=25                                                                                                                                                          | integer                          |                    |
+| MPU                    | Minimum packet unit size. Used primarily by CAKE, ignored by other QDiscs.                                                                                                                                                                                                       | integer                          |                    |
+| LINK_COMPENSATION      | Additional link compensation (atm, ptm, noatm). Affects overhead calculations.                                                                                                                                                                                                   | string                           |                    |
+| ETHER_VLAN_KEYWORD     | Ethernet VLAN keyword for CAKE. Ignored by other QDiscs.                                                                                                                                                                                                                         | string                           |                    |
 | PRESERVE_CONFIG_FILES  | If enabled, configuration files are preserved during system upgrades. Ensures your QoS settings survive firmware updates.                                                                                                                                                        | boolean                          | 1                  | 
 | WASHDSCPUP             | Sets DSCP to CS0 for outgoing packets after classification. This can help in networks where DSCP markings might be altered or cause issues downstream. [See detailed explanation](#wash-function-explanation) | boolean                          | 1                  | 
 | WASHDSCPDOWN           | Sets DSCP to CS0 for incoming packets before classification. This ensures that any DSCP markings from external sources don't interfere with your internal QoS rules. [See detailed explanation](#wash-function-explanation) | boolean                          | 1                  | 
@@ -221,29 +249,167 @@ All cake settings are described in the tc-cake man.
 
 ### Wash Function Explanation
 
-The `wash` function in `qosmate` is a crucial feature for managing DSCP markings on network packets. It allows you to control how DSCP values are handled on both ingress (incoming) and egress (outgoing) traffic. Below is a detailed explanation of what the wash function does and why it might be necessary:
+The `wash` function in `qosmate` is a crucial feature for managing DSCP markings on network packets. It allows you to control whether DSCP values from external sources (ISP, LAN devices) are preserved or reset to CS0 (Default Forwarding).
 
-#### Ingress Washing (WASHDSCPDOWN)
-- **Functionality**: When enabled, ingress washing takes the existing DSCP value of incoming packets (whether from the internet or influenced by conntrack actions for tc) and allows the system to use it for initial classification (e.g., steering packets into matching CAKE priority tins). After this initial handling, `qosmate` re-marks the DSCP field to CS0/DF. (Note: The exact initial handling differs slightly between qdiscs like CAKE and HFSC - **see special Note** below).
-- **Impact**: Inside your LAN, all packets from the internet will be marked as CS0/DF and treated with default forwarding priority. If washing is not enabled, packets retain their original DSCP markings, which could influence, for example, the selection of access classes in WMM (Wi-Fi Multimedia) on Wi-Fi networks, where different access classes have varying stochastic priorities.
-- **Special Note**: In certain configurations, `qosmate` overwrites DSCP values on ingress from the ISP. For instance, if ingress washing is active and HFSC is set as the root qdisc, all packets are initially marked as CS0 when passing through the `dscptag` chain (where marking occurs). Packets matching a `qosmate` rule will be tagged with the appropriate DSCP value. Since the DSCP value is written to conntrack and restored on ingress, all packets end up with either CS0 or the DSCP assigned by a rule, effectively overwriting any DSCP set by the ISP before classification happens.
+**Important**: The wash function behaves differently between CAKE and HFSC/HTB/Hybrid modes.
 
-#### Egress Washing (WASHDSCPUP)
-- **Functionality**: When enabled, egress washing takes the existing DSCP value of outgoing packets (whether from local end hosts or set by firewall/nftables/tc rules) and steers these packets into the matching priority tin of the CAKE qdisc (if using a multi-tin setup). After classification, it re-marks the DSCP field to CS0/DF.
-- **Impact**: This prevents leaking DSCP markings into your ISP's network and the broader internet. Some ISPs treat packets with non-CS0 DSCP markings differently, often not by prioritizing them but by increasing latency, jitter, or even packet loss rates for marked packets.
+---
 
-#### Decision to Use Wash
-Whether to enable washing, and in which direction (ingress, egress, or both), is a decision each network administrator must make based on their specific network needs and policies. Washing can prevent external interference or unintended consequences from DSCP markings/honoring.
+#### CAKE Mode: Interface-Based Washing
+
+In CAKE mode, washing is applied per network interface and corresponds directly to traffic direction:
+
+**WASHDSCPUP (Egress Washing)** - Upload direction (applied on WAN interface):
+- **What happens**: CAKE first classifies packets into priority tins based on their DSCP values, then re-marks all packets to CS0 before they leave to your ISP.
+- **Why use it**: Prevents leaking DSCP markings to your ISP's network. Some ISPs treat marked packets adversely (increased latency, jitter, or packet loss) rather than honoring the prioritization.
+
+**WASHDSCPDOWN (Ingress Washing)** - Download direction (applied on IFB interface):
+- **What happens**: CAKE first classifies packets into priority tins based on their DSCP values, then re-marks all packets to CS0 before they enter your LAN.
+- **Why use it**: Prevents ISP-set DSCP values from influencing your LAN devices. For example, on Wi-Fi networks, DSCP markings can affect WMM (Wi-Fi Multimedia) access class selection, where different classes have varying priorities.
+
+---
+
+#### HFSC/HTB/Hybrid Mode: Chain-Position-Based Washing
+
+In HFSC, HTB, and Hybrid modes, washing is achieved through the nftables `dscptag` chain processing, as these qdiscs do not have wash functionality built-in like CAKE does.
+
+**WASHDSCPDOWN (Ingress Washing)** - Applied at chain entry:
+- **What happens**: All DSCP values are set to CS0 at the beginning of the nftables chain, affecting both upload and download traffic:
+  - *Download*: Packets from the ISP are washed to CS0, then the chain is immediately skipped (these packets were already classified by tc). Result: ISP DSCP markings do not reach your LAN devices.
+  - *Upload*: Packets from your LAN are washed to CS0 at chain entry, then continue through the chain where `qosmate` rules can assign new DSCP values based on your configuration.
+- **Why use it**: Ensures a clean baseline - all traffic starts at CS0, and only your explicit `qosmate` rules determine DSCP markings. Prevents ISP markings from affecting LAN devices. For upload traffic, it prevents LAN devices from setting their own DSCP values and ensures that only `qosmate` controls DSCP assignment.
+
+**WASHDSCPUP (Egress Washing)** - Applied at chain exit for WAN-bound packets:
+- **What happens**: Only affects upload traffic. After all `qosmate` rules have been processed and packets are ready to leave via WAN, DSCP values are reset to CS0.
+- **Why use it**: Prevents DSCP leak to your ISP. Works in combination with WASHDSCPDOWN: packets start at CS0, get marked by rules during chain processing, get classified by tc, then optionally washed again before leaving to ISP.
+- **Note**: Download packets never reach this point in the chain (they exit earlier), so WASHDSCPUP only affects upload.
+
+---
+
+#### Recommendation
+
+**For most users**: Enable both WASHDSCPUP and WASHDSCPDOWN. This ensures full control over DSCP markings - preventing ISP interference and ensuring only your `qosmate` rules determine traffic priority. 
+
+**Disable washing only if**: You specifically need to preserve DSCP markings from trusted sources (e.g., your ISP actively honors QoS, or you're running a multi-router setup where DSCP values must be preserved across boundaries).
+
+### Autorate (Dynamic Bandwidth Adjustment)
+
+Autorate is an optional feature that dynamically adjusts bandwidth based on real-time latency measurements. It helps maintain low latency even when your ISP connection quality fluctuates (e.g., cable degradation, mobile/LTE connections, or peak hours).
+
+#### How It Works
+
+1. **Baseline Learning**: The daemon measures latency by pinging configurable reflector servers. The first measurements establish a baseline (minimum expected latency). This baseline is continuously updated using an exponential moving average.
+
+2. **Latency Monitoring**: Every measurement interval, the daemon calculates the latency delta (current latency minus baseline). A high delta indicates potential bufferbloat or congestion.
+
+3. **Rate Adjustment Logic**:
+   - **Decrease**: When latency delta exceeds the decrease threshold, bandwidth is reduced aggressively (default: 15% reduction)
+   - **Increase**: When the link is under load (≥75% utilization) AND latency delta is below the increase threshold, bandwidth is increased cautiously (default: 2% increase)
+   - **Drift to Base**: When utilization is low (<50%), rates slowly drift back toward the configured base rate
+
+4. **Clamping**: Rates are always kept within the configured min/max bounds.
+
+#### When to Use Autorate
+
+Autorate is beneficial for:
+- Connections with variable bandwidth (mobile/LTE, cable with degradation)
+- Users who want to run closer to their maximum bandwidth without manual tuning
+- Situations where ISP quality fluctuates throughout the day
+
+For stable fiber/FTTH connections with consistent bandwidth, the standard static QoSmate configuration (80-90% of your bandwidth) typically works well without Autorate.
+
+#### Enabling Autorate
+
+Enable Autorate via LuCI under **Network → QoSmate → Settings** using the "Enable Dynamic Bandwidth" toggle. Detailed configuration options are available under **Network → QoSmate → Advanced → Autorate Settings**.
+
+#### Configuration Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `enabled` | Enable or disable the autorate daemon | `0` (disabled) |
+| `interval` | Measurement interval in milliseconds. Lower values react faster but use more CPU. | `500` |
+| `latency_increase_threshold` | Latency delta (in ms) below which bandwidth may be increased. See threshold explanation below. | `5` |
+| `latency_decrease_threshold` | Latency delta (in ms) above which bandwidth is decreased. See threshold explanation below. | `10` |
+| `reflectors` | Space-separated list of IP addresses for latency measurement (ping). | `1.1.1.1 8.8.8.8 9.9.9.9` |
+| `refractory_increase` | Minimum seconds to wait after a rate increase before allowing another adjustment. | `3` |
+| `refractory_decrease` | Minimum seconds to wait after a rate decrease before allowing another adjustment. | `1` |
+| `adjust_up_factor` | Percentage multiplier for rate increases (102 = 2% increase). | `102` |
+| `adjust_down_factor` | Percentage multiplier for rate decreases (85 = 15% decrease). | `85` |
+| `log_changes` | Log every rate change to system log. Useful for debugging but may spam logs. | `0` |
+
+##### Rate Override Options
+
+By default, Autorate calculates min/base/max rates from your configured UPRATE and DOWNRATE. You can override these if needed:
+
+| Option | Description | Default (auto-calculated) |
+|--------|-------------|---------------------------|
+| `min_ul_rate` | Minimum upload rate in kbps | 25% of UPRATE |
+| `base_ul_rate` | Base upload rate in kbps (target when idle) | 100% of UPRATE |
+| `max_ul_rate` | Maximum upload rate in kbps | 105% of UPRATE |
+| `min_dl_rate` | Minimum download rate in kbps | 25% of DOWNRATE |
+| `base_dl_rate` | Base download rate in kbps (target when idle) | 100% of DOWNRATE |
+| `max_dl_rate` | Maximum download rate in kbps | 105% of DOWNRATE |
+
+#### Understanding the Thresholds
+
+The latency thresholds define a "safe zone" and an "alarm zone" based on the **latency delta** (current latency minus baseline):
+
+```
+Baseline: 15ms (learned minimum latency)
+Current:  22ms
+Delta:     7ms (22 - 15)
+
+|<-- Safe Zone -->|<-- Neutral -->|<-- Alarm Zone -->|
+0ms              5ms             10ms               ...
+                  ^               ^
+     increase_threshold    decrease_threshold
+```
+
+- **`latency_increase_threshold` (default: 5ms)**: The "safe" ceiling. Bandwidth may only be increased when the latency delta is **below** this value (and link is under load). Think of it as: "latency is close enough to baseline that we can safely try more bandwidth."
+
+- **`latency_decrease_threshold` (default: 10ms)**: The "alarm" floor. Bandwidth is decreased when the latency delta is **above** this value. Think of it as: "latency has risen too far above baseline, indicating congestion."
+
+- **Neutral Zone (5-10ms)**: No automatic rate changes occur. The current rate is maintained.
+
+**Example**: Baseline = 15ms, Current = 22ms → Delta = 7ms
+- Delta (7ms) > increase threshold (5ms) → **No increase** (not in safe zone)
+- Delta (7ms) < decrease threshold (10ms) → **No decrease** (not in alarm zone)
+- Result: Rate stays stable
+
+#### Monitoring
+
+Check autorate status via:
+
+```bash
+cat /tmp/qosmate-autorate-state
+```
+
+Output shows current rates, achieved throughput, latency, and baseline values.
+
+View daemon logs:
+
+```bash
+logread | grep qosmate-autorate
+```
+
+#### Technical Notes
+
+- Autorate works with all supported QDisc types (CAKE, HFSC, HTB, Hybrid)
+- All runtime data is stored in `/tmp/`
+- The daemon is managed by procd for automatic restart on failure
+- Rate changes are applied immediately via `tc` commands
 
 ### DSCP Marking Rules
 
 QoSmate allows you to define custom DSCP (Differentiated Services Code Point) marking rules to prioritize specific types of traffic. These rules are defined in the `/etc/config/qosmate` file under the `rule` sections and via luci-app-qosmate.
 
+> **Rules are only evaluated in the upload direction.** QoSmate stores the DSCP of a connection in conntrack on egress, and `tc-ctinfo` restores it on incoming packets before the firewall sees them. WAN → LAN traffic therefore bypasses rule evaluation completely. One rule that matches the upload direction (for example the `src_ip` of your device) automatically covers the download direction of the same connection. A mirrored "inbound" rule is not needed - it can never match, and its counter stays at 0.
+
 | Config option | Description                                                                                            | Type                                                                                                                      | Default |
 | ------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- | ------- |
 | name          | A unique name for the rule. Used for identification and logging.                                       | string                                                                                                                    |         |
 | proto         | The protocol to match. Determines which type of traffic the rule applies to.                           | enum (tcp, udp, icmp)                                                                                                     |         |
-| src_ip        | Source IP address or range to match. Can use CIDR notation for networks.                               | string                                                                                                                    |         |
+| src_ip        | Source IP to match. Single address, CIDR notation, or a range like '192.168.1.1-192.168.1.200'.        | string                                                                                                                    |         |
 | src_port      | Source port or range to match. Can use individual ports or ranges like '1000-2000'.                    | string                                                                                                                    |         |
 | dest_ip       | Destination IP address or range to match. Similar to src_ip in format.                                 | string                                                                                                                    |         |
 | dest_port     | Destination port or range to match. Similar to src_port in format.                                     | string                                                                                                                    |         |
@@ -286,53 +452,85 @@ config rule
     option class 'cs1'
     option counter '1'
 ```
-Explanation: This rule assigns low priority to P2P traffic (like BitTorrent) by marking it as CS1. Using `list` for both `src_port` and `dest_port` covers both incoming and outgoing P2P traffic.
+Explanation: This rule assigns low priority to P2P traffic (like BitTorrent) by marking it as CS1. Both port lists are matched on outgoing packets: `src_port` catches traffic sent from your local peer's listening port, `dest_port` catches traffic sent to a remote peer's listening port.
 
 3. Call of Duty Game Traffic:
 ```
 config rule
-    option name 'cod1'
+    option name 'cod'
     option proto 'udp'
     option src_ip '192.168.1.208'
     option src_port '3074'
     option dest_port '30000-65535'
     option class 'cs5'
     option counter '1'
-
-config rule
-    option name 'cod2'
-    option proto 'udp'
-    option dest_ip '192.168.1.208'
-    option dest_port '3074'
-    option class 'cs5'
-    option counter '1'
 ```
-Explanation: These rules prioritize Call of Duty game traffic. The first rule targets outgoing traffic from the game console (IP 192.168.1.208), while the second rule handles incoming traffic. Both use CS5 class, which is typically used for gaming traffic due to its high priority. The wide range of destination ports in the first rule covers the game's server ports.
+Explanation: This rule prioritizes Call of Duty game traffic sent by the console (IP 192.168.1.208) from port 3074 to the game's server ports. It uses the CS5 class, which is typically used for gaming traffic due to its high priority. The incoming traffic of these connections is handled automatically via conntrack, so a second rule for the download direction is not required.
 
 4. Generic Game Console/Gaming PC Traffic:
 ```
 config rule
-    option name 'Game_Console_Outbound'
+    option name 'Game_Console'
     option proto 'udp'
     option src_ip '192.168.1.208'
     list dest_port '!=80'
     list dest_port '!=443'
     option class 'cs5'
     option counter '1'
-
-config rule
-    option name 'Game_Console_Inbound'
-    option proto 'udp'
-    option dest_ip '192.168.1.208'
-    list src_port '!=80'
-    list src_port '!=443'
-    option class 'cs5'
-    option counter '1'
 ```
-Explanation: These rules provide a more generic approach to prioritizing game console/gaming pc traffic. The outbound rule prioritizes all UDP traffic from the console (192.168.1.208) except for ports 80 and 443 (common web traffic). The inbound rule does the same for incoming traffic. This approach ensures that game-related traffic gets priority while allowing normal web browsing to use default priorities. The use of '!=' (not equal) in the port lists demonstrates how to exclude specific ports from the rule.
+Explanation: This rule provides a more generic approach to prioritizing game console/gaming pc traffic. It prioritizes all UDP traffic from the console (192.168.1.208) except for ports 80 and 443 (common web traffic), which ensures that game-related traffic gets priority while allowing normal web browsing to use default priorities. The use of '!=' (not equal) in the port list demonstrates how to exclude specific ports from the rule.
 This is more or less equivalent to the `realtime4` and `realtime6` variables from the SimpleHFSCgamer script. However, this rule is even better as it excludes UDP port 80 and 443, which are often used for QUIC. This is likely less of an issue on a gaming console than on a gaming PC, where a YouTube video using QUIC might be running alongside the game.
 
 This rule is also applied when the auto-setup is used via CLI or UI and a Gaming Device IP (optional) is entered.
+
+#### IPv6 Suffix Matching in Dynamic Prefix Environments
+
+In IPv6 networks, your IP address often has a changing "prefix" (the first part of the address assigned by your ISP) while the "suffix" (the ending part) stays the same for your devices. QoSmate lets you create rules that match just the suffix, so your QoS settings keep working even when the prefix changes.
+
+This is done using the `::suffix/::mask` format, which focuses on the ending bits of the address.
+
+**Example rule:**
+
+```shell
+config rule
+    option name 'my_device_ipv6'
+    option src_ip '::1234:5678:90ab:cdef/::ffff:ffff:ffff:ffff'
+    option class 'cs5'
+    option enabled '1'
+```
+
+This rule matches any IPv6 address ending with `1234:5678:90ab:cdef`, no matter what the prefix is. The mask `::ffff:ffff:ffff:ffff` tells it to check only the last 64 bits (the suffix) of the address.
+
+For more details and discussion, see GitHub Issue [#63](https://github.com/hudra0/qosmate/issues/63).
+
+### Understanding DNS Traffic and DSCP Marking
+
+QoSmate can only mark DNS traffic that passes through the FORWARD chain. Traffic to/from the router itself (INPUT/OUTPUT chains) is not marked by default.
+
+#### DNS Traffic Scenarios
+
+1. **DNS queries to/from the router (INPUT/OUTPUT chains)**
+   - Client → Router's dnsmasq (INPUT chain)
+   - Router → Upstream DNS servers (OUTPUT chain)
+   - **Result**: Not marked by QoSmate's standard rules
+
+2. **Direct external DNS queries (FORWARD chain)**
+   - Client → 8.8.8.8, 1.1.1.1, etc.
+   - **Result**: Can be marked by QoSmate rules
+
+> **Note**: If you have DNS Intercept or Force DNS enabled, all DNS queries are redirected to the router's local DNS, converting scenario 2 into scenario 1. This prevents DSCP marking of DNS traffic.
+
+#### Testing DNS Marking
+
+Test from a LAN client:
+```bash
+nslookup google.com 8.8.8.8
+```
+Then check **Network → QoSmate → Connections** for DNS traffic (UDP port 53) with DSCP markings.
+
+#### Marking Router DNS Traffic
+
+To mark router-originated DNS traffic (e.g., router → upstream DNS), you can use Custom Rules with an OUTPUT hook. However, these rules will only mark egress traffic. If you also want ingress DSCP restoration, you'll need to implement logic that writes DSCP values to conntrack without overwriting existing values set by QoSmate for FORWARD traffic.
 
 ### IP Sets in QoSmate
 QoSmate features an integrated IP Sets UI which allows you to manage both static and dynamic IP sets directly from the LuCI interface under **Network → QoSmate → IP Sets**. This replaces the "old" method of configuring sets via custom rules manually and simplifies the process of grouping IP addresses for DSCP marking.
@@ -346,8 +544,8 @@ QoSmate features an integrated IP Sets UI which allows you to manage both static
 | name          | Name of the IP set. Used to reference the set in QoS rules with the @ prefix (e.g., @gaming_devices). Must contain only letters, numbers, and underscores.  | string                   |         |
 | mode          | Defines how the set is populated. 'static' for manually specified IP lists, 'dynamic' for automatically populated sets (e.g., via DNS resolution).           | enum (static, dynamic)   | static  |
 | family        | Specifies the IP version for addresses in this set.                                                                                                         | enum (ipv4, ipv6)       | ipv4    |
-| ip4           | List of IPv4 addresses or networks to include in the set. Only applicable when mode is 'static'.                                                            | list(string)            |         |
-| ip6           | List of IPv6 addresses or networks to include in the set. Only applicable when mode is 'static'.                                                            | list(string)            |         |
+| ip4           | List of IPv4 addresses, networks or ranges (e.g. 192.168.1.1-192.168.1.200) to include in the set. Only applicable when mode is 'static'.                   | list(string)             |         |
+| ip6           | List of IPv6 addresses, networks or ranges (e.g. 2001:db8::1-2001:db8::ff) to include in the set. Only applicable when mode is 'static'.                    | list(string)             |         |
 | timeout       | Duration after which entries are removed from the set if not refreshed. Format: number + unit (s/m/h). Only applicable when mode is 'dynamic'.              | string                   | 1h      |
 | enabled       | Enables or disables the IP set.                                                                                                                             | boolean                  | 1       |
 
@@ -365,6 +563,22 @@ config ipset
     list ip4 '192.168.1.52'
     list ip4 '192.168.1.53'
 ```
+
+Instead of listing every address individually, you can use CIDR notation or an address range:
+
+```bash
+config ipset
+    option name 'guest_devices'
+    option mode 'static'
+    option family 'ipv4'
+    list ip4 '192.168.1.100-192.168.1.150'
+    list ip4 '192.168.2.0/24'
+```
+
+Overlapping entries are merged automatically. If a range covers an address that is also listed
+separately, nftables collapses both into a single interval, so `nft list set inet dscptag <name>`
+may show fewer entries than the configuration contains.
+
 This set can then be referenced in your QoS rules:
 ```bash
 config rule
@@ -414,6 +628,158 @@ config rule
 
 > **Usage Note:** Dynamic IP sets are only tested with `dnsmasq-full`, other DNS resolvers (such as AdGuard or Unbound) are not tested.
 
+## Rate Limiting
+
+QoSmate includes an integrated rate limiting feature that allows you to set bandwidth limits for specific devices or subnets using nftables meters. This is useful for controlling bandwidth usage of individual clients, preventing bandwidth-hogging, or enforcing fair usage policies.
+
+> **Important:** Rate limiting is a **policer**, not a traffic shaper or AQM (Active Queue Management) system. It enforces hard bandwidth limits by dropping packets that exceed the configured rate, but does **not** manage queues or prevent bufferbloat. Rate limits complement QoSmate's QoS system but do not replace it. For optimal latency and bufferbloat control, continue using QoSmate's HFSC/CAKE/HTB traffic shaping with proper bandwidth settings. Use rate limits for **bandwidth enforcement**, not latency optimization.
+
+### Configuration
+
+Rate limits are configured via the LuCI interface under **Network → QoSmate → Rate Limits** or directly in `/etc/config/qosmate` using the `ratelimit` section type.
+
+#### Configuration Options
+
+| Option | Description | Type | Default |
+|--------|-------------|------|---------|
+| name | Descriptive name for the rate limit rule | string | |
+| enabled | Enables or disables this rate limit rule | boolean | 1 |
+| target | List of IP/IPv6 addresses, subnets or ranges to limit. Supports negation (!=) and set references (@setname) | list(string) | |
+| download_limit | Maximum download speed in Kbit/s (0 = unlimited) | integer | 10000 |
+| upload_limit | Maximum upload speed in Kbit/s (0 = unlimited) | integer | 10000 |
+| burst_factor | Burst allowance multiplier. 0 = strict limiting, 1.0 = rate as burst, higher = more burst | float | 1.0 |
+
+#### Target Format Examples
+
+The `target` option accepts various formats:
+
+- **Single IP**: `192.168.1.100`
+- **Subnet**: `192.168.1.0/24`
+- **IPv6 address**: `2001:db8::1`
+- **IPv6 subnet**: `2001:db8::/64`
+- **IP set reference**: `@guest_devices`
+- **Negation**: `!=192.168.1.77` (exclude from subnet limit)
+- **Multiple targets**: Use multiple `list target` entries or combine in UI
+
+### Usage Examples
+
+#### Example 1: Basic Device Bandwidth Limit
+
+Limit a single device to 10 Mbit/s (10000 Kbit/s) download and upload:
+
+```bash
+config ratelimit
+    option name 'Guest Device'
+    option enabled '1'
+    list target '192.168.1.100'
+    option download_limit '10000'
+    option upload_limit '10000'
+    option burst_factor '1.0'
+```
+
+#### Example 2: Guest Network with Exceptions
+
+Limit all guest network devices to 5 Mbit/s (5000 Kbit/s), except for VIP guests:
+
+```bash
+config ratelimit
+    option name 'Guest Network Limit'
+    option enabled '1'
+    list target '192.168.100.0/24'
+    list target '!=192.168.100.77'
+    list target '!=192.168.100.88'
+    option download_limit '5000'
+    option upload_limit '5000'
+    option burst_factor '1.5'
+```
+
+The `burst_factor` of 1.5 allows temporary speeds up to 7.5 Mbit/s (7500 Kbit/s) for better user experience.
+
+#### Example 3: Using IP Sets for Flexible Management
+
+First, create an IP set for devices to limit:
+
+```bash
+config ipset
+    option name 'limited_devices'
+    option mode 'static'
+    option family 'ipv4'
+    list ip4 '192.168.1.150'
+    list ip4 '192.168.1.151'
+    list ip4 '192.168.1.152'
+    option enabled '1'
+```
+
+Then reference it in a rate limit rule:
+
+```bash
+config ratelimit
+    option name 'Limited Devices Group'
+    option enabled '1'
+    list target '@limited_devices'
+    option download_limit '20000'
+    option upload_limit '10000'
+    option burst_factor '1.0'
+```
+
+#### Example 4: IPv6 Rate Limiting
+
+Limit IPv6 devices using direct addresses or sets:
+
+```bash
+config ipset
+    option name 'ipv6_guests'
+    option mode 'static'
+    option family 'ipv6'
+    list ip6 '2001:db8:1234::100'
+    list ip6 '2001:db8:1234::101'
+    option enabled '1'
+
+config ratelimit
+    option name 'IPv6 Guest Limit'
+    option enabled '1'
+    list target '@ipv6_guests'
+    option download_limit '15000'
+    option upload_limit '15000'
+    option burst_factor '1.2'
+```
+
+### Technical Implementation
+
+Rate limits are implemented using nftables meters integrated into the `dscptag` table. The system generates separate rules for IPv4 and IPv6 traffic to ensure correct meter expressions:
+
+- **Download limiting**: Uses `ip daddr` (IPv4) or `ip6 daddr` (IPv6) matching with corresponding meter keys
+- **Upload limiting**: Uses `ip saddr` (IPv4) or `ip6 saddr` (IPv6) matching with corresponding meter keys
+- **Burst control**: Burst allows temporary exceeding of the rate limit using a "token bucket" mechanism. The `burst_factor` multiplies the rate limit to determine the burst size. For example, with a 10000 Kbit/s (10 Mbit/s) limit and `burst_factor` = 1.0, the device can burst up to 10000 Kbit/s above the rate for short periods (total 20000 Kbit/s briefly). A `burst_factor` of 1.5 allows bursting up to 15000 Kbit/s above the 10000 Kbit/s rate. Without burst (`burst_factor` = 0), traffic is strictly limited to the configured rate with no temporary exceeding. 
+
+Example generated nftables rules:
+
+```bash
+# IPv4 download limit (traffic TO device)
+ip daddr 192.168.1.100 meter guest_dl4 { ip daddr limit rate over 1250 kbytes/second burst 1875 kbytes } counter drop
+
+# IPv6 upload limit (traffic FROM device)
+ip6 saddr 2001:db8::1 meter guest_ul6 { ip6 saddr limit rate over 1250 kbytes/second } counter drop
+```
+
+### Important Notes
+
+- **MAC addresses are not supported** due to technical limitations with nftables meters in forward chains. Use IP addresses or DHCP reservations instead.
+- **Conversion**: Rate limits are entered in Kbit/s (UI) but converted to kbytes/second for nftables (1 Kbit/s = 0.125 kbytes/second).
+- **Decimal format**: Both European (comma) and American (period) decimal separators are supported in the UI (e.g., "1,5" or "1.5").
+- **Burst factor range**: Valid values are 0.0 to 10.0. Use lower values (0-2.0) for most scenarios.
+- **Integration**: Rate limits work independently of DSCP marking and do not interfere with QoS prioritization.
+
+### Monitoring
+
+Rate limit effectiveness can be monitored by checking the nftables counters:
+
+```bash
+nft list table inet dscptag | grep -A 5 'chain ratelimit'
+```
+
+The `counter packets` value shows how many packets were dropped due to rate limiting. Active limiting is indicated by increasing counter values.
+
 ## Connections Tab
 
 The Connections tab provides a real-time view of all active network connections, including their DSCP markings and traffic statistics. This feature helps you monitor and verify your QoS configuration.
@@ -448,15 +814,87 @@ ef 192.168 3074  # Shows connections matching IP "192.168" AND port "3074" AND D
 The table view can be customized using the zoom control, allowing you to adjust the display density based on your preferences and screen size.
 
 ## Custom Rules Configuration
-QoSmate allows advanced users to create custom rules using nftables syntax. These rules are processed in addition to QoSmate's default rules and enable granular control over traffic prioritization. Custom rules can be used to implement advanced features like rate limit or domain-based traffic marking.
+Custom rules can be used to implement advanced features like rate limiting, domain-based traffic marking, or DSCP marking based on traffic rates and throughput thresholds using nftables syntax. QoSmate offers two distinct approaches for implementing custom nftables rules, each suited for different use cases and requirements:
 
-Before using custom rules, ensure you are familiar with nftables syntax and basic networking concepts. Rules are processed in order of their priority values, with lower numbers being processed first.
+### Rule Types Overview
 
+#### 1. Custom Rules (Full Table)
+Custom Rules create a completely separate nftables table (`qosmate_custom`) where you can use independent chains, hooks, and priorities.
+
+**Advantages:**
+- Define custom hooks (input, output, ingress, forward, postrouting) and priorities
+- Completely separate from QoSmate's main logic
+
+**Disadvantages:**
+- **No QoSmate Integration**: Custom rules bypass some of QoSmate's core features:
+  - No automatic DSCP conntrack writing
+  - No priority map integration (necessary when using HFSC, Hybrid and HTB)
+  - Washing has to be done manually (at least when using non CAKE root qdisc)
+- **More Complex Setup**: Requires understanding of nftables table/chain/hook/priority structure
+
+#### 2. Inline Rules (Integrated)
+Inline Rules are directly integrated into QoSmate's main `dscptag` chain, running at the same hook and priority as QoSmate's core logic. They are inserted right before the user defined rules which means they can be overwritten by user-defined rules.
+
+**Advantages:**
+  - Automatic DSCP conntrack writing/restoring
+  - Priority map integration (Only necessary when using HFSC, Hybrid and HTB)
+  - Washing functionality
+   - No need to define tables, chains, or hooks
+
+
+**Disadvantages:**
+- Cannot use custom hooks/priorities or define custom chain structures
+
+**Best for**: Users who want to add specific/special DSCP markings, rate limits, or packet matching that should integrate with QoSmate's main traffic processing logic.
+
+### Technical Implementation
+
+Before using either approach, ensure you are familiar with nftables syntax and basic networking concepts. Rules are processed in order of their priority values, with lower numbers being processed first.
+
+#### Custom Rules (Full Table)
 > **Note**: QoSmate automatically wraps your custom rules in `table inet qosmate_custom { ... }`. You only need to define the sets and chains within this table.
 
 Custom rules are stored in `/etc/qosmate.d/custom_rules.nft` and are validated before being applied. Any syntax errors will prevent the rules from being activated.
 
-### Example 1: Rate Limiting Marking
+#### Inline Rules (Integrated)
+Inline rules are stored in `/etc/qosmate.d/inline_dscptag.nft` and contain only nftables statements (no table/chain definitions). These rules are directly included in QoSmate's `dscptag` chain and run at hook `$NFT_HOOK` with priority `$NFT_PRIORITY`.
+
+> **Important**: Inline rules must contain only nftables statements. Do not include `table`, `chain`, `type`, `hook`, or `priority` keywords as they will cause validation errors.
+
+### Inline Rules Examples
+
+#### Example 1: Simple DSCP Marking (Inline)
+Mark traffic from a specific gaming device with high priority:
+
+```bash
+# Mark gaming traffic from specific IP as high priority
+ip saddr 192.168.1.100 ip dscp set cs5 comment "Gaming PC priority"
+
+# Rate limit / mark bulk TCP traffic 
+meta l4proto tcp limit rate 100/second ip dscp set cs1 comment "Bulk TCP limit"
+
+# Mark VoIP traffic from specific port range
+udp sport 5060-5070 ip dscp set ef comment "SIP/RTP VoIP traffic"
+```
+
+#### Example 2: Advanced Traffic marking (Inline)
+Apply different DSCP markings based on packet rates and protocols:
+
+```bash
+# Mark high-volume TCP connections as bulk traffic
+tcp flags & (fin|syn|rst|ack) != 0 limit rate over 200/second ip dscp set cs1 comment "High-rate TCP to bulk"
+
+# Prioritize low-latency UDP gaming traffic
+udp sport 3074 limit rate under 150/second ip dscp set cs5 comment "Gaming UDP priority"
+udp dport 3074 limit rate under 150/second ip dscp set cs5 comment "Gaming UDP priority"
+
+# Mark streaming video traffic  
+tcp dport 443 ct bytes > 10000000 ip dscp set af41 comment "HTTPS video streaming"
+```
+
+### Custom Rules Examples (Full Table)
+
+#### Example 3: Rate Limiting Marking
 This example demonstrates how to mark traffic from a specific IP address when it exceeds a certain packet rate:
 
 ```bash
@@ -470,7 +908,7 @@ chain forward {
     comment "Mark TCP traffic from 192.168.138.100 exceeding 300 pps as CS1"
 }
 ```
-### Example 2: Domain-Based marking
+#### Example 4: Domain-Based marking
 To mark connections based on their FQDN (Fully Qualified Domain Name), you can utilize IP sets (nftsets) in conjunction with DNS resolution. This approach allows for dynamic DSCP marking of traffic to specific domains. 
 
 **⚠️ Important:** Requires the dnsmasq-full package.
@@ -512,17 +950,26 @@ This setup:
 
 The postrouting priority (10) ensures these rules run after QoSmate's default rules.
 
-#### Management via LuCI:
-1. Navigate to **Network → QoSmate → Custom Rules** to manage nftables rules
-2. Use **Network → DHCP and DNS → IP Sets** to configure domain-based rules
-3. After adding rules, verify they are active:
-   ```bash
-   nft list table qosmate_custom  # View custom rules
-   nft list set inet qosmate_custom domain_ips  # View IP set contents
-   ```
-4. Monitor rule effectiveness using the Connections tab
+### Management via LuCI Interface
 
-### Example 3: Bandwidth Limiting with Custom Rules
+Both Custom Rules and Inline Rules can be managed through the QoSmate web interface:
+
+1. Navigate to **Network → QoSmate → Custom Rules**
+2. **Custom Rules (Full Table)**: Use the first textarea for complete nftables table definitions with chains and hooks
+3. **Inline Rules**: Use the second textarea for simple nftables statements that integrate with QoSmate's dscptag chain
+4. **Validation**: Both rule types are automatically validated before being applied
+5. **Examples**: Each textarea includes collapsible examples to guide rule creation
+
+Additional management options:
+- Use **Network → DHCP and DNS → IP Sets** to configure domain-based rules
+- After adding rules, verify they are active:
+  ```bash
+  nft list table qosmate_custom    # View custom rules (full table)
+  nft list table inet dscptag     # View dscptag table (shows inline rules)
+  ```
+- Monitor rule effectiveness using the **Connections** tab
+
+#### Example 5: Bandwidth Limiting with Custom Rules
 
 QoSmate allows you to implement targeted bandwidth limiting for specific devices, applications, or ports using custom nftables rules. This functionality is particularly useful for restricting the network usage of certain clients or preventing bandwidth-intensive applications from impacting network performance.
 
@@ -754,15 +1201,10 @@ Please use this template when reporting issues with QoSmate. Providing complete 
 
 ### System Information and Configuration
 
-Please run these commands and provide their complete output:
+Please run this command and provide the complete output:
 
 ```bash
-ubus call system board
-/etc/init.d/qosmate check_version
 /etc/init.d/qosmate status
-/etc/init.d/qosmate health_check
-cat /etc/config/qosmate
-ifstatus wan | grep -e device
 ```
 
 ### Connection Details
@@ -845,22 +1287,34 @@ rm /usr/share/rpcd/acl.d/luci-app-qosmate.json
 ```
 5. Reboot your router to clear any remaining settings.
 
+## Resetting to Default Configuration
+
+To reset QoSmate to its default configuration, you can use the following command. This will backup your current configuration and download the default one from the repository:
+
+```bash
+mv /etc/config/qosmate /etc/config/qosmate.old && wget -O /etc/config/qosmate https://raw.githubusercontent.com/hudra0/qosmate/main/etc/config/qosmate && /etc/init.d/qosmate restart
+```
+
+Note: Make sure to review and adjust the default configuration as needed for your specific setup.
+
 ## Building qosmate and Luci-app-qosmate Packages for OpenWrt
 
 1. Navigate to Your OpenWrt Buildroot Directory:
-`cd /path/to/your/openwrt
-`
+```bash
+cd /path/to/your/openwrt
+```
 2. Clone the QoSmate Package:
-`mkdir -p package/qosmate
-git clone https://github.com/hudra0/qosmate.git package/qosmate
-`
+```bash
+mkdir -p package/qosmate && git clone https://github.com/hudra0/qosmate.git package/qosmate
+```
 3. Clone the LuCI QoSmate Package:
-`mkdir -p package/luci-app-qosmate
-git clone https://github.com/hudra0/luci-app-qosmate.git package/luci-app-qosmate`
+```bash
+mkdir -p package/luci-app-qosmate && git clone https://github.com/hudra0/luci-app-qosmate.git package/luci-app-qosmate
+```
 
-## QoSmate Traffic Shaping: HFSC and CAKE
+## QoSmate Traffic Shaping: HFSC, HTB and CAKE
 
-QoSmate supports two traffic shaping systems: HFSC and CAKE. Each combines queueing disciplines (qdiscs) with bandwidth control mechanisms to provide different approaches to traffic management and prioritization.
+QoSmate supports three traffic shaping systems: HFSC, HTB and CAKE. Each combines queueing disciplines (qdiscs) with bandwidth control mechanisms to provide different approaches to traffic management and prioritization.
 
 ### HFSC (Hierarchical Fair Service Curve)
 
@@ -934,7 +1388,7 @@ tc class add dev $WAN parent 1:1 classid 1:15 hfsc ls m1 "$((RATE*3/100))kbit" d
 
 ### Hybrid Mode (HFSC + CAKE)
 
-Hybrid mode sets HFSC as the root scheduler and uses three classes with fq_codel:
+Hybrid mode sets HFSC as the root scheduler and uses three classes:
 
 1. **Realtime Class (1:11)**
    - Handles EF/CS5/CS6/CS7 traffic with the selected `gameqdisc`.
@@ -944,6 +1398,38 @@ Hybrid mode sets HFSC as the root scheduler and uses three classes with fq_codel
    - Uses HFSC with `fq_codel` for CS1 bulk traffic.
 
 This approach keeps latency low for realtime flows while benefiting from CAKE's advanced features for general traffic.
+
+### HTB (Hierarchical Token Bucket)
+
+HTB in QoSmate creates a hierarchical queueing structure with three classes using FQ-CoDel as leaf qdiscs.
+
+#### HTB Queue Structure
+
+QoSmate's HTB implementation organizes traffic into 3 main classes:
+
+1. **Priority Class (1:11)** - Highest priority for realtime/gaming traffic
+   - Handles packets marked with DSCP values EF, CS5, CS6, CS7
+   - Guaranteed minimum rate scaling with bandwidth (5-40% hyperbolic curve, min 800 kbit)
+   - Uses FQ-CoDel with aggressive settings (lower target/interval)
+
+2. **Best Effort Class (1:13)** - Default for general traffic
+   - Handles unmarked packets and most traffic
+   - Guaranteed ~16% rate, can use up to almost full bandwidth
+   - Uses FQ-CoDel with standard settings
+
+3. **Background Class (1:15)** - Lowest priority for bulk traffic
+   - Handles packets marked with DSCP CS1
+   - Guaranteed ~16% rate, can use up to almost full bandwidth
+   - Uses FQ-CoDel with relaxed settings (higher target/interval)
+
+#### How HTB Prioritization Works
+
+- Dynamic scaling of class rates and parameters based on total bandwidth
+- Burst allowances for brief speed increases without bufferbloat
+- Priority-based scheduling: Higher priority classes get excess bandwidth first (borrowing from unused capacity)
+- Fair sharing within classes using FQ-CoDel
+
+HTB provides simple 3-tier prioritization with automatic parameter tuning for different connection speeds.
 
 ### CAKE (Common Applications Kept Enhanced)
 
@@ -994,6 +1480,7 @@ QoSmate handles traffic in both directions (upload and download) using the follo
    - If the conditional bit (128) is set, the original DSCP value is restored:
      - DSCP is extracted as `mark & 63`
      - This DSCP value is applied to incoming packets
+   - Since the DSCP is already restored at this point, WAN → LAN packets skip the nftables marking chain, which is why rule counters only increase for the upload direction
 
 3. **IFB (Intermediate Functional Block):**
    - Linux can only shape outgoing traffic
