@@ -1168,7 +1168,10 @@ ${SETS}
     chain dscptag {
         type filter hook $NFT_HOOK priority $NFT_PRIORITY; policy accept;
 
-        iif "lo" accept    
+        iif "lo" accept
+        meta mark 0x50535732 counter return comment "Bypass Passwall2 TProxy"
+        ct mark & 0x50535732 == 0x50535732 counter return comment "Bypass Passwall2 Conntrack"
+        meta skgid 9912 counter return comment "Bypass Passwall2 Xray Core"
         $(if { [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ] || [ "$ROOT_QDISC" = "htb" ]; } && [ "$WASHDSCPDOWN" -eq 1 ]; then
             echo "# wash all the DSCP on ingress ... "
             echo "        counter jump mark_cs0"
@@ -1218,9 +1221,9 @@ ${DYNAMIC_RULES}
         meta priority set ip dscp map @priomap counter
         meta priority set ip6 dscp map @priomap counter
 
-        # Store DSCP in conntrack for restoration on ingress
-        ct mark set ip dscp or 128 counter
-        ct mark set ip6 dscp or 128 counter
+        # Store DSCP in conntrack for restoration on ingress (preserving proxy marks)
+        ct mark & 0x50535732 != 0x50535732 ct mark set ip dscp or 128 counter
+        ct mark & 0x50535732 != 0x50535732 ct mark set ip6 dscp or 128 counter
 
         $(if { [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ] || [ "$ROOT_QDISC" = "htb" ]; } && [ "$WASHDSCPUP" -eq 1 ]; then
             echo "# wash all DSCP on egress ... "
