@@ -5,7 +5,7 @@ START=99
 STOP=99
 
 USE_PROCD=1
-VERSION="dev"
+VERSION="1.9.1"
 UPD_CHANNEL="release"
 
 EXTRA_COMMANDS="check_version update auto_setup auto_setup_noninteractive auto_setup_detached validate_custom_rules health_check"
