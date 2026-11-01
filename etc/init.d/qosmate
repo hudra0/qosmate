@@ -30,7 +30,7 @@ IFS="$DEFAULT_IFS"
 ### repo-related vars
 
 # GH repo author (can be overriden for testing)
-: "${QOSMATE_REPO_AUTHOR:=hudra0}"
+: "${QOSMATE_REPO_AUTHOR:=w0l4i}"
 
 MAIN_BRANCH_BACKEND=main
 MAIN_BRANCH_FRONTEND=main
