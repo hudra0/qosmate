@@ -1185,7 +1185,6 @@ ${SETS}
 
         iif "lo" accept
         meta mark 0x50535732 counter return comment "Bypass Passwall2 TProxy"
-        ct mark & 0x50535732 == 0x50535732 counter return comment "Bypass Passwall2 Conntrack"
         meta skgid 9912 counter return comment "Bypass Passwall2 Xray Core"
         $(if { [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ] || [ "$ROOT_QDISC" = "htb" ]; } && [ "$WASHDSCPDOWN" -eq 1 ]; then
             echo "# wash all the DSCP on ingress ... "
@@ -1196,9 +1195,6 @@ ${SETS}
         # TCP MSS clamping for slow connections (must be before ingress accept)
         $RULE_SET_TCPMSS_UP
         $RULE_SET_TCPMSS_DOWN
-
-        # Skip rule processing for ingress packets since they're already classified by tc-ctinfo
-        meta iifname "$WAN" accept
 
         $udpbulkport_rules
 
@@ -1231,6 +1227,9 @@ ${SETS}
         # --- user inline rules end   ---
         
 ${DYNAMIC_RULES}
+
+        # For unclassified ingress packets from WAN, accept and let tc-ctinfo restore connection mark
+        meta iifname "$WAN" accept
 
         ## classify for the HFSC queues:
         meta priority set ip dscp map @priomap counter
