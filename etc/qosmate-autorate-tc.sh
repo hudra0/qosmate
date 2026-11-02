@@ -169,7 +169,17 @@ autorate_update_bandwidth() {
     }
 
     case "$ROOT_QDISC" in
-        cake)   _autorate_update_cake   "$new_rate" "$dev" ;;
+        cake)
+            _autorate_update_cake "$new_rate" "$dev" || return 1
+            if [ "$direction" = "egress" ]; then
+                local lan_dev="$(cat /tmp/qosmate_lan 2>/dev/null)"
+                [ -z "$lan_dev" ] && lan_dev="$(uci -q get qosmate.settings.LAN || echo 'br-lan')"
+                if [ -n "$lan_dev" ] && [ -d "/sys/class/net/ifb-$lan_dev" ]; then
+                    _autorate_update_cake "$new_rate" "ifb-$lan_dev" || true
+                fi
+            fi
+            return 0
+            ;;
         htb)    _autorate_update_htb    "$new_rate" "$dev" ;;
         hfsc)   _autorate_update_hfsc   "$new_rate" "$dev" "$direction" ;;
         hybrid) _autorate_update_hybrid "$new_rate" "$dev" "$direction" ;;

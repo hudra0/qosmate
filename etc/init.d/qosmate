@@ -5,7 +5,7 @@ START=99
 STOP=99
 
 USE_PROCD=1
-VERSION="dev"
+VERSION="1.9.1"
 UPD_CHANNEL="release"
 
 EXTRA_COMMANDS="check_version update auto_setup auto_setup_noninteractive auto_setup_detached validate_custom_rules health_check"
@@ -30,7 +30,7 @@ IFS="$DEFAULT_IFS"
 ### repo-related vars
 
 # GH repo author (can be overriden for testing)
-: "${QOSMATE_REPO_AUTHOR:=hudra0}"
+: "${QOSMATE_REPO_AUTHOR:=w0l4i}"
 
 MAIN_BRANCH_BACKEND=main
 MAIN_BRANCH_FRONTEND=main
@@ -1938,13 +1938,22 @@ start_service() {
 
     try_mkdir -p "$QOSMATE_RUN_DIR"
 
-    # Save the current WAN interface to a temporary file
+    # Save the current WAN and LAN interfaces to temporary files
     printf '%s\n' "$WAN" > /tmp/qosmate_wan
+    config_get LAN settings LAN 'br-lan'
+    printf '%s\n' "$LAN" > /tmp/qosmate_lan
 
     /bin/sh "$QOSMATE_MAIN_SCRIPT" || { error_out "Failed to start qosmate."; return 1; }
 
     /etc/init.d/firewall reload &&
     enabled || /etc/init.d/qosmate enable || return 1
+
+    # Ensure transparent proxy frameworks (Passwall 2 / TProxy) do not intercept Cloudflare Argo Tunnel
+    if nft list table inet passwall2 >/dev/null 2>&1; then
+        nft insert rule inet passwall2 mangle_output udp dport 7844 counter return comment "QoSmate Cloudflare Tunnel Direct" 2>/dev/null || true
+        nft insert rule inet passwall2 mangle_prerouting udp dport 7844 counter return comment "QoSmate Cloudflare Tunnel Direct" 2>/dev/null || true
+        nft insert rule inet passwall2 mangle_output tcp dport 7844 counter return comment "QoSmate Cloudflare Tunnel Direct" 2>/dev/null || true
+    fi
 
     # Start autorate service if enabled (separate procd-managed service)
     if [ "$AUTORATE_ENABLED" = "1" ] && [ -f /etc/init.d/qosmate-autorate ]; then
@@ -1957,12 +1966,16 @@ start_service() {
 }
 
 stop_service() {
-    # Read the old WAN interface from the temporary file
+    # Read the old WAN and LAN interfaces from temporary files
     OLD_WAN=$(cat /tmp/qosmate_wan 2>/dev/null)
     if [ -z "$OLD_WAN" ]; then
         # If the temporary file doesn't exist, fall back to WAN from config
         load_and_fix_config
         OLD_WAN="$WAN"
+    fi
+    OLD_LAN=$(cat /tmp/qosmate_lan 2>/dev/null)
+    if [ -z "$OLD_LAN" ]; then
+        OLD_LAN=$(uci -q get qosmate.settings.LAN || echo "br-lan")
     fi
 
     print_msg "Stopping service qosmate..."
@@ -1994,10 +2007,17 @@ stop_service() {
     # Remove IFB interface
     ip link del ifb-"$OLD_WAN" 2>/dev/null
 
+    ## Delete old qdiscs and IFB associated with LAN interface (Dual-CAKE)
+    if [ -n "$OLD_LAN" ]; then
+        tc qdisc del dev ifb-"$OLD_LAN" root > /dev/null 2>&1
+        tc qdisc del dev "$OLD_LAN" ingress > /dev/null 2>&1
+        ip link del ifb-"$OLD_LAN" 2>/dev/null
+    fi
+
     nft destroy table inet dscptag
 
     # Remove temporary/runtime files
-    rm -f /tmp/qosmate_wan
+    rm -f /tmp/qosmate_wan /tmp/qosmate_lan
     rm -rf "$QOSMATE_RUN_DIR"
 
     print_msg "Reloading network service..."
@@ -2068,6 +2088,13 @@ status_service() {
             print_msg "No traffic shaping is active on the $dir interface ($dev)."
         fi
     done
+
+    local lan_dev="$(uci -q get qosmate.settings.LAN || echo 'br-lan')"
+    local ifb_lan="ifb-$lan_dev"
+    if [ -d "/sys/class/net/$ifb_lan" ]; then
+        local lan_qdisc="$(tc qdisc show dev "$ifb_lan" 2>/dev/null | sed -n 's/^qdisc\s\s*\([^ \t]*\).* root .*/\1/p' | head -n1)"
+        print_msg "Pre-proxy queueing ($lan_qdisc) is active on the LAN interface ($lan_dev -> $ifb_lan)."
+    fi
 
     # Show summary of current settings; a rate of 0 means the direction is not shaped
     local up_print="$UPRATE kbps" down_print="$DOWNRATE kbps"
