@@ -388,3 +388,26 @@ config rule 'Bulk_P2P_Torrent_UDP'
 	option class 'cs1'
 	option counter '1'
 	option enabled '1'
+
+# ------------------------------------------------------------------------------
+# 9. Low Priority Background & Scavenger (Tin 0 - LE / DSCP 1)
+# RFC 8626 Lower Effort for background updates, crash reports, and sync.
+# ------------------------------------------------------------------------------
+config rule 'Background_Scavenger_TCP'
+	option name 'Background Scavenger TCP'
+	option proto 'tcp'
+	option src_ip '10.10.10.0/24'
+	option dest_port '9999 18080 28080'
+	option class '1'
+	option counter '1'
+	option enabled '1'
+
+config rule 'Background_Scavenger_UDP'
+	option name 'Background Scavenger UDP'
+	option proto 'udp'
+	option src_ip '10.10.10.0/24'
+	option dest_port '9999 18080 28080'
+	option class '1'
+	option counter '1'
+	option enabled '1'
+
