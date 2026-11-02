@@ -1247,6 +1247,30 @@ ${DYNAMIC_RULES}
         )
     }
 
+    chain dscptag_output {
+        type filter hook output priority $NFT_PRIORITY; policy accept;
+
+        oif "lo" accept
+        meta skgid 9912 counter return comment "Bypass Passwall2 Xray Core"
+
+        # Apply classification rules to locally generated router traffic (Cloudflare Tunnel, DNS, NTP, ICMP, etc.)
+${DYNAMIC_RULES}
+
+        ## classify for the HFSC queues:
+        meta priority set ip dscp map @priomap counter
+        meta priority set ip6 dscp map @priomap counter
+
+        # Store DSCP in conntrack for restoration on ingress (preserving proxy marks)
+        ct mark & 0x50535732 != 0x50535732 ct mark set ip dscp or 128 counter
+        ct mark & 0x50535732 != 0x50535732 ct mark set ip6 dscp or 128 counter
+
+        $(if { [ "$ROOT_QDISC" = "hfsc" ] || [ "$ROOT_QDISC" = "hybrid" ] || [ "$ROOT_QDISC" = "htb" ]; } && [ "$WASHDSCPUP" -eq 1 ]; then
+            echo "# wash all DSCP on egress ... "
+            echo "meta oifname \$wan jump mark_cs0"
+          fi
+        )
+    }
+
 $(generate_ratelimit_rules)
 }
 DSCPEOF
