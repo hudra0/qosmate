@@ -72,6 +72,13 @@ log_msg() {
 
 config_load 'qosmate' || { error_out "Failed to get UCI config."; exit 1; }
 
+# Dual-CAKE LAN interface settings
+LAN_DEV="${LAN:-$(uci -q get qosmate.settings.LAN || echo 'br-lan')}"
+[ -z "$LAN_DEV" ] && LAN_DEV="br-lan"
+DUAL_CAKE="${DUAL_CAKE:-$(uci -q get qosmate.cake.DUAL_CAKE || echo '0')}"
+LAN_BYPASS_LOCAL="${LAN_BYPASS_LOCAL:-$(uci -q get qosmate.cake.LAN_BYPASS_LOCAL || echo '1')}"
+LAN_BYPASS_SUBNETS="${LAN_BYPASS_SUBNETS:-$(uci -q get qosmate.cake.LAN_BYPASS_SUBNETS || echo '')}"
+
 # Check if Software Flow Offloading is enabled
 SFO_ENABLED=0
 [ "$(uci -q get firewall.@defaults[0].flow_offloading)" = "1" ] && SFO_ENABLED=1
@@ -305,6 +312,8 @@ create_nft_rule() {
         print_msg -err "Class for rule '$config' is empty."
         return 1
     fi
+    # Nftables treats 'le' as '<=' operator keyword; map 'le' to numeric '1' (Low Effort)
+    [ "$class" = "le" ] && class="1"
     
     # Function to get set family
     get_set_family() {
@@ -1096,9 +1105,13 @@ delete table inet dscptag # clear all the rules
 table inet dscptag {
 
     map priomap { type dscp : classid ;
-        elements =  {ef : 1:11, cs5 : 1:11, cs6 : 1:11, cs7 : 1:11,
-                    cs4 : 1:12 , af41 : 1:12, af42 : 1:12,
-                    cs2 : 1:14 , af11 : 1:14 , cs1 : 1:15, cs0 : 1:13}
+        elements = {
+            cs7 : 1:11, cs6 : 1:11, ef : 1:11, va : 1:11, cs5 : 1:11, cs4 : 1:11,
+            cs3 : 1:12, af41 : 1:12, af42 : 1:12, af43 : 1:12, af31 : 1:12, af32 : 1:12, af33 : 1:12,
+            cs0 : 1:13, af21 : 1:13, af22 : 1:13, af23 : 1:13,
+            cs2 : 1:14, af11 : 1:14, af12 : 1:14, af13 : 1:14,
+            cs1 : 1:15, 1 : 1:15
+        }
     }
 
 # Create sets first
@@ -1337,13 +1350,25 @@ add_tc_filter() {
         ef|EF) class_id=1:11 dsfield=0xb8 hex_match=0x0B80 ;; # 46
         cs1|CS1) class_id=1:15 dsfield=0x20 hex_match=0x0200 ;; # 8
         cs2|CS2) class_id=1:14 dsfield=0x40 hex_match=0x0400 ;; # 16
+        cs3|CS3) class_id=1:12 dsfield=0x60 hex_match=0x0600 ;; # 24
         cs4|CS4) class_id=1:12 dsfield=0x80 hex_match=0x0800 ;; # 32
         cs5|CS5) class_id=1:11 dsfield=0xa0 hex_match=0x0A00 ;; # 40
         cs6|CS6) class_id=1:11 dsfield=0xc0 hex_match=0x0C00 ;; # 48
         cs7|CS7) class_id=1:11 dsfield=0xe0 hex_match=0x0E00 ;; # 56
         af11|AF11) class_id=1:14 dsfield=0x28 hex_match=0x0280 ;; # 10
+        af12|AF12) class_id=1:14 dsfield=0x30 hex_match=0x0300 ;; # 12
+        af13|AF13) class_id=1:14 dsfield=0x38 hex_match=0x0380 ;; # 14
+        af21|AF21) class_id=1:13 dsfield=0x48 hex_match=0x0480 ;; # 18
+        af22|AF22) class_id=1:13 dsfield=0x50 hex_match=0x0500 ;; # 20
+        af23|AF23) class_id=1:13 dsfield=0x58 hex_match=0x0580 ;; # 22
+        af31|AF31) class_id=1:12 dsfield=0x68 hex_match=0x0680 ;; # 26
+        af32|AF32) class_id=1:12 dsfield=0x70 hex_match=0x0700 ;; # 28
+        af33|AF33) class_id=1:12 dsfield=0x78 hex_match=0x0780 ;; # 30
         af41|AF41) class_id=1:12 dsfield=0x88 hex_match=0x0880 ;; # 34
         af42|AF42) class_id=1:12 dsfield=0x90 hex_match=0x0900 ;; # 36
+        af43|AF43) class_id=1:12 dsfield=0x98 hex_match=0x0980 ;; # 38
+        va|VA) class_id=1:11 dsfield=0xb0 hex_match=0x0B00 ;; # 44
+        le|LE|1) class_id=1:15 dsfield=0x04 hex_match=0x0040 ;; # 1
         *) # TODO: throw an error
     esac
 
@@ -1564,6 +1589,166 @@ append_cake_opt() {
     :
 }
 
+# Setup Dual-CAKE pre-proxy queueing on LAN interface
+setup_cake_lan_preproxy() {
+    local lan_dev="${LAN_DEV:-br-lan}"
+    local ifb_lan="ifb-$lan_dev"
+
+    if [ "$DUAL_CAKE" != "1" ] || [ "$SHAPE_EGRESS" != "1" ]; then
+        # Cleanup pre-proxy queueing if disabled
+        tc qdisc del dev "$ifb_lan" root >/dev/null 2>&1
+        tc qdisc del dev "$lan_dev" ingress >/dev/null 2>&1
+        ip link del "$ifb_lan" >/dev/null 2>&1
+        return 0
+    fi
+
+    # Verify LAN device exists
+    if ! ip link show "$lan_dev" >/dev/null 2>&1; then
+        log_msg -warn "Dual-CAKE: LAN device '$lan_dev' not found. Skipping pre-proxy queue."
+        return 0
+    fi
+
+    print_msg "" "Setting up Dual-CAKE pre-proxy queueing on LAN interface ($lan_dev -> $ifb_lan)..."
+
+    # Select cake or cake_mq based on LAN device capabilities
+    local CAKE_QDISC_LAN CAKE_OPTS cake_link_params
+    select_cake_qdisc "$lan_dev"
+    CAKE_QDISC_LAN="$REPLY"
+    cake_link_params="$(get_cake_link_params)"
+
+    # Clean existing ingress qdisc on LAN
+    tc qdisc del dev "$lan_dev" ingress >/dev/null 2>&1
+
+    # Clean and re-create IFB for LAN
+    tc qdisc del dev "$ifb_lan" root >/dev/null 2>&1
+    ip link del "$ifb_lan" >/dev/null 2>&1
+
+    local lan_ifb_mq_args=""
+    if [ "$USE_MQ" = "1" ]; then
+        local lan_tx_queues
+        lan_tx_queues=$(find /sys/class/net/"$lan_dev"/queues/ -maxdepth 1 -type d -name 'tx-*' 2>/dev/null | wc -l)
+        [ "$lan_tx_queues" -gt 1 ] && lan_ifb_mq_args="numtxqueues $lan_tx_queues"
+    fi
+    # shellcheck disable=SC2086
+    ip link add name "$ifb_lan" $lan_ifb_mq_args type ifb
+    ip link set "$ifb_lan" up
+
+    # Configure CAKE on ifb-lan:
+    # Bandwidth matches upload rate (UPRATE)
+    # diffserv8 priority queueing, dual-srchost fairness, RTT, ack-filter, split-gso
+    # Do NOT wash DSCP here so markings reach Xray and WAN intact
+    local ack_filter_egress_val
+    case "$ACK_FILTER_EGRESS" in
+        auto) ack_filter_egress_val=$(( DOWNRATE > 0 && (DOWNRATE / UPRATE) >= 15 )) ;;
+        *[!0-9]*|'') ack_filter_egress_val=0 ;;
+        *) ack_filter_egress_val=$ACK_FILTER_EGRESS ;;
+    esac
+
+    CAKE_OPTS="bandwidth ${UPRATE}kbit"
+    # shellcheck disable=SC2086
+    append_cake_opt "$PRIORITY_QUEUE_EGRESS" "1" &&
+    append_cake_opt "dual-srchost" "$HOST_ISOLATION" &&
+    append_cake_opt "rtt ${RTT}ms" "${RTT:+1}" &&
+    append_cake_opt "$cake_link_params" "1" &&
+    append_cake_opt "$LINK_COMPENSATION" "1" &&
+    append_cake_opt "nat" "$NAT_EGRESS" &&
+    append_cake_opt "nowash" "1" &&
+    append_cake_opt "ack-filter" "$ack_filter_egress_val" &&
+    append_cake_opt "split-gso" "1" &&
+    tc qdisc add dev "$ifb_lan" root "$CAKE_QDISC_LAN" $CAKE_OPTS || {
+        log_msg -err "Dual-CAKE: Failed to configure CAKE on $ifb_lan"
+        return 1
+    }
+    debug_log "LAN PRE-PROXY $CAKE_QDISC_LAN opts: '$CAKE_OPTS'"
+
+    # Set up ingress qdisc on LAN device
+    tc qdisc add dev "$lan_dev" handle ffff: ingress || {
+        log_msg -err "Dual-CAKE: Failed to add ingress qdisc on $lan_dev"
+        return 1
+    }
+
+    # TC Filters on LAN Ingress:
+    # 1. Exempt local traffic:
+    #    - LAN subnets (LAN-to-LAN gigabit speeds must be completely untouched)
+    #    - Broadcast / Multicast
+    #    - IPv6 link-local and multicast
+    #    - Configured LAN_BYPASS_SUBNETS
+    # 2. Redirect internet-bound traffic (0.0.0.0/0 and ::/0) to ifb_lan with ctinfo dscp restoration
+
+    local prio=1
+
+    # Exempt multicast & broadcast IPv4
+    tc filter add dev "$lan_dev" parent ffff: protocol ip prio "$prio" u32 match ip dst 224.0.0.0/4 action pass >/dev/null 2>&1
+    prio=$((prio + 1))
+    tc filter add dev "$lan_dev" parent ffff: protocol ip prio "$prio" u32 match ip dst 255.255.255.255/32 action pass >/dev/null 2>&1
+    prio=$((prio + 1))
+
+    # Exempt local IPv4 subnets of the LAN interface if LAN_BYPASS_LOCAL=1
+    if [ "${LAN_BYPASS_LOCAL:-1}" = "1" ]; then
+        local local_v4_sub
+        for local_v4_sub in $(ip -4 -o addr show dev "$lan_dev" 2>/dev/null | awk '{print $4}'); do
+            [ -n "$local_v4_sub" ] || continue
+            tc filter add dev "$lan_dev" parent ffff: protocol ip prio "$prio" u32 match ip dst "$local_v4_sub" action pass >/dev/null 2>&1
+            prio=$((prio + 1))
+        done
+    fi
+
+    # Exempt user-specified bypass subnets (IPv4)
+    local user_sub
+    for user_sub in $LAN_BYPASS_SUBNETS; do
+        case "$user_sub" in
+            *:*) ;; # handled in v6 below
+            *)
+                tc filter add dev "$lan_dev" parent ffff: protocol ip prio "$prio" u32 match ip dst "$user_sub" action pass >/dev/null 2>&1
+                prio=$((prio + 1))
+                ;;
+        esac
+    done
+
+    # IPv6 exemptions
+    # Link-local fe80::/10 and multicast ff00::/8
+    tc filter add dev "$lan_dev" parent ffff: protocol ipv6 prio "$prio" u32 match ip6 dst fe80::/10 action pass >/dev/null 2>&1
+    prio=$((prio + 1))
+    tc filter add dev "$lan_dev" parent ffff: protocol ipv6 prio "$prio" u32 match ip6 dst ff00::/8 action pass >/dev/null 2>&1
+    prio=$((prio + 1))
+
+    # Exempt local IPv6 subnets on LAN interface if LAN_BYPASS_LOCAL=1
+    if [ "${LAN_BYPASS_LOCAL:-1}" = "1" ]; then
+        local local_v6_sub
+        for local_v6_sub in $(ip -6 -o addr show dev "$lan_dev" scope global 2>/dev/null | awk '{print $4}'); do
+            [ -n "$local_v6_sub" ] || continue
+            tc filter add dev "$lan_dev" parent ffff: protocol ipv6 prio "$prio" u32 match ip6 dst "$local_v6_sub" action pass >/dev/null 2>&1
+            prio=$((prio + 1))
+        done
+    fi
+
+    # Exempt user-specified bypass subnets (IPv6)
+    for user_sub in $LAN_BYPASS_SUBNETS; do
+        case "$user_sub" in
+            *:*)
+                tc filter add dev "$lan_dev" parent ffff: protocol ipv6 prio "$prio" u32 match ip6 dst "$user_sub" action pass >/dev/null 2>&1
+                prio=$((prio + 1))
+                ;;
+        esac
+    done
+
+    # Final redirect filters: send all internet-bound upload traffic through CAKE on ifb_lan
+    # Note: action ctinfo dscp 63 128 restores conntrack DSCP markings
+    tc filter add dev "$lan_dev" parent ffff: protocol ip prio 100 u32 match ip dst 0.0.0.0/0 \
+        action ctinfo dscp 63 128 action mirred egress redirect dev "$ifb_lan" || {
+        log_msg -err "Dual-CAKE: Failed to add IPv4 redirect filter to $ifb_lan"
+        return 1
+    }
+
+    tc filter add dev "$lan_dev" parent ffff: protocol ipv6 prio 101 u32 match ip6 dst ::/0 \
+        action ctinfo dscp 63 128 action mirred egress redirect dev "$ifb_lan" || {
+        log_msg -err "Dual-CAKE: Failed to add IPv6 redirect filter to $ifb_lan"
+        return 1
+    }
+
+    print_msg "Dual-CAKE pre-proxy queueing active on $lan_dev (redirecting internet traffic to $ifb_lan)."
+}
+
 # Function to setup CAKE qdisc
 setup_cake() {
     tc qdisc del dev "$WAN" root > /dev/null 2>&1
@@ -1622,6 +1807,9 @@ setup_cake() {
 
     # Write active cake qdisc type for autorate daemon
     printf '%s\n' "$CAKE_QDISC_EGR" > /tmp/qosmate/cake_type
+
+    # Setup Dual-CAKE pre-proxy queueing on LAN interface
+    setup_cake_lan_preproxy
 }
 
 # Helper function to set up hybrid qdisc on an interface
@@ -2017,6 +2205,9 @@ else
    if command -v tc >/dev/null; then
        [ "$SHAPE_EGRESS" = 1 ] && { print_msg "--- Egress ($WAN) ---"; tc -s qdisc show dev "$WAN"; }
        [ "$SHAPE_INGRESS" = 1 ] && { print_msg "--- Ingress ($LAN) ---"; tc -s qdisc show dev "$LAN"; }
+       [ "$DUAL_CAKE" = "1" ] && [ "$SHAPE_EGRESS" = 1 ] && [ -d "/sys/class/net/ifb-${LAN_DEV:-br-lan}" ] && {
+           print_msg "--- Pre-Proxy (ifb-${LAN_DEV:-br-lan}) ---"; tc -s qdisc show dev "ifb-${LAN_DEV:-br-lan}";
+       }
    else
         print_msg "Warning: 'tc' command not found. Cannot display QoS status."
    fi
