@@ -1948,6 +1948,13 @@ start_service() {
     /etc/init.d/firewall reload &&
     enabled || /etc/init.d/qosmate enable || return 1
 
+    # Ensure transparent proxy frameworks (Passwall 2 / TProxy) do not intercept Cloudflare Argo Tunnel
+    if nft list table inet passwall2 >/dev/null 2>&1; then
+        nft insert rule inet passwall2 mangle_output udp dport 7844 counter return comment "QoSmate Cloudflare Tunnel Direct" 2>/dev/null || true
+        nft insert rule inet passwall2 mangle_prerouting udp dport 7844 counter return comment "QoSmate Cloudflare Tunnel Direct" 2>/dev/null || true
+        nft insert rule inet passwall2 mangle_output tcp dport 7844 counter return comment "QoSmate Cloudflare Tunnel Direct" 2>/dev/null || true
+    fi
+
     # Start autorate service if enabled (separate procd-managed service)
     if [ "$AUTORATE_ENABLED" = "1" ] && [ -f /etc/init.d/qosmate-autorate ]; then
         log_msg "" "Starting autorate service..."
