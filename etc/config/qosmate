@@ -2,16 +2,16 @@ config global 'global'
 	option enabled '1'
 
 config settings 'settings'
-	option WAN 'eth1'
+	option WAN 'wan'
 	option LAN 'br-lan'
-	option DOWNRATE '90000'
-	option UPRATE '45000'
+	option DOWNRATE '600000'
+	option UPRATE '120000'
 	option ROOT_QDISC 'cake'
 
 config advanced 'advanced'
 	option PRESERVE_CONFIG_FILES '1'
-	option WASHDSCPUP '1'
-	option WASHDSCPDOWN '1'
+	option WASHDSCPUP '0'
+	option WASHDSCPDOWN '0'
 	option BWMAXRATIO '20'
 	option ACKRATE ''
 	option UDP_RATE_LIMIT_ENABLED '0'
@@ -87,32 +87,51 @@ config autorate 'autorate'
 	option flash_history '0'
 	option log_changes '0'
 
-# Rules are only evaluated on egress (LAN -> WAN): QoSmate stores the DSCP in conntrack
-# and tc-ctinfo restores it on ingress. One rule matching the upload direction therefore
-# covers both directions of a connection - a mirrored inbound rule would never match.
+# Rules are evaluated on ingress (LAN -> WAN pre-proxy) and egress:
+# QoSmate sets DSCP markings and stores them in conntrack for tc-ctinfo restoration.
+# CAKE Diffserv8 (RFC 8290) prioritizes into 8 tins:
+# Tin 7: Network Control (CS7, CS6)
+# Tin 6: Realtime Gaming & Voice (EF, VA, CS5, CS4)
+# Tin 5: Interactive Shell & Signaling (CS2)
+# Tin 4: Low-Latency Data & Homelab (AF21, AF22, AF23)
+# Tin 3: Video Streaming (CS3, AF41..43, AF31..33)
+# Tin 2: Best Effort Web (CS0)
+# Tin 1: High Throughput Bulk (AF11..13, CS1)
+# Tin 0: Background Scavenger (LE)
 
-#config rule 'cod1'
-#	option name 'cod1'
-#	option proto 'udp'
-#	option src_ip '192.168.1.208'
-#	option src_port '3074'
-#	option dest_port '30000-65535'
-#	option class 'cs5'
-#	option counter '1'
+config rule 'pc_gaming'
+	option name 'PC Gaming UDP'
+	option proto 'udp'
+	option src_ip '10.10.10.182'
+	option dest_port '!=53 !=80 !=443'
+	option class 'cs5'
+	option counter '1'
+	option enabled '1'
 
-#config rule
-#	option name 'TeamViewer'
-#	option proto 'tcp'
-#	option dest_port '5938'
-#	option src_ip '192.168.1.190'
-#	option class 'cs4'
-#	option counter '1'
+config rule 'voice_webrtc'
+	option name 'Discord Voice & WebRTC'
+	option proto 'udp'
+	option dest_port '50000-65535'
+	option class 'va'
+	option counter '1'
+	option enabled '1'
 
-#config rule
-#	option name 'ServerDownPrio'
-#	option src_ip '192.168.15.0/24'
-#	option class 'cs1'
-#	option counter '1'
+config rule 'homelab_web'
+	option name 'Homelab Web 8000'
+	option proto 'tcp'
+	option src_ip '10.10.10.182'
+	option src_port '8000'
+	option class 'af21'
+	option counter '1'
+	option enabled '1'
+
+config rule 'bulk_downloads'
+	option name 'P2P BitTorrent Bulk'
+	option proto 'tcp udp'
+	option dest_port '6881-6889'
+	option class 'cs1'
+	option counter '1'
+	option enabled '1'
 
 #config ipset
 #	option name 'gaming_devices'
@@ -129,3 +148,4 @@ config autorate 'autorate'
 #	option mode 'dynamic'
 #	option family 'ipv4'
 #	option enabled '1'
+

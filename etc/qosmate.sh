@@ -312,8 +312,10 @@ create_nft_rule() {
         print_msg -err "Class for rule '$config' is empty."
         return 1
     fi
-    # Nftables treats 'le' as '<=' operator keyword; map 'le' to numeric '1' (Low Effort)
-    [ "$class" = "le" ] && class="1"
+    # Nftables treats 'le' as '<=' operator keyword; map 'le' and 'lephb' to numeric '1' (Low Effort)
+    if [ "$class" = "le" ] || [ "$class" = "lephb" ]; then
+        class="1"
+    fi
     
     # Function to get set family
     get_set_family() {
@@ -1553,7 +1555,7 @@ setup_hfsc() {
 
         local family class_enum
         for family in ipv4 ipv6; do
-            for class_enum in ef cs5 cs6 cs7 cs4 af41 af42 cs2 af11 cs1 cs0; do
+            for class_enum in cs7 cs6 ef va cs5 cs4 cs2 af21 af22 af23 cs3 af41 af42 af43 af31 af32 af33 cs0 af11 af12 af13 cs1 1; do
                 add_tc_filter "$DEV" "$class_enum" "$family"
             done
         done
